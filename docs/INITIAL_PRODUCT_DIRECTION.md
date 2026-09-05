@@ -1,0 +1,156 @@
+# Initial Product Direction
+
+Voice Input Bench の初期方針を記録する。以降の設計判断はこの文書を出発点とする。
+
+## Mission
+
+音声入力・音声合成まわりの品質評価を、**再現可能な形で**残すためのローカルベンチ環境をつくる。
+
+評価スコアそのものより、「そのスコアがどういう条件で出たのか」を後から検証できることを重視する。
+評価結果は条件が失われた瞬間に価値を失う、という前提に立つ。
+
+## Core Principles
+
+### 1. Reproducibility First
+
+再現性が最優先。速度・機能量・UIの洗練より優先する。
+
+「あとから第三者が（あるいは半年後の自分が）その計測を検証できるか」を、
+機能追加の可否判断における第一基準に置く。
+
+### 2. Local First
+
+実行はローカル完結を基本とする。
+
+- ネットワーク常時接続を前提にしない
+- クラウドサービスを必須依存にしない
+- ローカルで動く TTS エンジンを一次的な対象とする
+
+### 3. Free First
+
+無料・オープンな選択肢を先に整える。
+
+- 有料 API を必須依存にしない
+- 商用 SaaS を必須依存にしない
+- 有料選択肢は「あってもよい」が「なければ動かない」にはしない
+
+## Phase 1 Definition
+
+Phase 1 のスコープは次の一文に閉じる。
+
+```text
+Text → local TTS → canonical WAV + Manifest
+```
+
+テキストを入力すると、ローカル TTS エンジンで音声を生成し、
+その音声と生成条件を、あとから検証できる形で保存する。ここまで。
+
+### First Provider
+
+最初に対応する TTS Provider は **AivisSpeech** とする。
+
+理由:
+
+- ローカル実行可能（Local First）
+- 無料で利用可能（Free First）
+- HTTP API を持ち、エンジンバージョン・音声モデル情報を取得できる（再現性の記録に必要）
+
+### Provider Adapter 方式
+
+将来の Provider 追加に備え、Provider 境界を最初から切る。
+
+- 共通インターフェース `TTSProvider` を定義する
+- Provider 固有の差異は各 Adapter の内側に閉じ込める
+- ただし **Phase 1 で実装する Provider は `AivisSpeechProvider` のみ**
+
+将来 Provider のためだけの Factory / DI Container / Repository Layer は作らない。
+抽象は「2つ目の Provider が実際に来たとき」に必要な分だけ広げる。
+
+## Out of Scope for Phase 1
+
+以下は Phase 1 の対象外とする。
+
+- STT（音声認識）
+- 自動採点 / CER / LLM による評価
+- データベース / ORM
+- SaaS 化
+- 認証 / 認可
+- 課金
+- クラウドデプロイ
+
+## Reproducibility Model
+
+### bit-exact regeneration は前提にしない
+
+TTS の出力は、エンジンバージョン・音声モデル・実行環境・推論の非決定性によって変化しうる。
+「同じ入力から同じバイト列が再生成できること」を再現性の定義に採用すると、
+エンジン更新のたびに過去の計測がすべて無効になる。これは採らない。
+
+### canonical artifact は「生成済み WAV そのもの」
+
+再現性の基準を次のように定義する。
+
+> 実際に評価に使った音声ファイルが、生成条件とともに残っていること。
+
+つまり **生成済み WAV そのものを canonical artifact として保持する**。
+WAV は再生成可能な中間物ではなく、Run の一次成果物として扱う。
+
+### 再生成は既存 Run を上書きしない
+
+同じテキスト・同じ設定で再度生成した場合も、既存 Run を更新しない。
+**常に新しい Run として記録する。**
+
+Run は immutable。これにより「いつの計測か」「どのエンジンでの結果か」が失われない。
+
+### Run Bundle
+
+将来の Run 保存形式は次を想定する。
+
+```text
+data/runs/<run-id>/
+├─ source.txt           入力テキスト（正規化前の原文）
+├─ audio.wav            canonical artifact
+├─ provider-query.json  Provider へ実際に送ったリクエスト内容
+└─ manifest.json        Run メタデータ
+```
+
+`data/runs/` は Git 管理外とする。canonical artifact はローカルに残すが、
+リポジトリを音声バイナリで肥大させない。
+
+## Phase Boundaries
+
+### P1-A — Genesis + AivisSpeech Contract Spike
+
+- Genesis baseline（本文書を含むドキュメント基盤）
+- 最小ローカル Web アプリ（Next.js / TypeScript）
+- `TTSProvider` インターフェース
+- `AivisSpeechProvider` 実装
+- `Text → WAV` を実際に通し、ブラウザで再生できるところまで
+- AivisSpeech の実 API 契約を確認する（Contract Spike）
+
+**P1-A の目的は「動く」ことではなく「AivisSpeech の実際の契約を確定させること」。**
+
+### P1-B — Run Persistence
+
+- `data/runs/<run-id>` の完成版
+- immutable Run Bundle
+- Manifest 完全実装
+- Text SHA-256 / Audio SHA-256 の正式保存
+- `provider-query.json` の保存
+- transactional write（temp → final rename）
+
+### P1-C — Benchmark Cases & Long Text
+
+- Benchmark Case selector
+- 長文の決定的分割（deterministic splitter）
+- segment WAV 結合
+- `architecture-long-001`
+- Windows / Aqua Voice 入力自動化
+- STT / CER / LLM 評価 / Markdown Report
+
+## Non-Goals（当面つくらないもの）
+
+- 将来機能のためだけのディレクトリ階層
+- 使う予定のない抽象レイヤー
+- Provider が 1 つしかない段階での Provider Factory
+- 汎用化された設定管理基盤
