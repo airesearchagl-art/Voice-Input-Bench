@@ -1,0 +1,371 @@
+'use client';
+
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { TTSCapabilities, TTSVoice } from '@/tts/TTSProvider';
+import type { AivmModelsProbe } from '@/tts/AivisSpeechProvider';
+
+/**
+ * P1-A UI — one page.
+ *
+ * Engine is fixed to AivisSpeech for Phase 1, so there is no engine selector.
+ * Only Voice/Style, Speed and Volume are user-adjustable; format, sample rate
+ * and channel count are fixed so Runs stay comparable.
+ */
+
+interface ApiErrorShape {
+  kind: string;
+  message: string;
+  endpoint?: string;
+  httpStatus?: number;
+  detail?: string;
+}
+
+interface StatusOk {
+  ok: true;
+  engineName: string;
+  engineVersion: string;
+  engineUrl: string;
+  providerId: string;
+  aivmModels: AivmModelsProbe;
+}
+
+const DEFAULT_TEXT = 'これはボイスインプットベンチの疎通確認用テキストです。';
+
+async function readApiError(response: Response): Promise<ApiErrorShape> {
+  try {
+    const body: unknown = await response.json();
+    if (
+      typeof body === 'object' &&
+      body !== null &&
+      'error' in body &&
+      typeof (body as { error: unknown }).error === 'object' &&
+      (body as { error: unknown }).error !== null
+    ) {
+      return (body as { error: ApiErrorShape }).error;
+    }
+  } catch {
+    // fall through to the generic shape below
+  }
+  return {
+    kind: 'UNEXPECTED',
+    message: `サーバーが HTTP ${response.status} を返しました。`,
+    httpStatus: response.status,
+  };
+}
+
+function ErrorPanel({ title, error }: { title: string; error: ApiErrorShape }) {
+  return (
+    <div className="alert error" role="alert">
+      <span className="kind">
+        {title}: {error.kind}
+      </span>
+      <p>{error.message}</p>
+      {(error.endpoint ?? error.httpStatus ?? error.detail) !== undefined && (
+        <div className="meta">
+          {error.endpoint ? `endpoint: ${error.endpoint}\n` : ''}
+          {error.httpStatus ? `http: ${error.httpStatus}\n` : ''}
+          {error.detail ? `detail: ${error.detail}` : ''}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function Page() {
+  const [status, setStatus] = useState<StatusOk | null>(null);
+  const [statusError, setStatusError] = useState<ApiErrorShape | null>(null);
+  const [statusLoading, setStatusLoading] = useState(true);
+
+  const [voices, setVoices] = useState<TTSVoice[]>([]);
+  const [capabilities, setCapabilities] = useState<TTSCapabilities | null>(null);
+  const [voicesError, setVoicesError] = useState<ApiErrorShape | null>(null);
+  const [noVoicesInstalled, setNoVoicesInstalled] = useState(false);
+
+  const [text, setText] = useState(DEFAULT_TEXT);
+  const [styleId, setStyleId] = useState<number | null>(null);
+  const [speedScale, setSpeedScale] = useState(1);
+  const [volumeScale, setVolumeScale] = useState(1);
+
+  const [generating, setGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState<ApiErrorShape | null>(null);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+
+  // Object URLs are revoked on replacement/unmount so repeated generation does
+  // not leak blobs across a long bench session.
+  const audioUrlRef = useRef<string | null>(null);
+  const setAudio = useCallback((url: string | null) => {
+    if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
+    audioUrlRef.current = url;
+    setAudioUrl(url);
+  }, []);
+  useEffect(() => () => setAudio(null), [setAudio]);
+
+  const loadStatus = useCallback(async () => {
+    setStatusLoading(true);
+    setStatusError(null);
+    try {
+      const response = await fetch('/api/status', { cache: 'no-store' });
+      if (!response.ok) {
+        setStatus(null);
+        setStatusError(await readApiError(response));
+        return;
+      }
+      setStatus((await response.json()) as StatusOk);
+    } catch (caught) {
+      setStatus(null);
+      setStatusError({
+        kind: 'ENGINE_CONNECTION_FAILED',
+        message: caught instanceof Error ? caught.message : String(caught),
+      });
+    } finally {
+      setStatusLoading(false);
+    }
+  }, []);
+
+  const loadVoices = useCallback(async () => {
+    // Clear voice state up front. If this load fails, no previously selected
+    // voice may survive: Generate would otherwise post a styleId the engine has
+    // not confirmed in this session, and the Run would cite a voice we never
+    // actually looked up.
+    setVoicesError(null);
+    setNoVoicesInstalled(false);
+    setVoices([]);
+    setStyleId(null);
+    setCapabilities(null);
+
+    try {
+      const response = await fetch('/api/voices', { cache: 'no-store' });
+      if (!response.ok) {
+        setVoicesError(await readApiError(response));
+        return;
+      }
+      const body = (await response.json()) as {
+        voices: TTSVoice[];
+        capabilities: TTSCapabilities;
+        warning: string | null;
+      };
+      setVoices(body.voices);
+      setCapabilities(body.capabilities);
+      setSpeedScale(body.capabilities.speed.default);
+      setVolumeScale(body.capabilities.volume.default);
+      setNoVoicesInstalled(body.warning === 'NO_VOICES_INSTALLED');
+      setStyleId(body.voices[0]?.styleId ?? null);
+    } catch (caught) {
+      setVoicesError({
+        kind: 'ENGINE_CONNECTION_FAILED',
+        message: caught instanceof Error ? caught.message : String(caught),
+      });
+    }
+  }, []);
+
+  const reload = useCallback(() => {
+    void loadStatus();
+    void loadVoices();
+  }, [loadStatus, loadVoices]);
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
+  const generate = useCallback(async () => {
+    if (styleId === null) return;
+    setGenerating(true);
+    setGenerateError(null);
+    setAudio(null);
+    try {
+      const response = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, styleId, speedScale, volumeScale }),
+      });
+      if (!response.ok) {
+        setGenerateError(await readApiError(response));
+        return;
+      }
+      const blob = await response.blob();
+      if (blob.size === 0) {
+        setGenerateError({
+          kind: 'MALFORMED_RESPONSE',
+          message: '空の音声データが返されました。',
+        });
+        return;
+      }
+      setAudio(URL.createObjectURL(blob));
+    } catch (caught) {
+      setGenerateError({
+        kind: 'UNEXPECTED',
+        message: caught instanceof Error ? caught.message : String(caught),
+      });
+    } finally {
+      setGenerating(false);
+    }
+  }, [setAudio, speedScale, styleId, text, volumeScale]);
+
+  const connected = status !== null;
+  const canGenerate = connected && styleId !== null && text.trim().length > 0 && !generating;
+  const speedRange = capabilities?.speed ?? { min: 0.5, max: 2, step: 0.05, default: 1 };
+  const volumeRange = capabilities?.volume ?? { min: 0, max: 2, step: 0.05, default: 1 };
+
+  return (
+    <main className="page">
+      <header className="page-header">
+        <h1>Voice Input Bench — P1-A</h1>
+        <p>AivisSpeech Contract Spike / Text → local TTS → WAV</p>
+      </header>
+
+      <section className="panel">
+        <h2>AivisSpeech Connection</h2>
+        <div className="status-line">
+          <span
+            className={`dot ${statusLoading ? '' : connected ? 'ok' : 'err'}`}
+            aria-hidden="true"
+          />
+          <span>
+            {statusLoading ? '確認中…' : connected ? 'Connected' : 'Not connected'}
+          </span>
+          <button type="button" className="secondary" onClick={reload} disabled={statusLoading}>
+            再確認
+          </button>
+        </div>
+
+        <dl className="kv">
+          <dt>Engine</dt>
+          <dd>AivisSpeech</dd>
+          <dt>Engine Version</dt>
+          <dd>{status?.engineVersion ?? '—'}</dd>
+          <dt>Engine URL</dt>
+          <dd>{status?.engineUrl ?? '—'}</dd>
+          <dt>AIVM Models</dt>
+          <dd>
+            {status === null
+              ? '—'
+              : status.aivmModels.status === 'ok'
+                ? `${status.aivmModels.models.length} 件`
+                : `取得失敗 (${status.aivmModels.error?.kind ?? 'UNKNOWN'})`}
+          </dd>
+        </dl>
+
+        {statusError && (
+          <>
+            <div style={{ height: 12 }} />
+            <ErrorPanel title="Status" error={statusError} />
+          </>
+        )}
+      </section>
+
+      <section className="panel">
+        <h2>Input</h2>
+
+        <div className="field">
+          <label htmlFor="text">Test Text</label>
+          <textarea
+            id="text"
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+            placeholder="合成するテキストを入力"
+          />
+        </div>
+
+        <div className="field">
+          <label htmlFor="voice">Voice / Style</label>
+          <select
+            id="voice"
+            value={styleId ?? ''}
+            onChange={(event) => setStyleId(Number(event.target.value))}
+            disabled={voices.length === 0}
+          >
+            {voices.length === 0 && <option value="">（利用可能な音声がありません）</option>}
+            {voices.map((voice) => (
+              <option key={voice.styleId} value={voice.styleId}>
+                {voice.label} (id: {voice.styleId})
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="field">
+          <label htmlFor="speed">
+            Speed<span className="hint">speedScale</span>
+          </label>
+          <div className="slider-row">
+            <input
+              id="speed"
+              type="range"
+              min={speedRange.min}
+              max={speedRange.max}
+              step={speedRange.step}
+              value={speedScale}
+              onChange={(event) => setSpeedScale(Number(event.target.value))}
+            />
+            <output htmlFor="speed">{speedScale.toFixed(2)}</output>
+          </div>
+        </div>
+
+        <div className="field">
+          <label htmlFor="volume">
+            Volume<span className="hint">volumeScale</span>
+          </label>
+          <div className="slider-row">
+            <input
+              id="volume"
+              type="range"
+              min={volumeRange.min}
+              max={volumeRange.max}
+              step={volumeRange.step}
+              value={volumeScale}
+              onChange={(event) => setVolumeScale(Number(event.target.value))}
+            />
+            <output htmlFor="volume">{volumeScale.toFixed(2)}</output>
+          </div>
+        </div>
+
+        <button type="button" onClick={() => void generate()} disabled={!canGenerate}>
+          {generating ? '生成中…' : 'Generate'}
+        </button>
+
+        <p className="fixed-note">
+          固定: Format WAV / Sample Rate {capabilities?.fixedSampleRate ?? 44100} Hz / Stereo{' '}
+          {String(capabilities?.fixedStereo ?? false)}
+        </p>
+
+        {noVoicesInstalled && (
+          <>
+            <div style={{ height: 12 }} />
+            <div className="alert warn" role="status">
+              <span className="kind">NO_VOICES_INSTALLED</span>
+              <p>
+                Engine には接続できましたが、利用可能な音声モデルが 0 件です。AivisSpeech
+                側に音声モデルがインストールされているか確認してください。
+              </p>
+            </div>
+          </>
+        )}
+
+        {voicesError && (
+          <>
+            <div style={{ height: 12 }} />
+            <ErrorPanel title="Voices" error={voicesError} />
+          </>
+        )}
+      </section>
+
+      <section className="panel">
+        <h2>Output</h2>
+        {audioUrl ? (
+          <audio controls src={audioUrl}>
+            お使いのブラウザは audio 要素に対応していません。
+          </audio>
+        ) : (
+          <p className="fixed-note">まだ音声は生成されていません。</p>
+        )}
+
+        {generateError && (
+          <>
+            <div style={{ height: 12 }} />
+            <ErrorPanel title="Generate" error={generateError} />
+          </>
+        )}
+      </section>
+    </main>
+  );
+}
