@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { cp, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -227,10 +227,105 @@ describe('GET /api/results', () => {
     );
   });
 
-  it('returns an empty list for a Run with no Results', async () => {
-    const body = (await (
-      await getResults(getRequest('?runId=20260906T999999999Z-00000000'))
-    ).json()) as { results: unknown[] };
+  it('returns an empty list for an existing Run with no Results', async () => {
+    await writeRun();
+    const body = (await (await getResults(getRequest(`?runId=${RUN_ID}`))).json()) as {
+      results: unknown[];
+    };
     expect(body.results).toEqual([]);
+  });
+
+  it('refuses to list Results for a Run that does not exist', async () => {
+    // Without a verified Run there is nothing to check the Results against.
+    const response = await getResults(getRequest('?runId=20260906T999999999Z-00000000'));
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ error: { kind: 'RUN_NOT_FOUND' } });
+  });
+
+  it('refuses to list Results for a Run whose artifacts no longer match', async () => {
+    await writeRun();
+    await postResult(postRequest(VALID_BODY));
+    await writeFile(path.join(runsRoot, RUN_ID, 'audio.wav'), '差し替え');
+
+    const response = await getResults(getRequest(`?runId=${RUN_ID}`));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: { kind: 'RUN_HASH_MISMATCH' } });
+  });
+
+  it('marks a tampered Result as rejected instead of listing it as an observation', async () => {
+    await writeRun();
+    const created = (await (await postResult(postRequest(VALID_BODY))).json()) as {
+      resultId: string;
+    };
+    await writeFile(
+      path.join(resultsRoot, created.resultId, 'transcript.txt'),
+      '書き換えられた書き起こし',
+    );
+
+    const body = (await (await getResults(getRequest(`?runId=${RUN_ID}`))).json()) as {
+      results: Array<{ status: string; reason?: string }>;
+    };
+    expect(body.results).toHaveLength(1);
+    expect(body.results[0]!.status).toBe('rejected');
+  });
+
+  it('marks verified Results with a status the UI can rely on', async () => {
+    await writeRun();
+    await postResult(postRequest(VALID_BODY));
+
+    const body = (await (await getResults(getRequest(`?runId=${RUN_ID}`))).json()) as {
+      results: Array<{ status: string }>;
+    };
+    expect(body.results.map((entry) => entry.status)).toEqual(['verified']);
+  });
+});
+
+describe('RF-1 at the HTTP boundary', () => {
+  it('refuses a Run whose manifest names a different Run', async () => {
+    await writeRun();
+    const other = '20260906T011344000Z-11223344';
+    await cp(path.join(runsRoot, RUN_ID), path.join(runsRoot, other), { recursive: true });
+
+    const response = await postResult(postRequest({ ...VALID_BODY, runId: other }));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: { kind: 'RUN_ID_MISMATCH' } });
+  });
+
+  it('keeps such a Run out of GET /api/runs', async () => {
+    await writeRun();
+    const other = '20260906T011344000Z-11223344';
+    await cp(path.join(runsRoot, RUN_ID), path.join(runsRoot, other), { recursive: true });
+
+    const body = (await (await getRuns()).json()) as { runs: Array<{ runId: string }> };
+    expect(body.runs.map((entry) => entry.runId)).toEqual([RUN_ID]);
+  });
+});
+
+describe('RF-2 at the HTTP boundary', () => {
+  it('refuses to save when the results root is the runs root', async () => {
+    await writeRun();
+    process.env.VIB_RESULTS_DIR = runsRoot;
+
+    const response = await postResult(postRequest(VALID_BODY));
+    expect(response.status).toBe(500);
+    expect(await response.json()).toMatchObject({
+      error: { kind: 'ROOT_ISOLATION_VIOLATED' },
+    });
+    // The Run tree is untouched.
+    expect((await readdir(runsRoot)).sort()).toEqual([RUN_ID]);
+  });
+
+  it('refuses to save when the results root is inside an existing Run directory', async () => {
+    await writeRun();
+    process.env.VIB_RESULTS_DIR = path.join(runsRoot, RUN_ID);
+
+    const response = await postResult(postRequest(VALID_BODY));
+    expect(response.status).toBe(500);
+    expect((await readdir(path.join(runsRoot, RUN_ID))).sort()).toEqual([
+      'audio.wav',
+      'manifest.json',
+      'provider-query.json',
+      'source.txt',
+    ]);
   });
 });

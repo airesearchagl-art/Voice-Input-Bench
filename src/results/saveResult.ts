@@ -6,6 +6,8 @@ import { isBlankTranscript, toCanonicalTranscript } from './canonicalTranscript'
 import { RESULT_SCHEMA_VERSION, type ResultV1 } from './resultSchema';
 import { verifyRunEvidence } from './runEvidence';
 import { resolveDeliveryPath, resolveTool } from './tools';
+import { assertRootIsolation } from '@/storage/rootIsolation';
+import { ResultVerificationError, verifyStoredResult } from './verifyStoredResult';
 
 /**
  * One manual STT observation → one immutable Result.
@@ -60,6 +62,10 @@ export async function saveManualSttResult(
   deps: SaveResultDeps,
 ): Promise<SaveResultOutcome> {
   const now = deps.now ?? (() => new Date());
+
+  // 0. Refuse a configuration where a Result could land inside the Run tree.
+  //    Checked before anything is written, and before the Run is even read.
+  assertRootIsolation(deps.runStore.rootDir, deps.resultStore.rootDir);
 
   // 1. Tool and delivery path. Built-in tool names come from the registry, not
   //    from the request.
@@ -122,22 +128,38 @@ export async function saveManualSttResult(
   return { resultId: stored.resultId, resultDir: stored.resultDir, result };
 }
 
-/** A stored Result plus its transcript, as the UI lists them. */
-export interface ResultListEntry {
-  result: ResultV1;
-  transcript: string;
-}
+/**
+ * A stored Result as the UI lists it.
+ *
+ * A Result that fails verification is reported as `rejected` rather than
+ * silently dropped: a tampered or stale Result is something the operator needs
+ * to see, and surfacing it is not the same as presenting it as an observation.
+ */
+export type ResultListEntry =
+  | { status: 'verified'; resultId: string; result: ResultV1; transcript: string }
+  | { status: 'rejected'; resultId: string; reason: string; message: string; detail?: string };
 
 /**
  * Results attached to one Run, oldest first.
  *
- * Filtering happens on the stored `run_id`, not on a directory layout, so a
- * Result can never be listed under a Run it does not cite.
+ * The Run is verified once, freshly, before any Result is considered. Each
+ * Result is then re-checked against its directory, its transcript on disk, and
+ * that fresh Run evidence. Filtering happens on the stored `run_id`, not on a
+ * directory layout, so a Result can never be listed under a Run it does not
+ * cite.
+ *
+ * If the Run itself cannot be verified the whole listing fails: no Result about
+ * a Run whose artifacts no longer match its manifest can be trusted.
  */
 export async function listResultsForRun(
-  resultStore: LocalResultStore,
+  deps: { runStore: LocalRunStore; resultStore: LocalResultStore },
   runId: string,
 ): Promise<ResultListEntry[]> {
+  const { runStore, resultStore } = deps;
+
+  assertRootIsolation(runStore.rootDir, resultStore.rootDir);
+
+  const runEvidence = await verifyRunEvidence(runStore, runId);
   const entries: ResultListEntry[] = [];
 
   for (const resultId of await resultStore.listResultIds()) {
@@ -149,16 +171,50 @@ export async function listResultsForRun(
       // breaking the whole listing.
       continue;
     }
-    if (typeof stored !== 'object' || stored === null) continue;
 
-    const result = stored as ResultV1;
-    if (result.run_id !== runId) continue;
+    // Only Results that claim this Run are this listing's business. A claim
+    // about another Run is not a failure here, so it is skipped quietly.
+    if (!isPlainObject(stored) || stored.run_id !== runId) continue;
 
     const transcript = await resultStore.readTranscript(resultId).catch(() => null);
-    if (transcript === null) continue;
+    if (transcript === null) {
+      entries.push({
+        status: 'rejected',
+        resultId,
+        reason: 'RESULT_TRANSCRIPT_MISSING',
+        message: 'transcript.txt を読み込めません。',
+      });
+      continue;
+    }
 
-    entries.push({ result, transcript });
+    try {
+      const result = verifyStoredResult({
+        resultId,
+        stored,
+        transcript,
+        transcriptBytes: Buffer.byteLength(transcript, 'utf8'),
+        requestedRunId: runId,
+        runEvidence,
+      });
+      entries.push({ status: 'verified', resultId, result, transcript });
+    } catch (caught) {
+      if (caught instanceof ResultVerificationError) {
+        entries.push({
+          status: 'rejected',
+          resultId,
+          reason: caught.kind,
+          message: caught.message,
+          detail: caught.detail,
+        });
+        continue;
+      }
+      throw caught;
+    }
   }
 
-  return entries.sort((a, b) => a.result.result_id.localeCompare(b.result.result_id));
+  return entries.sort((a, b) => a.resultId.localeCompare(b.resultId));
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

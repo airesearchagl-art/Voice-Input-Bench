@@ -20,10 +20,9 @@ interface ApiErrorShape {
   detail?: string;
 }
 
-interface ResultEntry {
-  result: ResultV1;
-  transcript: string;
-}
+type ResultEntry =
+  | { status: 'verified'; resultId: string; result: ResultV1; transcript: string }
+  | { status: 'rejected'; resultId: string; reason: string; message: string; detail?: string };
 
 const DELIVERY_PATH_LABELS: Record<DeliveryPath, string> = {
   'speaker-to-mic': 'スピーカー → マイク（実音響）',
@@ -144,9 +143,11 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
   }, [loadResults, selectedRunId]);
 
   const selectedRun = runs.find((entry) => entry.runId === selectedRunId);
+  // Matches the server: whitespace-only is a real observation, an empty box is
+  // not. Trimming here would refuse to record "the tool returned only spaces".
   const canSave =
     selectedRun !== undefined &&
-    rawTranscript.trim().length > 0 &&
+    rawTranscript.length > 0 &&
     (toolId !== 'other' || customToolName.trim().length > 0) &&
     !saving;
 
@@ -335,29 +336,41 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
 
       {results.length > 0 && (
         <div className="transcripts">
-          {results.map(({ result, transcript }) => (
-            <article key={result.result_id} className="transcript-card">
-              <h3>{result.tool.name}</h3>
-              <dl className="kv compact">
-                <dt>Result ID</dt>
-                <dd>{result.result_id}</dd>
-                <dt>Tool</dt>
-                <dd>
-                  {result.tool.id}
-                  {result.tool.version ? ` / ${result.tool.version}` : ''}
-                </dd>
-                <dt>Delivery</dt>
-                <dd>{result.capture.delivery_path}</dd>
-                <dt>Captured At</dt>
-                <dd>{result.captured_at}</dd>
-                <dt>Transcript SHA-256</dt>
-                <dd>{result.transcript.sha256}</dd>
-                <dt>Audio SHA-256</dt>
-                <dd>{result.run_evidence.audio_sha256}</dd>
-              </dl>
-              <pre className="transcript">{transcript}</pre>
-            </article>
-          ))}
+          {results.map((entry) =>
+            entry.status === 'verified' ? (
+              <article key={entry.resultId} className="transcript-card">
+                <h3>{entry.result.tool.name}</h3>
+                <dl className="kv compact">
+                  <dt>Result ID</dt>
+                  <dd>{entry.result.result_id}</dd>
+                  <dt>Tool</dt>
+                  <dd>
+                    {entry.result.tool.id}
+                    {entry.result.tool.version ? ` / ${entry.result.tool.version}` : ''}
+                  </dd>
+                  <dt>Delivery</dt>
+                  <dd>{entry.result.capture.delivery_path}</dd>
+                  <dt>Captured At</dt>
+                  <dd>{entry.result.captured_at}</dd>
+                  <dt>Transcript SHA-256</dt>
+                  <dd>{entry.result.transcript.sha256}</dd>
+                  <dt>Audio SHA-256</dt>
+                  <dd>{entry.result.run_evidence.audio_sha256}</dd>
+                </dl>
+                <pre className="transcript">{entry.transcript}</pre>
+              </article>
+            ) : (
+              // Verification failed. Shown as a problem, never as a transcript
+              // that could be read as an observation.
+              <article key={entry.resultId} className="transcript-card">
+                <h3>検証に失敗した Result</h3>
+                <ErrorBox
+                  title={entry.resultId}
+                  error={{ kind: entry.reason, message: entry.message, detail: entry.detail }}
+                />
+              </article>
+            ),
+          )}
         </div>
       )}
     </section>

@@ -20,6 +20,10 @@ interface PostResultBody {
  *
  * `runId` is required: a Result only means something next to the audio it
  * describes, so there is no "all results" listing to browse out of context.
+ *
+ * Every entry is re-verified on read — against its own directory, its
+ * transcript on disk, and a fresh reading of the Run. An entry that fails comes
+ * back marked `rejected` rather than as an observation.
  */
 export async function GET(request: Request) {
   const runId = new URL(request.url).searchParams.get('runId');
@@ -31,7 +35,10 @@ export async function GET(request: Request) {
     return NextResponse.json({
       ok: true,
       runId,
-      results: await listResultsForRun(createResultStore(), runId),
+      results: await listResultsForRun(
+        { runStore: createRunStore(), resultStore: createResultStore() },
+        runId,
+      ),
     } as const);
   } catch (caught) {
     return toErrorResponse(caught);

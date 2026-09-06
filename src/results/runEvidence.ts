@@ -20,6 +20,10 @@ import { MANIFEST_SCHEMA_VERSION } from '@/benchmark/manifest';
  * `run_evidence` came from the request body would not connect the transcript to
  * any particular audio.
  *
+ * Hash agreement alone is not enough: a Bundle copied into another Run's
+ * directory hashes perfectly against its own manifest. The manifest must also
+ * name the directory it sits in, and name this Bundle's own files.
+ *
  * This module only reads. `data/runs/` is Phase 1's, and stays exactly as it
  * was written.
  */
@@ -33,6 +37,10 @@ export type RunEvidenceErrorKind =
   | 'RUN_MANIFEST_SCHEMA_UNSUPPORTED'
   /** The manifest is v2 but a field it must carry is missing or malformed. */
   | 'RUN_MANIFEST_INCOMPLETE'
+  /** The manifest names a different Run than the directory it sits in. */
+  | 'RUN_ID_MISMATCH'
+  /** The manifest names artifact files other than the Run Bundle's own. */
+  | 'RUN_MANIFEST_FILE_MISMATCH'
   /** A Run Bundle file named by the manifest is not on disk. */
   | 'RUN_FILE_MISSING'
   /** A Run Bundle file no longer hashes to what the manifest recorded. */
@@ -154,6 +162,36 @@ export async function verifyRunEvidence(
       'RUN_MANIFEST_INCOMPLETE',
       `Run ${runId} の manifest に必要なセクションがありません。`,
     );
+  }
+
+  // The manifest must name the Run it is stored under. Without this, a Run
+  // Bundle copied wholesale into another Run's directory verifies cleanly —
+  // every file hashes correctly, because they are that other Run's files — and
+  // a Result would end up citing audio that is not the audio it describes.
+  const manifestRunId = requireString(manifestRaw, 'run_id', 'manifest');
+  if (manifestRunId !== runId) {
+    throw new RunEvidenceError(
+      'RUN_ID_MISMATCH',
+      `Run ${runId} の manifest が別の Run (${manifestRunId}) を名乗っています。`,
+      `directory=${runId} manifest.run_id=${manifestRunId}`,
+    );
+  }
+
+  // The manifest must describe this Bundle's own files, not some other layout.
+  const declaredFiles: Array<[string, Record<string, unknown>, string]> = [
+    ['source', source, SOURCE_FILE],
+    ['audio', audio, AUDIO_FILE],
+    ['provider_query', providerQuery, PROVIDER_QUERY_FILE],
+  ];
+  for (const [section, node, expectedName] of declaredFiles) {
+    const declared = requireString(node, 'file', section);
+    if (declared !== expectedName) {
+      throw new RunEvidenceError(
+        'RUN_MANIFEST_FILE_MISMATCH',
+        `manifest の ${section}.file が "${expectedName}" ではありません。`,
+        `${section}.file=${declared}`,
+      );
+    }
   }
 
   const expected = {

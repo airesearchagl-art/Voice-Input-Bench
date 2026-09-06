@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -8,6 +8,7 @@ import { LocalResultStore } from '@/storage/LocalResultStore';
 import { RunEvidenceError, listVerifiableRuns, verifyRunEvidence } from './runEvidence';
 import { listResultsForRun, saveManualSttResult } from './saveResult';
 import { ToolResolutionError } from './tools';
+import { StorageBoundaryError } from '@/storage/rootIsolation';
 
 /**
  * Result capture against real Run Bundles on disk. Phase 1 Runs are written
@@ -413,6 +414,15 @@ describe('saveManualSttResult', () => {
 });
 
 describe('listResultsForRun', () => {
+  async function listAll(runId: string) {
+    return listResultsForRun({ runStore, resultStore }, runId);
+  }
+
+  async function listVerified(runId: string) {
+    const entries = await listAll(runId);
+    return entries.flatMap((entry) => (entry.status === 'verified' ? [entry] : []));
+  }
+
   async function saveTwoToolsForOneRun() {
     await writeRun();
     await saveManualSttResult(
@@ -428,7 +438,7 @@ describe('listResultsForRun', () => {
   it('returns both tools for the same Run, oldest first', async () => {
     await saveTwoToolsForOneRun();
 
-    const entries = await listResultsForRun(resultStore, RUN_ID);
+    const entries = await listVerified(RUN_ID);
     expect(entries.map((entry) => entry.result.tool.id)).toEqual([
       'windows-standard-voice-input',
       'aqua-voice',
@@ -442,7 +452,7 @@ describe('listResultsForRun', () => {
   it('has both Results citing the same run_id and audio_sha256', async () => {
     await saveTwoToolsForOneRun();
 
-    const entries = await listResultsForRun(resultStore, RUN_ID);
+    const entries = await listVerified(RUN_ID);
     expect(new Set(entries.map((entry) => entry.result.run_id))).toEqual(new Set([RUN_ID]));
     expect(new Set(entries.map((entry) => entry.result.run_evidence.audio_sha256))).toEqual(
       new Set([sha(AUDIO)]),
@@ -457,9 +467,17 @@ describe('listResultsForRun', () => {
       { runStore, resultStore, now: () => NOW, resultId: '20260906T020002000Z-0badf00d' },
     );
 
-    expect(await listResultsForRun(resultStore, RUN_ID)).toHaveLength(2);
-    expect(await listResultsForRun(resultStore, OTHER_RUN_ID)).toHaveLength(1);
-    expect(await listResultsForRun(resultStore, '20260906T999999999Z-00000000')).toEqual([]);
+    expect(await listAll(RUN_ID)).toHaveLength(2);
+    expect(await listAll(OTHER_RUN_ID)).toHaveLength(1);
+  });
+
+  it('fails the listing when the Run itself cannot be verified', async () => {
+    await saveTwoToolsForOneRun();
+    await writeFile(path.join(runStore.resolveRunDir(RUN_ID), 'audio.wav'), '差し替え');
+
+    const error = await listAll(RUN_ID).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(RunEvidenceError);
+    expect((error as RunEvidenceError).kind).toBe('RUN_HASH_MISMATCH');
   });
 
   it('leaves the Phase 1 Run untouched after two Results', async () => {
@@ -467,5 +485,329 @@ describe('listResultsForRun', () => {
     const before = await runFingerprint(RUN_ID);
     await saveTwoToolsForOneRun().catch(() => {});
     expect(await runFingerprint(RUN_ID)).toEqual(before);
+  });
+});
+
+describe('RF-1: the manifest must name the Run it sits in', () => {
+  it('refuses a Run Bundle copied wholesale into another Run id', async () => {
+    // Every file hashes correctly — they are Run A's files, and Run A's
+    // manifest. Only the directory name says Run B.
+    await writeRun(RUN_ID);
+    const sourceDir = runStore.resolveRunDir(RUN_ID);
+    const targetDir = runStore.resolveRunDir(OTHER_RUN_ID);
+    await cp(sourceDir, targetDir, { recursive: true });
+
+    // Sanity: the copy is byte-identical.
+    expect(await runFingerprint(OTHER_RUN_ID)).toEqual(await runFingerprint(RUN_ID));
+
+    const error = await verifyRunEvidence(runStore, OTHER_RUN_ID).catch(
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(RunEvidenceError);
+    expect((error as RunEvidenceError).kind).toBe('RUN_ID_MISMATCH');
+    expect((error as RunEvidenceError).detail).toContain(RUN_ID);
+  });
+
+  it('writes no Result for a Run whose manifest names a different Run', async () => {
+    await writeRun(RUN_ID);
+    await cp(runStore.resolveRunDir(RUN_ID), runStore.resolveRunDir(OTHER_RUN_ID), {
+      recursive: true,
+    });
+
+    const error = await saveManualSttResult(
+      { ...INPUT, runId: OTHER_RUN_ID },
+      { runStore, resultStore, now: () => NOW, resultId: RESULT_ID },
+    ).catch((caught: unknown) => caught);
+
+    expect((error as RunEvidenceError).kind).toBe('RUN_ID_MISMATCH');
+    expect(await readdir(resultsRoot)).toEqual([]);
+  });
+
+  it('keeps such a Run out of the catalogue', async () => {
+    await writeRun(RUN_ID);
+    await cp(runStore.resolveRunDir(RUN_ID), runStore.resolveRunDir(OTHER_RUN_ID), {
+      recursive: true,
+    });
+
+    const catalog = await listVerifiableRuns(runStore);
+    expect(catalog.map((entry) => entry.runId)).toEqual([RUN_ID]);
+  });
+
+  for (const [section, file] of [
+    ['source', 'source.txt'],
+    ['audio', 'audio.wav'],
+    ['provider_query', 'provider-query.json'],
+  ] as const) {
+    it(`refuses a manifest whose ${section}.file is not ${file}`, async () => {
+      await writeRun();
+      const manifestPath = path.join(runStore.resolveRunDir(RUN_ID), 'manifest.json');
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as Record<
+        string,
+        Record<string, unknown>
+      >;
+      manifest[section]!.file = 'somewhere-else.bin';
+      await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
+
+      const error = await verifyRunEvidence(runStore, RUN_ID).catch((caught: unknown) => caught);
+      expect((error as RunEvidenceError).kind).toBe('RUN_MANIFEST_FILE_MISMATCH');
+    });
+  }
+});
+
+describe('RF-2: runs and results roots must be separate trees', () => {
+  async function expectIsolationRefusal(resultsDir: string) {
+    const store = new LocalResultStore(resultsDir);
+    const error = await saveManualSttResult(INPUT, {
+      runStore,
+      resultStore: store,
+      now: () => NOW,
+      resultId: RESULT_ID,
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(StorageBoundaryError);
+    expect((error as StorageBoundaryError).kind).toBe('ROOT_ISOLATION_VIOLATED');
+    return error as StorageBoundaryError;
+  }
+
+  it('refuses equal roots', async () => {
+    await writeRun();
+    const before = await runFingerprint(RUN_ID);
+    await expectIsolationRefusal(runsRoot);
+    // Nothing was written into the Run tree.
+    expect(await runFingerprint(RUN_ID)).toEqual(before);
+    expect((await readdir(runsRoot)).sort()).toEqual([RUN_ID]);
+  });
+
+  it('refuses a results root nested inside the runs root', async () => {
+    await writeRun();
+    const before = await runFingerprint(RUN_ID);
+    await expectIsolationRefusal(path.join(runsRoot, 'results'));
+    expect(await runFingerprint(RUN_ID)).toEqual(before);
+    expect((await readdir(runsRoot)).sort()).toEqual([RUN_ID]);
+  });
+
+  it('refuses a results root inside an existing Run directory', async () => {
+    await writeRun();
+    const before = await runFingerprint(RUN_ID);
+    await expectIsolationRefusal(runStore.resolveRunDir(RUN_ID));
+    expect(await runFingerprint(RUN_ID)).toEqual(before);
+    expect((await readdir(runStore.resolveRunDir(RUN_ID))).sort()).toEqual([
+      'audio.wav',
+      'manifest.json',
+      'provider-query.json',
+      'source.txt',
+    ]);
+  });
+
+  it('refuses a runs root nested inside the results root', async () => {
+    const nestedRunsRoot = path.join(resultsRoot, 'runs');
+    const nestedRunStore = new LocalRunStore(nestedRunsRoot);
+    await nestedRunStore.saveRun(RUN_ID, {
+      sourceText: SOURCE_TEXT,
+      audio: AUDIO,
+      providerQueryJson: PROVIDER_QUERY,
+      manifestJson: Buffer.from(`${JSON.stringify(manifestFor(RUN_ID), null, 2)}\n`, 'utf8'),
+    });
+
+    const error = await saveManualSttResult(INPUT, {
+      runStore: nestedRunStore,
+      resultStore,
+      now: () => NOW,
+      resultId: RESULT_ID,
+    }).catch((caught: unknown) => caught);
+
+    expect((error as StorageBoundaryError).kind).toBe('ROOT_ISOLATION_VIOLATED');
+  });
+
+  it('accepts normal sibling roots', async () => {
+    await writeRun();
+    const outcome = await saveManualSttResult(INPUT, {
+      runStore,
+      resultStore,
+      now: () => NOW,
+      resultId: RESULT_ID,
+    });
+    expect(outcome.resultId).toBe(RESULT_ID);
+  });
+
+  it('refuses the same violation on the read path', async () => {
+    await writeRun();
+    const error = await listResultsForRun(
+      { runStore, resultStore: new LocalResultStore(runsRoot) },
+      RUN_ID,
+    ).catch((caught: unknown) => caught);
+    expect((error as StorageBoundaryError).kind).toBe('ROOT_ISOLATION_VIOLATED');
+  });
+});
+
+describe('RF-3: stored Results are verified on read', () => {
+  async function seed() {
+    await writeRun();
+    await saveManualSttResult(
+      { ...INPUT, rawTranscript: 'Windows の書き起こし' },
+      { runStore, resultStore, now: () => NOW, resultId: RESULT_ID },
+    );
+  }
+
+  async function listOne() {
+    const entries = await listResultsForRun({ runStore, resultStore }, RUN_ID);
+    expect(entries).toHaveLength(1);
+    return entries[0]!;
+  }
+
+  async function patchResultJson(mutate: (result: Record<string, unknown>) => void) {
+    const file = resultStore.resolveResultFile(RESULT_ID, 'result.json');
+    const result = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    mutate(result);
+    await writeFile(file, `${JSON.stringify(result, null, 2)}\n`);
+  }
+
+  it('returns a verified entry for an untouched Result', async () => {
+    await seed();
+    const entry = await listOne();
+    expect(entry.status).toBe('verified');
+  });
+
+  it('rejects a tampered transcript.txt', async () => {
+    await seed();
+    await writeFile(
+      resultStore.resolveResultFile(RESULT_ID, 'transcript.txt'),
+      '書き換えられた書き起こし',
+    );
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') {
+      // Length changed too, so either integrity check may fire first.
+      expect([
+        'RESULT_TRANSCRIPT_HASH_MISMATCH',
+        'RESULT_TRANSCRIPT_BYTES_MISMATCH',
+      ]).toContain(entry.reason);
+    }
+  });
+
+  it('rejects a transcript whose byte length no longer matches', async () => {
+    await seed();
+    // Same recorded hash, different recorded length.
+    await patchResultJson((result) => {
+      (result.transcript as Record<string, unknown>).bytes = 9999;
+    });
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') {
+      expect(entry.reason).toBe('RESULT_TRANSCRIPT_BYTES_MISMATCH');
+    }
+  });
+
+  it('rejects a tampered result_id', async () => {
+    await seed();
+    await patchResultJson((result) => {
+      result.result_id = RESULT_ID_2;
+    });
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('RESULT_ID_MISMATCH');
+  });
+
+  it('skips a Result that claims a different run_id', async () => {
+    await seed();
+    await patchResultJson((result) => {
+      result.run_id = OTHER_RUN_ID;
+    });
+
+    // It is no longer this Run's business, so it simply does not appear here.
+    expect(await listResultsForRun({ runStore, resultStore }, RUN_ID)).toEqual([]);
+  });
+
+  it('rejects tampered audio evidence', async () => {
+    await seed();
+    await patchResultJson((result) => {
+      (result.run_evidence as Record<string, unknown>).audio_sha256 = 'f'.repeat(64);
+    });
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('RESULT_RUN_EVIDENCE_MISMATCH');
+  });
+
+  it('rejects tampered source evidence', async () => {
+    await seed();
+    await patchResultJson((result) => {
+      (result.run_evidence as Record<string, unknown>).source_sha256 = 'a'.repeat(64);
+    });
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('RESULT_RUN_EVIDENCE_MISMATCH');
+  });
+
+  it('rejects a tampered test_id in the run evidence', async () => {
+    await seed();
+    await patchResultJson((result) => {
+      (result.run_evidence as Record<string, unknown>).test_id = 'manual';
+    });
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('RESULT_RUN_EVIDENCE_MISMATCH');
+  });
+
+  it('rejects an unsupported result schema', async () => {
+    await seed();
+    await patchResultJson((result) => {
+      result.schema_version = 2;
+    });
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('RESULT_SCHEMA_UNSUPPORTED');
+  });
+
+  it('rejects a broken transcript contract', async () => {
+    await seed();
+    await patchResultJson((result) => {
+      (result.transcript as Record<string, unknown>).line_endings = 'crlf';
+    });
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') {
+      expect(entry.reason).toBe('RESULT_TRANSCRIPT_CONTRACT_MISMATCH');
+    }
+  });
+
+  it('rejects a transcript that contains CR despite claiming lf', async () => {
+    await seed();
+    await writeFile(resultStore.resolveResultFile(RESULT_ID, 'transcript.txt'), 'a\r\nb');
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+  });
+
+  it('reports a missing transcript rather than hiding the Result', async () => {
+    await seed();
+    await rm(resultStore.resolveResultFile(RESULT_ID, 'transcript.txt'));
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('RESULT_TRANSCRIPT_MISSING');
+  });
+
+  it('still lists two valid Results side by side', async () => {
+    await writeRun();
+    await saveManualSttResult(
+      { ...INPUT, rawTranscript: 'Windows の書き起こし' },
+      { runStore, resultStore, now: () => NOW, resultId: RESULT_ID },
+    );
+    await saveManualSttResult(
+      { ...INPUT, toolId: 'aqua-voice', rawTranscript: 'Aqua の書き起こし' },
+      { runStore, resultStore, now: () => NOW, resultId: RESULT_ID_2 },
+    );
+
+    const entries = await listResultsForRun({ runStore, resultStore }, RUN_ID);
+    expect(entries).toHaveLength(2);
+    expect(entries.every((entry) => entry.status === 'verified')).toBe(true);
   });
 });

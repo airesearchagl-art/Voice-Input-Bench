@@ -8,6 +8,14 @@ import { ResultStoreError, type ResultStoreErrorKind } from '@/storage/LocalResu
 import { RunEvidenceError, type RunEvidenceErrorKind } from '@/results/runEvidence';
 import { ToolResolutionError, type ToolResolutionErrorKind } from '@/results/tools';
 import { SaveResultError, type SaveResultErrorKind } from '@/results/saveResult';
+import {
+  ResultVerificationError,
+  type ResultVerificationErrorKind,
+} from '@/results/verifyStoredResult';
+import {
+  StorageBoundaryError,
+  type StorageBoundaryErrorKind,
+} from '@/storage/rootIsolation';
 
 /**
  * HTTP status per error cause.
@@ -47,6 +55,8 @@ const STATUS_BY_RUN_EVIDENCE_KIND: Record<RunEvidenceErrorKind, number> = {
   RUN_MANIFEST_UNREADABLE: 409,
   RUN_MANIFEST_SCHEMA_UNSUPPORTED: 409,
   RUN_MANIFEST_INCOMPLETE: 409,
+  RUN_ID_MISMATCH: 409,
+  RUN_MANIFEST_FILE_MISMATCH: 409,
   RUN_FILE_MISSING: 409,
   RUN_HASH_MISMATCH: 409,
 };
@@ -96,6 +106,8 @@ export interface ApiErrorBody {
       | WavErrorKind
       | SplitterErrorKind
       | RunEvidenceErrorKind
+      | ResultVerificationErrorKind
+      | StorageBoundaryErrorKind
       | ResultStoreErrorKind
       | ToolResolutionErrorKind
       | SaveResultErrorKind
@@ -133,6 +145,28 @@ export function toErrorResponse(caught: unknown): NextResponse<ApiErrorBody> {
         error: { kind: caught.kind, message: caught.message, detail: caught.detail },
       } as const,
       { status: STATUS_BY_BENCHMARK_KIND[caught.kind] },
+    );
+  }
+
+  if (caught instanceof StorageBoundaryError) {
+    // A misconfigured storage layout, not a bad request. 500 so it reads as
+    // "this deployment is wrong", which is what it is.
+    return NextResponse.json(
+      {
+        ok: false,
+        error: { kind: caught.kind, message: caught.message, detail: caught.detail },
+      } as const,
+      { status: 500 },
+    );
+  }
+
+  if (caught instanceof ResultVerificationError) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: { kind: caught.kind, message: caught.message, detail: caught.detail },
+      } as const,
+      { status: 409 },
     );
   }
 
