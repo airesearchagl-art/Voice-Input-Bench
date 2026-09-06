@@ -74,7 +74,7 @@ canonicalization は**改行コードの正規化だけ**。trim / 全角半角�
 句読点変更 / 空白圧縮 / 誤字修正 / AI 整形は行わない。詳細は
 [`docs/architecture/phase-1-plan.md`](docs/architecture/phase-1-plan.md) §6.1 を参照。
 
-> canonicalization の実装は P1-B。P1-A では契約の定義のみ。
+> canonicalization は P1-B で実装済み（`src/lib/canonicalText.ts`）。
 
 ### 将来の Run Bundle 構成
 
@@ -86,7 +86,7 @@ data/runs/<run-id>/
 └─ manifest.json        Run メタデータ（ハッシュ・エンジン情報・パラメータ）
 ```
 
-> Run Bundle の完成版は P1-B 以降で実装する。
+> Run Bundle は P1-B で実装済み。`data/runs/` は Git 管理外。
 
 ## Phase 1 Breakdown
 
@@ -96,7 +96,7 @@ data/runs/<run-id>/
 | **P1-B** | Run 永続化。`data/runs/<run-id>` の immutable Run Bundle、Manifest、SHA-256、transactional write。 |
 | **P1-C** | Benchmark Case と長文対応。Case selector、deterministic long-text splitter、segment WAV assembly、`architecture-long-001`、Phase 1 UI completion、Phase 1 Acceptance / README。 |
 
-現在地: **P1-A**
+現在地: **P1-B**
 
 ## Setup
 
@@ -149,17 +149,30 @@ npm run dev
 
 <http://localhost:3000> を開く。
 
-## Usage (P1-A)
+## Usage (P1-B)
 
 1. ページ上部の **AivisSpeech Connection** が `Connected` になっていることを確認する
 2. **Test Text** にテキストを入力する
 3. **Voice / Style** を選ぶ
 4. **Speed** / **Volume** を調整する
 5. **Generate** を押す
-6. **Output** の audio player で再生する
+6. **Output** に Run ID / Text SHA-256 / Audio SHA-256 / bytes / Generated At が表示される
+7. audio player で**保存済みの** `audio.wav` を再生する
 
-P1-A では音声を保存しない。生成した WAV はブラウザに返すだけで、
-`data/runs/` への永続化は P1-B の範囲。
+1 回の Generate が 1 つの immutable Run になる。
+
+```text
+data/runs/<run-id>/
+├─ source.txt           canonical text
+├─ audio.wav            canonical artifact
+├─ provider-query.json  Provider へ送った実リクエスト
+└─ manifest.json        Manifest schema v1
+```
+
+Run は上書きされない。同じテキストを再生成しても新しい Run が作られる。
+
+audio player は `GET /api/runs/<run-id>/audio` を読むので、聞こえているのは
+メモリ上のコピーではなくディスクに保存された canonical artifact そのもの。
 
 ## Scripts
 
@@ -196,15 +209,24 @@ Engine が起動していない場合、`MANUAL_SMOKE_BLOCKED_ENGINE_NOT_RUNNING
 ```text
 src/
 ├─ app/
-│  ├─ page.tsx                    P1-A の単一ページ UI
+│  ├─ page.tsx                    単一ページ UI
 │  ├─ layout.tsx
 │  ├─ globals.css
 │  └─ api/
 │     ├─ status/route.ts          接続状態 + Engine Version + /aivm_models
 │     ├─ voices/route.ts          Voice / Style 一覧 + capabilities
-│     └─ generate/route.ts        Text -> WAV
+│     ├─ generate/route.ts        Text -> immutable Run（Run metadata を返す）
+│     └─ runs/[runId]/audio/route.ts  保存済み canonical audio.wav
+├─ benchmark/
+│  ├─ generateBenchmark.ts         Run オーケストレーション（fresh evidence 解決）
+│  └─ manifest.ts                  Manifest schema v1
+├─ storage/
+│  └─ LocalRunStore.ts             transactional な immutable Run 保存
 ├─ lib/
-│  ├─ engineConfig.ts             AIVIS_ENGINE_URL の解決
+│  ├─ engineConfig.ts             AIVIS_ENGINE_URL / runs ルートの解決
+│  ├─ canonicalText.ts            改行コードのみの正規化
+│  ├─ hash.ts                     SHA-256（Node 標準 crypto）
+│  ├─ runId.ts                    server-generated Run ID と検証
 │  └─ apiError.ts                 原因別 HTTP ステータスへの変換
 └─ tts/
    ├─ TTSProvider.ts              Provider 境界（interface / error kinds）
@@ -218,7 +240,7 @@ docs/
 └─ architecture/
    └─ phase-1-plan.md             Phase 1 の設計方針と境界
 
-data/runs/   Run 生成物の出力先（Git管理外・P1-B で使用）
+data/runs/   Run 生成物の出力先（Git 管理外）
 ```
 
 ## License

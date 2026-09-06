@@ -60,12 +60,20 @@ export interface AivisSpeechProviderOptions {
   fetchImpl?: FetchLike;
 }
 
-/** One installed AIVM voice model, as reported by `/aivm_models`. */
+/**
+ * One installed AIVM voice model, as reported by `/aivm_models`.
+ *
+ * `name` and `version` are optional because the engine is the source of truth
+ * for them and a missing value is evidence in its own right — callers that need
+ * model identity must fail closed on it rather than substitute a placeholder.
+ */
 export interface AivmModelSummary {
   uuid: string;
-  name: string;
+  name?: string;
   version?: string;
   speakerCount: number;
+  /** Speaker UUIDs this model provides, used to resolve a voice back to a model. */
+  speakerUuids: string[];
 }
 
 /**
@@ -248,12 +256,36 @@ export class AivisSpeechProvider implements TTSProvider {
 
       const models: AivmModelSummary[] = Object.entries(raw).map(([uuid, entry]) => {
         const manifest = isPlainObject(entry) && isPlainObject(entry.manifest) ? entry.manifest : {};
-        const speakers = Array.isArray(manifest.speakers) ? manifest.speakers : [];
+        // Observed against AivisSpeech Engine 1.1.0-dev: the same speaker shows
+        // up in two places with two shapes —
+        //   entry.speakers[]    = { speaker: { speaker_uuid, ... }, speaker_info }
+        //   manifest.speakers[] = { uuid, local_id, ... }
+        // Read both and dedupe, so voice-to-model resolution does not depend on
+        // which of the two an engine build happens to populate.
+        const speakerEntries = [
+          ...(isPlainObject(entry) && Array.isArray(entry.speakers) ? entry.speakers : []),
+          ...(Array.isArray(manifest.speakers) ? manifest.speakers : []),
+        ];
+        const speakerUuids = [
+          ...new Set(
+            speakerEntries.flatMap((item) => {
+              if (!isPlainObject(item)) return [];
+              const nested = isPlainObject(item.speaker) ? item.speaker : undefined;
+              const found = [item.uuid, item.speaker_uuid, nested?.uuid, nested?.speaker_uuid].find(
+                isNonEmptyString,
+              );
+              return found ? [found] : [];
+            }),
+          ),
+        ];
+
         return {
           uuid,
-          name: typeof manifest.name === 'string' ? manifest.name : uuid,
-          version: typeof manifest.version === 'string' ? manifest.version : undefined,
-          speakerCount: speakers.length,
+          name: isNonEmptyString(manifest.name) ? manifest.name : undefined,
+          version: isNonEmptyString(manifest.version) ? manifest.version : undefined,
+          // Distinct speakers, not raw entry count: the two lists overlap.
+          speakerCount: speakerUuids.length,
+          speakerUuids,
         };
       });
 

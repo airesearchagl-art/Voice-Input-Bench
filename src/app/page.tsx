@@ -1,15 +1,20 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { TTSCapabilities, TTSVoice } from '@/tts/TTSProvider';
 import type { AivmModelsProbe } from '@/tts/AivisSpeechProvider';
+import type { RunManifestV1 } from '@/benchmark/manifest';
 
 /**
- * P1-A UI — one page.
+ * P1-B UI — still one page.
  *
  * Engine is fixed to AivisSpeech for Phase 1, so there is no engine selector.
  * Only Voice/Style, Speed and Volume are user-adjustable; format, sample rate
  * and channel count are fixed so Runs stay comparable.
+ *
+ * Generate now produces a persisted Run rather than a throwaway blob, so the
+ * page shows the Run's identity (id, hashes, byte count) and plays the stored
+ * `audio.wav` back through the Run's own audio route.
  */
 
 interface ApiErrorShape {
@@ -27,6 +32,14 @@ interface StatusOk {
   engineUrl: string;
   providerId: string;
   aivmModels: AivmModelsProbe;
+}
+
+/** What `POST /api/generate` returns once a Run has been persisted. */
+interface GeneratedRun {
+  ok: true;
+  runId: string;
+  audioUrl: string;
+  manifest: RunManifestV1;
 }
 
 const DEFAULT_TEXT = 'これはボイスインプットベンチの疎通確認用テキストです。';
@@ -88,17 +101,9 @@ export default function Page() {
 
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<ApiErrorShape | null>(null);
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
-
-  // Object URLs are revoked on replacement/unmount so repeated generation does
-  // not leak blobs across a long bench session.
-  const audioUrlRef = useRef<string | null>(null);
-  const setAudio = useCallback((url: string | null) => {
-    if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
-    audioUrlRef.current = url;
-    setAudioUrl(url);
-  }, []);
-  useEffect(() => () => setAudio(null), [setAudio]);
+  // The player reads the stored Run, not an in-memory blob: what you hear is
+  // the canonical artifact on disk, not a copy that was never persisted.
+  const [run, setRun] = useState<GeneratedRun | null>(null);
 
   const loadStatus = useCallback(async () => {
     setStatusLoading(true);
@@ -171,7 +176,7 @@ export default function Page() {
     if (styleId === null) return;
     setGenerating(true);
     setGenerateError(null);
-    setAudio(null);
+    setRun(null);
     try {
       const response = await fetch('/api/generate', {
         method: 'POST',
@@ -182,15 +187,7 @@ export default function Page() {
         setGenerateError(await readApiError(response));
         return;
       }
-      const blob = await response.blob();
-      if (blob.size === 0) {
-        setGenerateError({
-          kind: 'MALFORMED_RESPONSE',
-          message: '空の音声データが返されました。',
-        });
-        return;
-      }
-      setAudio(URL.createObjectURL(blob));
+      setRun((await response.json()) as GeneratedRun);
     } catch (caught) {
       setGenerateError({
         kind: 'UNEXPECTED',
@@ -199,7 +196,7 @@ export default function Page() {
     } finally {
       setGenerating(false);
     }
-  }, [setAudio, speedScale, styleId, text, volumeScale]);
+  }, [speedScale, styleId, text, volumeScale]);
 
   const connected = status !== null;
   const canGenerate = connected && styleId !== null && text.trim().length > 0 && !generating;
@@ -209,8 +206,8 @@ export default function Page() {
   return (
     <main className="page">
       <header className="page-header">
-        <h1>Voice Input Bench — P1-A</h1>
-        <p>AivisSpeech Contract Spike / Text → local TTS → WAV</p>
+        <h1>Voice Input Bench — P1-B</h1>
+        <p>Reproducible Run Bundle / Text → local TTS → canonical WAV + Manifest</p>
       </header>
 
       <section className="panel">
@@ -351,12 +348,31 @@ export default function Page() {
 
       <section className="panel">
         <h2>Output</h2>
-        {audioUrl ? (
-          <audio controls src={audioUrl}>
-            お使いのブラウザは audio 要素に対応していません。
-          </audio>
+        {run ? (
+          <>
+            <audio controls src={run.audioUrl}>
+              お使いのブラウザは audio 要素に対応していません。
+            </audio>
+            <div style={{ height: 12 }} />
+            <dl className="kv">
+              <dt>Run ID</dt>
+              <dd>{run.runId}</dd>
+              <dt>Generated At</dt>
+              <dd>{run.manifest.generated_at}</dd>
+              <dt>Text SHA-256</dt>
+              <dd>{run.manifest.source.sha256}</dd>
+              <dt>Audio SHA-256</dt>
+              <dd>{run.manifest.audio.sha256}</dd>
+              <dt>Audio Bytes</dt>
+              <dd>{run.manifest.audio.bytes.toLocaleString('en-US')}</dd>
+            </dl>
+            <p className="fixed-note">
+              保存済み Run: <code>data/runs/{run.runId}/</code> — source.txt / audio.wav /
+              provider-query.json / manifest.json
+            </p>
+          </>
         ) : (
-          <p className="fixed-note">まだ音声は生成されていません。</p>
+          <p className="fixed-note">まだ Run は生成されていません。</p>
         )}
 
         {generateError && (
