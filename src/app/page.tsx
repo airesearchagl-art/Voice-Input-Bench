@@ -4,7 +4,15 @@ import { useCallback, useEffect, useState } from 'react';
 import type { TTSCapabilities, TTSVoice } from '@/tts/TTSProvider';
 import type { AivmModelsProbe } from '@/tts/AivisSpeechProvider';
 import type { RunManifest } from '@/benchmark/manifest';
-import { MANUAL_TEST_ID, resolveSourceSelection } from '@/benchmark/sourceSelection';
+import {
+  MANUAL_TEST_ID,
+  beginCasesLoad,
+  casesLoadFailed,
+  casesLoaded,
+  idleCases,
+  resolveSourceSelection,
+  type CasesLoadState,
+} from '@/benchmark/sourceSelection';
 
 /**
  * The bench UI — one page.
@@ -109,7 +117,11 @@ export default function Page() {
   const [voicesError, setVoicesError] = useState<ApiErrorShape | null>(null);
   const [noVoicesInstalled, setNoVoicesInstalled] = useState(false);
 
-  const [cases, setCases] = useState<BenchmarkCaseSummary[]>([]);
+  // Only a successful fresh response counts as case evidence. A reload clears
+  // the list first so a failed refetch cannot leave the previous one standing.
+  const [casesState, setCasesState] =
+    useState<CasesLoadState<BenchmarkCaseSummary>>(idleCases);
+  const cases = casesState.cases;
   const [testId, setTestId] = useState<string>(MANUAL_TEST_ID);
   const [text, setText] = useState(DEFAULT_TEXT);
   const [styleId, setStyleId] = useState<number | null>(null);
@@ -181,15 +193,21 @@ export default function Page() {
   }, []);
 
   const loadCases = useCallback(async () => {
+    // Invalidate up front: while this is in flight the page has no confirmed
+    // case bodies, and a failure must not leave the previous list behind.
+    setCasesState(beginCasesLoad());
     try {
       const response = await fetch('/api/cases', { cache: 'no-store' });
-      if (!response.ok) return;
+      if (!response.ok) {
+        setCasesState(casesLoadFailed());
+        return;
+      }
       const body = (await response.json()) as { cases: BenchmarkCaseSummary[] };
-      setCases(body.cases);
+      setCasesState(casesLoaded(body.cases));
     } catch {
-      // The Benchmark Case list is a convenience; a failure here must not stop
-      // the operator from running a manual Run.
-      setCases([]);
+      // A failure here blocks Benchmark Case Runs but must not stop the
+      // operator from running a manual one.
+      setCasesState(casesLoadFailed());
     }
   }, []);
 
@@ -309,6 +327,17 @@ export default function Page() {
           <label htmlFor="testId">Test</label>
           <select id="testId" value={testId} onChange={(event) => setTestId(event.target.value)}>
             <option value={MANUAL_TEST_ID}>Manual — 自分で入力する</option>
+            {/*
+              The selection survives a failed case load, so it needs an option to
+              sit in. Without one the control would silently fall back to Manual
+              while the state still names the case — the visible mode and the
+              mode that would actually be sent would disagree.
+            */}
+            {testId !== MANUAL_TEST_ID && !selectedCase && (
+              <option value={testId} disabled>
+                {testId} —（本文未取得）
+              </option>
+            )}
             {cases.map((benchmarkCase) => (
               <option key={benchmarkCase.id} value={benchmarkCase.id}>
                 {benchmarkCase.id} — {benchmarkCase.title}（{benchmarkCase.charCount} 字 /{' '}

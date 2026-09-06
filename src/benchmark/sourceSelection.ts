@@ -50,3 +50,41 @@ export function resolveSourceSelection(input: SourceSelectionInput): SourceSelec
     ? { ready: true, source: 'case', caseId: input.testId }
     : { ready: false, reason: 'CASE_NOT_LOADED' };
 }
+
+/**
+ * Case-list load state.
+ *
+ * A reload invalidates whatever was loaded before it. Keeping the previous list
+ * while a refetch is in flight — or after it came back non-OK — would let the
+ * page keep offering a case whose body it can no longer confirm, and
+ * {@link resolveSourceSelection} would report it as ready on the strength of
+ * evidence from an earlier request.
+ *
+ * So only a successful fresh response establishes case evidence. Every other
+ * outcome, including "still loading", leaves the list empty.
+ */
+export type CasesLoadStatus = 'idle' | 'loading' | 'loaded' | 'failed';
+
+export interface CasesLoadState<TCase> {
+  status: CasesLoadStatus;
+  cases: readonly TCase[];
+}
+
+export function idleCases<TCase>(): CasesLoadState<TCase> {
+  return { status: 'idle', cases: [] };
+}
+
+/** A load has started: previous evidence is no longer current. */
+export function beginCasesLoad<TCase>(): CasesLoadState<TCase> {
+  return { status: 'loading', cases: [] };
+}
+
+/** The only transition that establishes case evidence. */
+export function casesLoaded<TCase>(cases: readonly TCase[]): CasesLoadState<TCase> {
+  return { status: 'loaded', cases };
+}
+
+/** Non-OK response, malformed body, or a thrown fetch. */
+export function casesLoadFailed<TCase>(): CasesLoadState<TCase> {
+  return { status: 'failed', cases: [] };
+}
