@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AivisSpeechProvider, type FetchLike } from '@/tts/AivisSpeechProvider';
 import { LocalRunStore } from '@/storage/LocalRunStore';
 import { BenchmarkError, generateBenchmarkRun } from './generateBenchmark';
-import type { RunManifestV1 } from './manifest';
+import { MANUAL_TEST_ID } from './cases';
+import type { RunManifest } from './manifest';
 
 /**
  * The provider is a real AivisSpeechProvider with an injected fetch, so these
@@ -63,12 +64,34 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+/**
+ * A WAV matching the Phase 1 contract: linear PCM, 44100 Hz, mono, 16-bit.
+ * Runs are validated against that contract before anything is written, so the
+ * fixture has to be a real container rather than bare RIFF/WAVE magic.
+ */
 function wavBody(payloadLength = 32): ArrayBuffer {
-  const bytes = new Uint8Array(12 + payloadLength);
-  bytes.set([0x52, 0x49, 0x46, 0x46], 0); // "RIFF"
-  new DataView(bytes.buffer).setUint32(4, 4 + payloadLength, true);
-  bytes.set([0x57, 0x41, 0x56, 0x45], 8); // "WAVE"
-  for (let i = 12; i < bytes.length; i += 1) bytes[i] = i & 0xff;
+  const dataBytes = payloadLength - (payloadLength % 2);
+  const bytes = new Uint8Array(44 + dataBytes);
+  const view = new DataView(bytes.buffer);
+  const writeAscii = (offset: number, text: string) => {
+    for (let i = 0; i < text.length; i += 1) bytes[offset + i] = text.charCodeAt(i);
+  };
+
+  writeAscii(0, 'RIFF');
+  view.setUint32(4, 36 + dataBytes, true);
+  writeAscii(8, 'WAVE');
+  writeAscii(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // mono
+  view.setUint32(24, 44100, true);
+  view.setUint32(28, 88200, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeAscii(36, 'data');
+  view.setUint32(40, dataBytes, true);
+  for (let i = 44; i < bytes.length; i += 1) bytes[i] = i & 0xff;
+
   return bytes.buffer;
 }
 
@@ -122,10 +145,16 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-const INPUT = { rawText: 'テストです。', styleId: STYLE_ID, speedScale: 1.25, volumeScale: 0.75 };
+const INPUT = {
+  testId: MANUAL_TEST_ID,
+  rawText: 'テストです。',
+  styleId: STYLE_ID,
+  speedScale: 1.25,
+  volumeScale: 0.75,
+};
 
 describe('successful Run', () => {
-  it('writes the four-file bundle and returns a schema v1 manifest', async () => {
+  it('writes the four-file bundle and returns a schema v2 manifest', async () => {
     const { provider } = createDeps();
 
     const result = await generateBenchmarkRun(INPUT, {
@@ -141,7 +170,7 @@ describe('successful Run', () => {
     );
 
     const manifest = result.manifest;
-    expect(manifest.schema_version).toBe(1);
+    expect(manifest.schema_version).toBe(2);
     expect(manifest.run_id).toBe(RUN_ID);
     expect(manifest.test_id).toBe('manual');
     expect(manifest.generated_at).toBe(NOW.toISOString());
@@ -151,7 +180,11 @@ describe('successful Run', () => {
       sample_rate: 44100,
       stereo: false,
     });
-    expect(manifest.segmentation).toEqual({ strategy: 'none', segment_count: 1 });
+    expect(manifest.segmentation).toEqual({
+      strategy: 'none',
+      target_max_chars: 450,
+      segment_count: 1,
+    });
     expect(manifest.reproducibility).toEqual({
       canonical_artifact: true,
       bit_exact_regeneration_expected: false,
@@ -197,7 +230,7 @@ describe('successful Run', () => {
 
     const onDisk = JSON.parse(
       await readFile(path.join(result.runDir, 'manifest.json'), 'utf8'),
-    ) as RunManifestV1;
+    ) as RunManifest;
     expect(onDisk).toEqual(result.manifest);
   });
 

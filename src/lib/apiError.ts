@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { TTSProviderError, type TTSErrorKind } from '@/tts/TTSProvider';
 import { BenchmarkError, type BenchmarkErrorKind } from '@/benchmark/generateBenchmark';
 import { RunStoreError, type RunStoreErrorKind } from '@/storage/LocalRunStore';
+import { WavError, type WavErrorKind } from '@/audio/wav';
+import { SplitterError, type SplitterErrorKind } from '@/benchmark/splitter';
 
 /**
  * HTTP status per error cause.
@@ -22,6 +24,8 @@ const STATUS_BY_PROVIDER_KIND: Record<TTSErrorKind, number> = {
  * 502 where the engine failed to supply the evidence at all.
  */
 const STATUS_BY_BENCHMARK_KIND: Record<BenchmarkErrorKind, number> = {
+  CASE_NOT_FOUND: 404,
+  NO_SEGMENTS: 400,
   VOICE_NOT_FOUND: 409,
   MODEL_EVIDENCE_UNAVAILABLE: 502,
   MODEL_NOT_FOUND: 409,
@@ -37,10 +41,35 @@ const STATUS_BY_STORE_KIND: Record<RunStoreErrorKind, number> = {
   WRITE_FAILED: 500,
 };
 
+/**
+ * WAV assembly problems are the app's own integrity checks failing, not the
+ * engine misbehaving — 500, and the Run is never written.
+ */
+const STATUS_BY_WAV_KIND: Record<WavErrorKind, number> = {
+  NOT_RIFF_WAVE: 502,
+  TRUNCATED_CHUNK: 502,
+  MISSING_FMT: 502,
+  MISSING_DATA: 502,
+  DATA_NOT_FRAME_ALIGNED: 502,
+  // The engine answered, but not with the audio Phase 1 asked for.
+  UNSUPPORTED_AUDIO_FORMAT: 502,
+  UNEXPECTED_SAMPLE_RATE: 502,
+  UNEXPECTED_CHANNEL_COUNT: 502,
+  FORMAT_MISMATCH: 500,
+  NO_SEGMENT_WAVS: 500,
+};
+
 export interface ApiErrorBody {
   ok: false;
   error: {
-    kind: TTSErrorKind | BenchmarkErrorKind | RunStoreErrorKind | 'BAD_REQUEST' | 'UNEXPECTED';
+    kind:
+      | TTSErrorKind
+      | BenchmarkErrorKind
+      | RunStoreErrorKind
+      | WavErrorKind
+      | SplitterErrorKind
+      | 'BAD_REQUEST'
+      | 'UNEXPECTED';
     message: string;
     endpoint?: string;
     httpStatus?: number;
@@ -73,6 +102,28 @@ export function toErrorResponse(caught: unknown): NextResponse<ApiErrorBody> {
         error: { kind: caught.kind, message: caught.message, detail: caught.detail },
       } as const,
       { status: STATUS_BY_BENCHMARK_KIND[caught.kind] },
+    );
+  }
+
+  if (caught instanceof SplitterError) {
+    // The text itself cannot be split within the contract: a property of the
+    // input, not a server fault.
+    return NextResponse.json(
+      {
+        ok: false,
+        error: { kind: caught.kind, message: caught.message, detail: caught.detail },
+      } as const,
+      { status: 422 },
+    );
+  }
+
+  if (caught instanceof WavError) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: { kind: caught.kind, message: caught.message, detail: caught.detail },
+      } as const,
+      { status: STATUS_BY_WAV_KIND[caught.kind] },
     );
   }
 

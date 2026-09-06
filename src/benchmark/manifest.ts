@@ -1,19 +1,24 @@
 /**
- * Run Manifest, schema v1.
+ * Run Manifest, schema v2.
  *
  * Records what was said, by which voice, from which model, with which settings,
- * and what bytes came out — enough to check later that the stored artifacts are
- * the ones the Run claims. Deliberately narrow: no field is added here for a
- * feature that does not exist yet.
+ * how the text was split, and what bytes came out — enough to check later that
+ * the stored artifacts are the ones the Run claims. Deliberately narrow: no
+ * field is added here for a feature that does not exist yet.
+ *
+ * v2 widens two things over the schema P1-B wrote: `test_id` may now name a
+ * built-in Benchmark Case, and `segmentation` carries the splitter target. The
+ * v1 Runs already created by P1-B are left exactly as they were written —
+ * nothing is migrated or rewritten.
  */
 
-export const MANIFEST_SCHEMA_VERSION = 1;
+export const MANIFEST_SCHEMA_VERSION = 2 as const;
 
-export interface RunManifestV1 {
-  schema_version: number;
+export interface RunManifestV2 {
+  schema_version: 2;
   run_id: string;
-  /** P1-B has no Benchmark Case selector yet; every Run is a manual one. */
-  test_id: 'manual';
+  /** `manual`, or the ID of the built-in Benchmark Case that supplied the text. */
+  test_id: string;
   generated_at: string;
 
   source: {
@@ -54,10 +59,16 @@ export interface RunManifestV1 {
     stereo: false;
   };
 
-  /** P1-B never splits text; long-text handling is P1-C. */
+  /**
+   * How the canonical text was divided before synthesis. `none` means the text
+   * went to the engine in one piece; `sentence-v1` means it was split by the
+   * deterministic splitter.
+   */
   segmentation: {
-    strategy: 'none';
-    segment_count: 1;
+    strategy: string;
+    /** Upper bound in Unicode code points the splitter aimed for. */
+    target_max_chars: number;
+    segment_count: number;
   };
 
   provider_query: {
@@ -69,7 +80,10 @@ export interface RunManifestV1 {
   audio: {
     file: 'audio.wav';
     content_type: string;
-    /** SHA-256 of the exact WAV bytes the provider returned. */
+    /**
+     * SHA-256 of the exact bytes of `audio.wav` — for a multi-segment Run that
+     * is the assembled file, not any individual segment.
+     */
     sha256: string;
     bytes: number;
   };
@@ -81,3 +95,13 @@ export interface RunManifestV1 {
     bit_exact_regeneration_expected: false;
   };
 }
+
+/**
+ * The manifest shape this code writes and reads.
+ *
+ * There is no `RunManifestV1` type here on purpose. Nothing in the app reads a
+ * v1 manifest, so a compat alias would only claim a compatibility that has
+ * never been exercised. If reading P1-B Runs is ever needed, the actual v1
+ * shape gets its own definition then.
+ */
+export type RunManifest = RunManifestV2;

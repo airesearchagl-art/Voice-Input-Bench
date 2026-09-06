@@ -204,6 +204,8 @@ data/runs/<run-id>/
 P1-C をもって Phase 1 は完了する。評価・採点・入力自動化は Phase 1 の範囲外
 （[Out of Scope for Phase 1](#out-of-scope-for-phase-1) を参照）。
 
+受け入れ基準は [`PHASE1_ACCEPTANCE.md`](PHASE1_ACCEPTANCE.md)。
+
 ## Non-Goals（当面つくらないもの）
 
 - 将来機能のためだけのディレクトリ階層

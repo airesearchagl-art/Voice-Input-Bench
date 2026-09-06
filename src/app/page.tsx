@@ -3,18 +3,30 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { TTSCapabilities, TTSVoice } from '@/tts/TTSProvider';
 import type { AivmModelsProbe } from '@/tts/AivisSpeechProvider';
-import type { RunManifestV1 } from '@/benchmark/manifest';
+import type { RunManifest } from '@/benchmark/manifest';
+import {
+  MANUAL_TEST_ID,
+  beginCasesLoad,
+  casesLoadFailed,
+  casesLoaded,
+  idleCases,
+  resolveSourceSelection,
+  type CasesLoadState,
+} from '@/benchmark/sourceSelection';
 
 /**
- * P1-B UI — still one page.
+ * The bench UI — one page.
  *
  * Engine is fixed to AivisSpeech for Phase 1, so there is no engine selector.
  * Only Voice/Style, Speed and Volume are user-adjustable; format, sample rate
  * and channel count are fixed so Runs stay comparable.
  *
- * Generate now produces a persisted Run rather than a throwaway blob, so the
- * page shows the Run's identity (id, hashes, byte count) and plays the stored
- * `audio.wav` back through the Run's own audio route.
+ * Generate produces a persisted Run rather than a throwaway blob, so the page
+ * shows the Run's identity (id, test id, segmentation, hashes, byte count) and
+ * plays the stored `audio.wav` back through the Run's own audio route.
+ *
+ * The text is either typed here or taken from a built-in Benchmark Case. For a
+ * Case the body shown below is display only — the server reads its own copy.
  */
 
 interface ApiErrorShape {
@@ -39,7 +51,18 @@ interface GeneratedRun {
   ok: true;
   runId: string;
   audioUrl: string;
-  manifest: RunManifestV1;
+  manifest: RunManifest;
+}
+
+/** One built-in Benchmark Case, as listed by `GET /api/cases`. */
+interface BenchmarkCaseSummary {
+  id: string;
+  title: string;
+  intent: string;
+  /** Shown so the operator can see what will be spoken. Display only. */
+  text: string;
+  charCount: number;
+  expectedSegmentCount: number;
 }
 
 const DEFAULT_TEXT = 'これはボイスインプットベンチの疎通確認用テキストです。';
@@ -94,6 +117,12 @@ export default function Page() {
   const [voicesError, setVoicesError] = useState<ApiErrorShape | null>(null);
   const [noVoicesInstalled, setNoVoicesInstalled] = useState(false);
 
+  // Only a successful fresh response counts as case evidence. A reload clears
+  // the list first so a failed refetch cannot leave the previous one standing.
+  const [casesState, setCasesState] =
+    useState<CasesLoadState<BenchmarkCaseSummary>>(idleCases);
+  const cases = casesState.cases;
+  const [testId, setTestId] = useState<string>(MANUAL_TEST_ID);
   const [text, setText] = useState(DEFAULT_TEXT);
   const [styleId, setStyleId] = useState<number | null>(null);
   const [speedScale, setSpeedScale] = useState(1);
@@ -163,10 +192,30 @@ export default function Page() {
     }
   }, []);
 
+  const loadCases = useCallback(async () => {
+    // Invalidate up front: while this is in flight the page has no confirmed
+    // case bodies, and a failure must not leave the previous list behind.
+    setCasesState(beginCasesLoad());
+    try {
+      const response = await fetch('/api/cases', { cache: 'no-store' });
+      if (!response.ok) {
+        setCasesState(casesLoadFailed());
+        return;
+      }
+      const body = (await response.json()) as { cases: BenchmarkCaseSummary[] };
+      setCasesState(casesLoaded(body.cases));
+    } catch {
+      // A failure here blocks Benchmark Case Runs but must not stop the
+      // operator from running a manual one.
+      setCasesState(casesLoadFailed());
+    }
+  }, []);
+
   const reload = useCallback(() => {
     void loadStatus();
     void loadVoices();
-  }, [loadStatus, loadVoices]);
+    void loadCases();
+  }, [loadCases, loadStatus, loadVoices]);
 
   useEffect(() => {
     reload();
@@ -174,6 +223,16 @@ export default function Page() {
 
   const generate = useCallback(async () => {
     if (styleId === null) return;
+    // Same guard as the button, so a stale click cannot get past it either.
+    if (
+      !resolveSourceSelection({
+        testId,
+        text,
+        knownCaseIds: cases.map((benchmarkCase) => benchmarkCase.id),
+      }).ready
+    ) {
+      return;
+    }
     setGenerating(true);
     setGenerateError(null);
     setRun(null);
@@ -181,7 +240,9 @@ export default function Page() {
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, styleId, speedScale, volumeScale }),
+        // For a Benchmark Case the server reads its own copy of the text;
+        // `text` here is only meaningful for a manual Run.
+        body: JSON.stringify({ testId, text, styleId, speedScale, volumeScale }),
       });
       if (!response.ok) {
         setGenerateError(await readApiError(response));
@@ -196,18 +257,27 @@ export default function Page() {
     } finally {
       setGenerating(false);
     }
-  }, [speedScale, styleId, text, volumeScale]);
+  }, [cases, speedScale, styleId, testId, text, volumeScale]);
 
+  const selectedCase = cases.find((benchmarkCase) => benchmarkCase.id === testId);
   const connected = status !== null;
-  const canGenerate = connected && styleId !== null && text.trim().length > 0 && !generating;
+  // Decided from what the page can actually see. A selected case whose body
+  // never loaded blocks Generate rather than letting the server synthesize one
+  // text while the operator reads another.
+  const selection = resolveSourceSelection({
+    testId,
+    text,
+    knownCaseIds: cases.map((benchmarkCase) => benchmarkCase.id),
+  });
+  const canGenerate = connected && styleId !== null && selection.ready && !generating;
   const speedRange = capabilities?.speed ?? { min: 0.5, max: 2, step: 0.05, default: 1 };
   const volumeRange = capabilities?.volume ?? { min: 0, max: 2, step: 0.05, default: 1 };
 
   return (
     <main className="page">
       <header className="page-header">
-        <h1>Voice Input Bench — P1-B</h1>
-        <p>Reproducible Run Bundle / Text → local TTS → canonical WAV + Manifest</p>
+        <h1>Voice Input Bench</h1>
+        <p>Text → local TTS → canonical WAV + Manifest</p>
       </header>
 
       <section className="panel">
@@ -254,11 +324,44 @@ export default function Page() {
         <h2>Input</h2>
 
         <div className="field">
-          <label htmlFor="text">Test Text</label>
+          <label htmlFor="testId">Test</label>
+          <select id="testId" value={testId} onChange={(event) => setTestId(event.target.value)}>
+            <option value={MANUAL_TEST_ID}>Manual — 自分で入力する</option>
+            {/*
+              The selection survives a failed case load, so it needs an option to
+              sit in. Without one the control would silently fall back to Manual
+              while the state still names the case — the visible mode and the
+              mode that would actually be sent would disagree.
+            */}
+            {testId !== MANUAL_TEST_ID && !selectedCase && (
+              <option value={testId} disabled>
+                {testId} —（本文未取得）
+              </option>
+            )}
+            {cases.map((benchmarkCase) => (
+              <option key={benchmarkCase.id} value={benchmarkCase.id}>
+                {benchmarkCase.id} — {benchmarkCase.title}（{benchmarkCase.charCount} 字 /{' '}
+                {benchmarkCase.expectedSegmentCount} segment）
+              </option>
+            ))}
+          </select>
+          {selectedCase && <p className="fixed-note">{selectedCase.intent}</p>}
+        </div>
+
+        <div className="field">
+          <label htmlFor="text">
+            Test Text
+            {selectedCase && (
+              <span className="hint">
+                Benchmark Case 本文（読み取り専用・サーバー側の正本を使用）
+              </span>
+            )}
+          </label>
           <textarea
             id="text"
-            value={text}
+            value={selectedCase ? selectedCase.text : text}
             onChange={(event) => setText(event.target.value)}
+            readOnly={selectedCase !== undefined}
             placeholder="合成するテキストを入力"
           />
         </div>
@@ -325,6 +428,20 @@ export default function Page() {
           {String(capabilities?.fixedStereo ?? false)}
         </p>
 
+        {!selection.ready && selection.reason === 'CASE_NOT_LOADED' && (
+          <>
+            <div style={{ height: 12 }} />
+            <div className="alert error" role="alert">
+              <span className="kind">CASE_NOT_LOADED</span>
+              <p>
+                Benchmark Case <code>{testId}</code> の本文を取得できていません。本文が確認できない
+                Case で Run を作らないため、Generate を無効にしています。再確認するか Manual
+                を選び直してください。
+              </p>
+            </div>
+          </>
+        )}
+
         {noVoicesInstalled && (
           <>
             <div style={{ height: 12 }} />
@@ -357,8 +474,15 @@ export default function Page() {
             <dl className="kv">
               <dt>Run ID</dt>
               <dd>{run.runId}</dd>
+              <dt>Test ID</dt>
+              <dd>{run.manifest.test_id}</dd>
               <dt>Generated At</dt>
               <dd>{run.manifest.generated_at}</dd>
+              <dt>Segmentation</dt>
+              <dd>
+                {run.manifest.segmentation.strategy} / {run.manifest.segmentation.segment_count}{' '}
+                segment（target {run.manifest.segmentation.target_max_chars} 字）
+              </dd>
               <dt>Text SHA-256</dt>
               <dd>{run.manifest.source.sha256}</dd>
               <dt>Audio SHA-256</dt>

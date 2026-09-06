@@ -4,10 +4,12 @@ import { badRequest, toErrorResponse } from '@/lib/apiError';
 import { AIVIS_SPEED_RANGE, AIVIS_VOLUME_RANGE } from '@/tts/AivisSpeechProvider';
 import { isBlankText, toCanonicalText } from '@/lib/canonicalText';
 import { generateBenchmarkRun } from '@/benchmark/generateBenchmark';
+import { MANUAL_TEST_ID, isBenchmarkCaseId } from '@/benchmark/cases';
 
 export const dynamic = 'force-dynamic';
 
 interface GenerateRequestBody {
+  testId?: unknown;
   text?: unknown;
   styleId?: unknown;
   speedScale?: unknown;
@@ -43,10 +45,17 @@ export async function POST(request: Request) {
     return badRequest('リクエストボディが JSON として解釈できません。');
   }
 
+  const testId = typeof body.testId === 'string' && body.testId ? body.testId : MANUAL_TEST_ID;
+  if (testId !== MANUAL_TEST_ID && !isBenchmarkCaseId(testId)) {
+    return badRequest(`testId "${testId}" は既知の Benchmark Case ではありません。`);
+  }
+
   const rawText = typeof body.text === 'string' ? body.text : '';
+  // Only a manual Run takes its text from the request. For a Benchmark Case the
+  // server reads its own copy, so `text` here is ignored entirely.
   // trim() decides emptiness only. The untrimmed canonical text is what gets
   // stored, hashed and synthesized.
-  if (isBlankText(toCanonicalText(rawText))) {
+  if (testId === MANUAL_TEST_ID && isBlankText(toCanonicalText(rawText))) {
     return badRequest('text が空です。合成するテキストを入力してください。');
   }
 
@@ -71,7 +80,7 @@ export async function POST(request: Request) {
 
   try {
     const result = await generateBenchmarkRun(
-      { rawText, styleId, speedScale, volumeScale },
+      { testId, rawText, styleId, speedScale, volumeScale },
       { provider: createAivisProvider(), store: createRunStore() },
     );
 

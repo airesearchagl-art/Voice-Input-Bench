@@ -114,27 +114,35 @@ http://127.0.0.1:10101/docs
 
 ドキュメントや他実装の型定義は参考情報にとどめ、実レスポンスと矛盾した場合は実レスポンスを採る。
 
-#### Verification status (P1-A time of writing)
+#### Verification status
 
 | 項目 | 状態 |
 | --- | --- |
-| 実行中 Engine の Swagger との突き合わせ | **未実施** |
-| 実 API レスポンスとの突き合わせ | **未実施** |
-| 根拠 | AivisSpeech Engine 公式ドキュメント記載の仕様 |
+| 実 Engine での突き合わせ | **実施済み**（AivisSpeech Engine 1.1.0-dev） |
+| 対象 | `/version` `/speakers` `/aivm_models` `/audio_query` `/synthesis` |
 
-P1-A 実装時点で、ローカルの AivisSpeech Engine が起動していなかったため、
-`http://127.0.0.1:10101/docs` および実レスポンスとの突き合わせは行えていない。
+実 Engine との突き合わせで判明した実形状は実装に反映済み。主なもの：
 
-そのため実装は**防御的**に書いてある。
+- `/version` は bare JSON string（例: `"1.1.0-dev"`）を返す
+- `/aivm_models` は同じ speaker を 2 か所に別形で持つ。
+  `entry.speakers[].speaker.speaker_uuid` と `manifest.speakers[].uuid` の両方から読む
+- `/audio_query` のキーには AivisSpeech 固有の `tempoDynamicsScale` が含まれる
+- `/synthesis` は 44100 Hz / mono / 16bit の RIFF/WAVE を返す
+
+> **Historical note.** P1-A 実装時点では Engine が起動しておらず、実レスポンスとの
+> 突き合わせは P1-A の残作業として残されていた。その後 P1-A の Manual Smoke で実施済み。
+> この項は当時の未検証状態を記録するためだけに残してある。
+
+実装は引き続き**防御的**に書いてある。Engine の更新で形状が変わる可能性があるため。
 
 - `/version` は bare JSON string と `{ version }` オブジェクトの両方を受け付ける
-- `/speakers` は要素・`styles`・`style.id` の形状を個別に検証する
+- `/speakers` は `name` / `speaker_uuid` / `styles` / `style.name` / `style.id` を
+  個別に検証し、欠落は Fail Closed
 - `/aivm_models` は失敗しても Engine Version の取得を巻き込まない probe として扱う
 - `/audio_query` のレスポンスは形状を検証せず opaque に通す
-- `/synthesis` は RIFF/WAVE ヘッダを検証する
+- `/synthesis` は RIFF/WAVE ヘッダを検証し、保存前に PCM / 44100 Hz / mono を確認する（§10.3）
 
-想定と実レスポンスが食い違った場合は `MALFORMED_RESPONSE` として区別され、
-接続エラーとは混同されない。**実 Engine での突き合わせは P1-A の残作業として残る。**
+想定と実レスポンスが食い違った場合は `MALFORMED_RESPONSE` として区別され、接続エラーとは混同されない。
 
 ### 3.3 AudioQuery を独自共通型へ変換しない
 
@@ -319,7 +327,11 @@ P1-A では **Run の永続化を行わない**。WAV はレスポンスとし�
 
 P1-C をもって Phase 1 は完了する。評価・採点・入力自動化は §1 のとおり Phase 1 の範囲外。
 
-## 8. Suggested Structure
+受け入れ基準は [`../PHASE1_ACCEPTANCE.md`](../PHASE1_ACCEPTANCE.md)。
+
+## 8. Structure
+
+Phase 1 完了時点の実装。
 
 ```text
 src/
@@ -328,10 +340,166 @@ src/
 │  └─ api/
 │     ├─ status/route.ts
 │     ├─ voices/route.ts
-│     └─ generate/route.ts
+│     ├─ cases/route.ts
+│     ├─ generate/route.ts
+│     └─ runs/[runId]/audio/route.ts
+├─ benchmark/
+│  ├─ cases.ts
+│  ├─ splitter.ts
+│  ├─ generateBenchmark.ts
+│  └─ manifest.ts
+├─ audio/
+│  └─ wav.ts
+├─ storage/
+│  └─ LocalRunStore.ts
+├─ lib/
+│  ├─ canonicalText.ts
+│  ├─ hash.ts
+│  ├─ runId.ts
+│  ├─ engineConfig.ts
+│  └─ apiError.ts
 └─ tts/
    ├─ TTSProvider.ts
    └─ AivisSpeechProvider.ts
 ```
 
-将来機能のためだけの階層は作らない。小さな `lib` の追加は必要に応じて可。
+将来機能のためだけの階層は作らない。
+
+## 9. Benchmark Cases（P1-C）
+
+Built-in Benchmark Case は、同じ文章を繰り返し計測できるようにするための固定テキスト。
+
+| ID | 狙い |
+| --- | --- |
+| `architecture-short-001` | 単一 segment に収まる建築ドメインの短文 |
+| `architecture-long-001` | 決定的分割と segment 結合を通す長文 |
+| `filler-001` | 「えーと」「あの」などのフィラー |
+| `correction-001` | 発話中の自己修正・言い直し |
+| `numbers-units-001` | 寸法・面積・風量・速度・時刻の数値と単位 |
+| `coding-001` | 固有名詞・英字略語・コマンド文字列 |
+
+### 本文はサーバー側が正本
+
+Case 本文は `src/benchmark/cases.ts` に置き、**client から渡された本文は使わない**。
+
+client が本文を送れてしまうと、同じ `test_id` を持つ 2 つの Run が違う文章を含みうる。
+そうなった時点で Run 同士の比較は意味を失う。API は `testId` だけを受け取り、
+サーバーが自分の持つ本文を読み直す。
+
+`manifest.test_id` は `manual` か、この一覧の ID のいずれか。
+
+### Case 本文は versioned corpus
+
+**merge 後の Case 本文は変更しない。**
+
+本文を書き換えると、その ID の今後の Run だけ Text SHA-256 が変わり、同じ `test_id` を
+持つ Run 同士が違う文章を含むことになる。
+
+文面を見直す場合は、既存の `-001` を書き換えずに新しい ID
+（`architecture-long-002` など）を追加する。
+
+`golden.test.ts` が 6 Case 本文の SHA-256 を固定しているので、意図しない編集は
+ビルドで検出される。`BENCHMARK_CASES` は配列も要素も freeze 済み。
+
+## 10. Long Text（P1-C）
+
+### 10.1 splitter — strategy `sentence-v1`
+
+```text
+canonical text
+    ↓
+sentence-v1（target 450 Unicode code points）
+    ↓
+segments
+```
+
+不変条件:
+
+- 同一入力からは常に同じ segments が得られる（AI / LLM / ICU segmentation を使わない）
+- 文字を追加も削除もしない。`segments.join('') === canonicalText`
+- **各 segment は例外なく 450 code points 以下**。450 以内に安全な分割位置がない場合
+  （単一の書記素クラスタが 450 を超える場合）は、grapheme を破壊する hard split を
+  行わず `UNBREAKABLE_TEXT` で Fail Closed する
+- surrogate pair・結合文字・ZWJ 絵文字・異体字セレクタ・肌色修飾・国旗（regional indicator）
+  を途中で分断しない
+
+境界の優先順位:
+
+```text
+paragraph / newline
+    → 。！？!?
+    → 、
+    → safe whitespace / punctuation
+    → hard split
+```
+
+優先度の高い境界でも、segment が極端に短くなる位置（target の 40% 未満）は採らず、
+次の優先度へ落ちる。改行が窓の先頭付近に 1 つだけある場合に 5 文字の segment を
+作ってしまうのを避けるため。
+
+決定性を ICU に依存させないのは、ICU のバージョンが上がると過去の Run の分割が
+再現できなくなるため。分割規則はこのリポジトリの中だけで閉じている。
+
+#### バージョン固定ポリシー
+
+**`sentence-v1` の分割規則は変更しない。**
+
+切り位置を動かすと、既存 Case の今後の Run だけが違う音声になり、manifest は両方とも
+`strategy: "sentence-v1"` を名乗ったままになる。新しい Run と古い Run が比較不能に
+なるのに、それを見分ける手がかりが manifest に残らない。
+
+意図的に分割規則を変える場合は、`sentence-v1` を残したまま **`sentence-v2`** を追加する。
+
+`golden.test.ts` が `architecture-long-001` の segment 数・各 segment の長さ・
+SHA-256 を固定しているので、切り位置が動くとビルドが失敗する。
+
+### 10.2 segment synthesis
+
+全 segment を同じ Voice / Style / Speed / Volume / 44100Hz / mono で、順番に生成する。
+
+途中の segment が 1 つでも失敗したら official Run を保存しない。
+部分的に読み上げられた音声を Run として残すと、その Run は
+「テキスト全体を読み上げた記録」ではなくなる。
+
+### 10.3 WAV assembly
+
+```text
+segment WAV（RIFF/WAVE）
+    ↓ fmt / data チャンクを parse（chunk padding を考慮）
+    ↓ format / channels / sampleRate / bitsPerSample / blockAlign の一致を確認
+    ↓ PCM data を順に連結
+audio.wav
+```
+
+やらないこと:
+
+- 無音の挿入
+- normalization
+- denoise
+- silence removal
+- resample
+- gain 調整
+
+いずれも「保存された音声＝実際に評価に使った音声」という前提を壊す。
+segment 間でフォーマットが一致しない場合は Fail Closed とし、Run を保存しない。
+
+単一 segment の Run では結合を行わず、Engine が返したバイト列をそのまま保存する。
+
+### 10.4 provider-query.json
+
+multi-segment Run でも、各 segment の実際の opaque AudioQuery を欠落なく残す。
+
+```json
+{
+  "schema_version": 1,
+  "provider_id": "aivisspeech",
+  "segments": [
+    { "index": 0, "query": {} }
+  ]
+}
+```
+
+`query` は `/audio_query` のレスポンスにアプリ所有の 4 フィールドを上書きしたもので、
+未知フィールドを含めてそのまま保存する。
+
+P1-B までに作られた Run は migration も rewrite もしない。
