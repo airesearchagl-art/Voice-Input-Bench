@@ -134,9 +134,7 @@ canonical text
 └─ TTS input
 ```
 
-**canonicalization は改行コードの正規化だけ**（`
-` および `` を `
-` へ）。
+**canonicalization は改行コードの正規化だけ**（`\r\n` および `\r` を `\n` へ）。
 それ以外の変換は一切行わない。
 
 禁止する変換:
