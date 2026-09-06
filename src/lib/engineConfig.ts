@@ -1,4 +1,6 @@
+import path from 'node:path';
 import { AivisSpeechProvider } from '@/tts/AivisSpeechProvider';
+import { LocalRunStore } from '@/storage/LocalRunStore';
 
 /**
  * Local-first default: AivisSpeech Engine listens on 10101 out of the box, so
@@ -22,8 +24,21 @@ export function getAivisEngineTimeoutMs(env: EnvLike = process.env): number | un
 }
 
 /**
+ * Runs root. Local-first: alongside the project, outside Git.
+ * `VIB_RUNS_DIR` overrides it (tests point it at a temp directory).
+ */
+export function getRunsDir(env: EnvLike = process.env): string {
+  const raw = env.VIB_RUNS_DIR?.trim();
+  return raw && raw.length > 0 ? raw : path.join(process.cwd(), 'data', 'runs');
+}
+
+export function createRunStore(): LocalRunStore {
+  return new LocalRunStore(getRunsDir());
+}
+
+/**
  * Phase 1 has exactly one provider, so this is a two-line constructor call
- * rather than a Provider Factory. It exists only to keep the three API routes
+ * rather than a Provider Factory. It exists only to keep the API routes
  * from repeating the env lookup.
  */
 export function createAivisProvider(): AivisSpeechProvider {

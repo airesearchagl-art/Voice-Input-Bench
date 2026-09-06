@@ -395,7 +395,7 @@ describe('/aivm_models probe', () => {
             manifest: {
               name: 'Anneli',
               version: '1.0.0',
-              speakers: [{ name: 'Anneli' }],
+              speakers: [{ name: 'Anneli', uuid: 'e756b8e4-b606-4e15-99b1-3f9c6a1b2e1a' }],
             },
             is_loaded: true,
           },
@@ -410,8 +410,91 @@ describe('/aivm_models probe', () => {
         name: 'Anneli',
         version: '1.0.0',
         speakerCount: 1,
+        speakerUuids: ['e756b8e4-b606-4e15-99b1-3f9c6a1b2e1a'],
       },
     ]);
+  });
+
+  it('reads speaker uuids from either the entry or its manifest, without duplicates', async () => {
+    const { provider } = createProvider({
+      '/aivm_models': () =>
+        jsonResponse({
+          'model-1': {
+            speakers: [{ speaker_uuid: 'spk-1' }],
+            manifest: { name: 'M1', version: '2.0.0', speakers: [{ uuid: 'spk-1' }, { uuid: 'spk-2' }] },
+          },
+        }),
+    });
+
+    const probe = await provider.probeAivmModels();
+    expect(probe.models[0]?.speakerUuids).toEqual(['spk-1', 'spk-2']);
+  });
+
+  it('resolves speaker uuids from the shape a real engine returns', async () => {
+    // Trimmed from an actual AivisSpeech Engine 1.1.0-dev /aivm_models response:
+    // entry.speakers[] wraps the speaker, manifest.speakers[] carries the uuid
+    // directly, and both describe the same speaker.
+    const { provider } = createProvider({
+      '/aivm_models': () =>
+        jsonResponse({
+          '22e8ed77-94fe-4ef2-871f-a86f94e9a579': {
+            is_loaded: true,
+            file_size: 123,
+            manifest: {
+              manifest_version: '1.0',
+              name: 'コハク',
+              uuid: '22e8ed77-94fe-4ef2-871f-a86f94e9a579',
+              version: '1.1.0',
+              speakers: [
+                {
+                  name: 'コハク',
+                  uuid: '5680ac39-43c9-487a-bc3e-018c0d29cc38',
+                  local_id: 0,
+                  styles: [{ local_id: 0, name: 'ノーマル' }],
+                },
+              ],
+            },
+            speakers: [
+              {
+                speaker: {
+                  name: 'コハク',
+                  speaker_uuid: '5680ac39-43c9-487a-bc3e-018c0d29cc38',
+                  styles: [{ id: 1878365376, name: 'ノーマル' }],
+                  version: '1.1.0',
+                  supported_features: {},
+                },
+                speaker_info: { policy: '' },
+              },
+            ],
+          },
+        }),
+    });
+
+    const probe = await provider.probeAivmModels();
+    expect(probe.models).toEqual([
+      {
+        uuid: '22e8ed77-94fe-4ef2-871f-a86f94e9a579',
+        name: 'コハク',
+        version: '1.1.0',
+        speakerCount: 1,
+        speakerUuids: ['5680ac39-43c9-487a-bc3e-018c0d29cc38'],
+      },
+    ]);
+  });
+
+  it('leaves name and version undefined when the manifest does not carry them', async () => {
+    const { provider } = createProvider({
+      '/aivm_models': () => jsonResponse({ 'model-1': { manifest: { speakers: [] } } }),
+    });
+
+    const probe = await provider.probeAivmModels();
+    expect(probe.models[0]).toEqual({
+      uuid: 'model-1',
+      name: undefined,
+      version: undefined,
+      speakerCount: 0,
+      speakerUuids: [],
+    });
   });
 
   it('reports the failure cause instead of silently returning an empty list', async () => {

@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
-import { createAivisProvider } from '@/lib/engineConfig';
+import { createAivisProvider, createRunStore } from '@/lib/engineConfig';
 import { badRequest, toErrorResponse } from '@/lib/apiError';
 import { AIVIS_SPEED_RANGE, AIVIS_VOLUME_RANGE } from '@/tts/AivisSpeechProvider';
+import { isBlankText, toCanonicalText } from '@/lib/canonicalText';
+import { generateBenchmarkRun } from '@/benchmark/generateBenchmark';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,14 +25,15 @@ function parseScale(
 }
 
 /**
- * `POST /api/generate` — text → WAV.
+ * `POST /api/generate` — text → one immutable Run.
  *
- * On success the WAV bytes are streamed back as `audio/wav` so the browser can
- * play them directly. P1-A intentionally does not persist anything; Run Bundle
- * persistence is P1-B.
+ * The response is Run metadata, not audio: the audio of record is the stored
+ * `audio.wav`, served from `/api/runs/<run-id>/audio`. Returning the bytes here
+ * too would let the page play something that was never persisted.
  *
- * On failure a structured JSON error is returned with the cause category, so
- * the UI can say which stage broke rather than showing a generic failure.
+ * Only `styleId`, `speedScale` and `volumeScale` are taken from the client.
+ * Speaker name, model identity and engine version are resolved server-side from
+ * fresh engine evidence in `generateBenchmarkRun`.
  */
 export async function POST(request: Request) {
   let body: GenerateRequestBody;
@@ -40,8 +43,10 @@ export async function POST(request: Request) {
     return badRequest('リクエストボディが JSON として解釈できません。');
   }
 
-  const text = typeof body.text === 'string' ? body.text : '';
-  if (text.trim().length === 0) {
+  const rawText = typeof body.text === 'string' ? body.text : '';
+  // trim() decides emptiness only. The untrimmed canonical text is what gets
+  // stored, hashed and synthesized.
+  if (isBlankText(toCanonicalText(rawText))) {
     return badRequest('text が空です。合成するテキストを入力してください。');
   }
 
@@ -65,19 +70,20 @@ export async function POST(request: Request) {
   }
 
   try {
-    const provider = createAivisProvider();
-    const result = await provider.generateSpeech({ text, styleId, speedScale, volumeScale });
+    const result = await generateBenchmarkRun(
+      { rawText, styleId, speedScale, volumeScale },
+      { provider: createAivisProvider(), store: createRunStore() },
+    );
 
-    return new NextResponse(result.audio, {
-      status: 200,
-      headers: {
-        'Content-Type': result.contentType,
-        'Content-Length': String(result.byteLength),
-        'Cache-Control': 'no-store',
-        'X-VIB-Style-Id': String(result.styleId),
-        'X-VIB-Requested-At': result.requestedAt,
-      },
-    });
+    return NextResponse.json(
+      {
+        ok: true,
+        runId: result.runId,
+        audioUrl: `/api/runs/${result.runId}/audio`,
+        manifest: result.manifest,
+      } as const,
+      { status: 201, headers: { 'Cache-Control': 'no-store' } },
+    );
   } catch (caught) {
     return toErrorResponse(caught);
   }
