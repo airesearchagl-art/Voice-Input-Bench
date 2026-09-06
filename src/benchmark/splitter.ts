@@ -10,6 +10,12 @@
  * `segments.join('') === canonicalText` always holds: no character is added,
  * dropped, trimmed or substituted, and delimiters stay with the segment they
  * ended.
+ *
+ * `sentence-v1` is a frozen contract. Changing where it cuts would silently
+ * change the segmentation — and therefore the audio — of every future Run of an
+ * existing Benchmark Case, making old and new Runs incomparable while both
+ * still claim `strategy: "sentence-v1"`. Do not adjust the rules here. A
+ * deliberate change ships as `sentence-v2` alongside this one.
  */
 
 export const SPLIT_STRATEGY = 'sentence-v1';
@@ -148,12 +154,23 @@ function lastSafeCut(cps: readonly string[], start: number, limit: number): numb
   return 0;
 }
 
-/** First safe cut index after `limit`, used only when a window is unbreakable. */
-function firstSafeCutAfter(cps: readonly string[], limit: number): number {
-  for (let index = limit + 1; index < cps.length; index += 1) {
-    if (isSafeCutPoint(cps, index)) return index;
+export type SplitterErrorKind =
+  /**
+   * A window of `targetMaxChars` code points contained no point where the text
+   * could be cut without breaking a grapheme cluster.
+   */
+  'UNBREAKABLE_TEXT';
+
+export class SplitterError extends Error {
+  readonly kind: SplitterErrorKind;
+  readonly detail?: string;
+
+  constructor(kind: SplitterErrorKind, message: string, detail?: string) {
+    super(message);
+    this.name = 'SplitterError';
+    this.kind = kind;
+    this.detail = detail;
   }
-  return cps.length;
 }
 
 function chooseCut(cps: readonly string[], start: number, limit: number, minChars: number): number {
@@ -176,16 +193,22 @@ function chooseCut(cps: readonly string[], start: number, limit: number, minChar
   const hard = lastSafeCut(cps, start, limit);
   if (hard > 0) return hard;
 
-  // The whole window is one unbreakable grapheme cluster. Text integrity wins
-  // over the target length, so extend to the next safe point.
-  return firstSafeCutAfter(cps, limit);
+  // The whole window is one unbreakable grapheme cluster. Both invariants —
+  // "no segment exceeds the target" and "no grapheme is broken" — cannot hold,
+  // so fail closed rather than quietly violate either one.
+  throw new SplitterError(
+    'UNBREAKABLE_TEXT',
+    `${limit - start} code points 以内に安全な分割位置がありません。`,
+    `offset=${start} targetMaxChars=${limit - start}`,
+  );
 }
 
 /**
  * Split canonical text into segments of at most `targetMaxChars` code points.
  *
- * The only case where a segment can exceed the target is a single grapheme
- * cluster longer than the target, which cannot be cut without corrupting it.
+ * Every emitted segment is guaranteed to be within the target. Text that cannot
+ * be cut inside a window without breaking a grapheme cluster throws
+ * {@link SplitterError} rather than emitting an oversized segment.
  */
 export function splitCanonicalText(
   canonicalText: string,

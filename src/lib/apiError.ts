@@ -3,6 +3,7 @@ import { TTSProviderError, type TTSErrorKind } from '@/tts/TTSProvider';
 import { BenchmarkError, type BenchmarkErrorKind } from '@/benchmark/generateBenchmark';
 import { RunStoreError, type RunStoreErrorKind } from '@/storage/LocalRunStore';
 import { WavError, type WavErrorKind } from '@/audio/wav';
+import { SplitterError, type SplitterErrorKind } from '@/benchmark/splitter';
 
 /**
  * HTTP status per error cause.
@@ -50,6 +51,10 @@ const STATUS_BY_WAV_KIND: Record<WavErrorKind, number> = {
   MISSING_FMT: 502,
   MISSING_DATA: 502,
   DATA_NOT_FRAME_ALIGNED: 502,
+  // The engine answered, but not with the audio Phase 1 asked for.
+  UNSUPPORTED_AUDIO_FORMAT: 502,
+  UNEXPECTED_SAMPLE_RATE: 502,
+  UNEXPECTED_CHANNEL_COUNT: 502,
   FORMAT_MISMATCH: 500,
   NO_SEGMENT_WAVS: 500,
 };
@@ -62,6 +67,7 @@ export interface ApiErrorBody {
       | BenchmarkErrorKind
       | RunStoreErrorKind
       | WavErrorKind
+      | SplitterErrorKind
       | 'BAD_REQUEST'
       | 'UNEXPECTED';
     message: string;
@@ -96,6 +102,18 @@ export function toErrorResponse(caught: unknown): NextResponse<ApiErrorBody> {
         error: { kind: caught.kind, message: caught.message, detail: caught.detail },
       } as const,
       { status: STATUS_BY_BENCHMARK_KIND[caught.kind] },
+    );
+  }
+
+  if (caught instanceof SplitterError) {
+    // The text itself cannot be split within the contract: a property of the
+    // input, not a server fault.
+    return NextResponse.json(
+      {
+        ok: false,
+        error: { kind: caught.kind, message: caught.message, detail: caught.detail },
+      } as const,
+      { status: 422 },
     );
   }
 

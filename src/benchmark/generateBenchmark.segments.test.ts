@@ -68,9 +68,25 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-/** A structurally complete 16-bit mono 44100 Hz WAV with a distinguishable payload. */
-function buildPcmWav(frames: number, seed: number): Uint8Array {
-  const dataBytes = frames * 2;
+interface WavFormatOptions {
+  audioFormat?: number;
+  channels?: number;
+  sampleRate?: number;
+}
+
+/**
+ * A structurally complete 16-bit WAV with a distinguishable payload. Defaults
+ * to the Phase 1 contract (PCM / 44100 Hz / mono); the options exist so tests
+ * can hand the orchestration audio that violates it.
+ */
+function buildPcmWav(frames: number, seed: number, format: WavFormatOptions = {}): Uint8Array {
+  const audioFormat = format.audioFormat ?? 1;
+  const channels = format.channels ?? 1;
+  const sampleRate = format.sampleRate ?? 44100;
+  const bitsPerSample = 16;
+  const blockAlign = (channels * bitsPerSample) / 8;
+  const dataBytes = frames * blockAlign;
+
   const out = new Uint8Array(44 + dataBytes);
   const view = new DataView(out.buffer);
   const writeAscii = (offset: number, text: string) => {
@@ -82,15 +98,15 @@ function buildPcmWav(frames: number, seed: number): Uint8Array {
   writeAscii(8, 'WAVE');
   writeAscii(12, 'fmt ');
   view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true); // PCM
-  view.setUint16(22, 1, true); // mono
-  view.setUint32(24, 44100, true);
-  view.setUint32(28, 88200, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
+  view.setUint16(20, audioFormat, true);
+  view.setUint16(22, channels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
   writeAscii(36, 'data');
   view.setUint32(40, dataBytes, true);
-  for (let i = 0; i < frames; i += 1) {
+  for (let i = 0; i < dataBytes / 2; i += 1) {
     view.setInt16(44 + i * 2, ((seed * 31 + i) % 3000) - 1500, true);
   }
 
@@ -534,12 +550,10 @@ describe('multi-segment failure is fail closed', () => {
     expect(await readdir(root)).toEqual([]);
   });
 
-  it('writes no official Run when segments disagree on audio format', async () => {
-    const oddSegment = buildPcmWav(64, 2);
-    // Rewrite segment 2's sample rate to 48000.
-    new DataView(oddSegment.buffer).setUint32(24, 48000, true);
+  it('writes no official Run when one segment breaks the audio contract', async () => {
     const { provider } = createDeps({
-      wavForSegment: (segmentNumber) => (segmentNumber === 2 ? oddSegment : null),
+      wavForSegment: (segmentNumber) =>
+        segmentNumber === 2 ? buildPcmWav(64, 2, { sampleRate: 48000 }) : null,
     });
 
     const error = await generateBenchmarkRun(runCase(LONG_CASE.id), {
@@ -550,6 +564,31 @@ describe('multi-segment failure is fail closed', () => {
     }).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(WavError);
+    expect((error as WavError).kind).toBe('UNEXPECTED_SAMPLE_RATE');
+    expect((error as WavError).message).toContain('segment 2/3');
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  it('writes no official Run when two contract-compliant segments differ in bit depth', async () => {
+    // Both PCM / 44100 / mono, so only the segment-to-segment check catches it.
+    const eightBit = (() => {
+      const bytes = buildPcmWav(64, 2);
+      const view = new DataView(bytes.buffer);
+      view.setUint16(32, 1, true); // blockAlign
+      view.setUint16(34, 8, true); // bitsPerSample
+      return bytes;
+    })();
+    const { provider } = createDeps({
+      wavForSegment: (segmentNumber) => (segmentNumber === 2 ? eightBit : null),
+    });
+
+    const error = await generateBenchmarkRun(runCase(LONG_CASE.id), {
+      provider,
+      store,
+      now: () => NOW,
+      runId: RUN_ID,
+    }).catch((caught: unknown) => caught);
+
     expect((error as WavError).kind).toBe('FORMAT_MISMATCH');
     expect(await readdir(root)).toEqual([]);
   });
@@ -618,5 +657,95 @@ describe('Run immutability holds for case Runs', () => {
     expect((await readdir(root)).sort()).toEqual([a.runId, b.runId].sort());
     expect(a.manifest.source.sha256).toBe(b.manifest.source.sha256);
     expect(a.manifest.segmentation).toEqual(b.manifest.segmentation);
+  });
+});
+
+describe('the actual WAV contract is enforced, not just segment agreement', () => {
+  const OFF_CONTRACT: Array<[string, WavFormatOptions, string]> = [
+    ['48000 Hz', { sampleRate: 48000 }, 'UNEXPECTED_SAMPLE_RATE'],
+    ['stereo', { channels: 2 }, 'UNEXPECTED_CHANNEL_COUNT'],
+    ['IEEE float', { audioFormat: 3 }, 'UNSUPPORTED_AUDIO_FORMAT'],
+  ];
+
+  for (const [label, format, kind] of OFF_CONTRACT) {
+    it(`writes no official Run when every segment of a long Run is ${label}`, async () => {
+      // Every segment agrees with every other, so a segment-to-segment check
+      // would let this through and the manifest would claim 44100 / mono.
+      const { provider } = createDeps({
+        wavForSegment: (segmentNumber) => buildPcmWav(64, segmentNumber, format),
+      });
+
+      const error = await generateBenchmarkRun(runCase(LONG_CASE.id), {
+        provider,
+        store,
+        now: () => NOW,
+        runId: RUN_ID,
+      }).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(WavError);
+      expect((error as WavError).kind).toBe(kind);
+      expect(await readdir(root)).toEqual([]);
+    });
+
+    it(`writes no official Run when a single-segment Run is ${label}`, async () => {
+      const { provider } = createDeps({ wavForSegment: () => buildPcmWav(64, 1, format) });
+
+      const error = await generateBenchmarkRun(runCase(SHORT_CASE.id), {
+        provider,
+        store,
+        now: () => NOW,
+        runId: RUN_ID,
+      }).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(WavError);
+      expect((error as WavError).kind).toBe(kind);
+      expect(await readdir(root)).toEqual([]);
+    });
+  }
+
+  it('writes no official Run when a single-segment WAV cannot be parsed', async () => {
+    const bogus = new Uint8Array(12);
+    bogus.set([0x52, 0x49, 0x46, 0x46], 0);
+    bogus.set([0x57, 0x41, 0x56, 0x45], 8);
+    const { provider } = createDeps({ wavForSegment: () => bogus });
+
+    const error = await generateBenchmarkRun(runCase(SHORT_CASE.id), {
+      provider,
+      store,
+      now: () => NOW,
+      runId: RUN_ID,
+    }).catch((caught: unknown) => caught);
+
+    expect((error as WavError).kind).toBe('MISSING_FMT');
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  it('stores a valid single-segment Run as the engine bytes, byte for byte', async () => {
+    const segmentWav = buildPcmWav(512, 7);
+    const { provider } = createDeps({ wavForSegment: () => segmentWav });
+
+    const result = await generateBenchmarkRun(runCase(SHORT_CASE.id), {
+      provider,
+      store,
+      now: () => NOW,
+      runId: RUN_ID,
+    });
+
+    const stored = await readFile(path.join(result.runDir, 'audio.wav'));
+    // Validated, then written unchanged — not re-encoded, not rebuilt.
+    expect(new Uint8Array(stored)).toEqual(segmentWav);
+    expect(result.manifest.audio.bytes).toBe(segmentWav.byteLength);
+    expect(result.manifest.audio.content_type).toBe('audio/wav');
+  });
+
+  it('records audio/wav for the assembled file regardless of segment headers', async () => {
+    const { provider } = createDeps();
+    const result = await generateBenchmarkRun(runCase(LONG_CASE.id), {
+      provider,
+      store,
+      now: () => NOW,
+      runId: RUN_ID,
+    });
+    expect(result.manifest.audio.content_type).toBe('audio/wav');
   });
 });

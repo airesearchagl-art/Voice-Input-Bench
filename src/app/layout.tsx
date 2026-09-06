@@ -3,8 +3,8 @@ import type { ReactNode } from 'react';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Voice Input Bench — P1-C',
-  description: 'Local-first TTS bench. P1-C: benchmark cases and long text.',
+  title: 'Voice Input Bench',
+  description: 'Local-first, reproducibility-first bench for voice input and TTS evaluation.',
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

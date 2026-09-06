@@ -4,9 +4,10 @@ import { useCallback, useEffect, useState } from 'react';
 import type { TTSCapabilities, TTSVoice } from '@/tts/TTSProvider';
 import type { AivmModelsProbe } from '@/tts/AivisSpeechProvider';
 import type { RunManifest } from '@/benchmark/manifest';
+import { MANUAL_TEST_ID, resolveSourceSelection } from '@/benchmark/sourceSelection';
 
 /**
- * P1-C UI — still one page.
+ * The bench UI — one page.
  *
  * Engine is fixed to AivisSpeech for Phase 1, so there is no engine selector.
  * Only Voice/Style, Speed and Volume are user-adjustable; format, sample rate
@@ -56,7 +57,6 @@ interface BenchmarkCaseSummary {
   expectedSegmentCount: number;
 }
 
-const MANUAL_TEST_ID = 'manual';
 const DEFAULT_TEXT = 'これはボイスインプットベンチの疎通確認用テキストです。';
 
 async function readApiError(response: Response): Promise<ApiErrorShape> {
@@ -205,6 +205,16 @@ export default function Page() {
 
   const generate = useCallback(async () => {
     if (styleId === null) return;
+    // Same guard as the button, so a stale click cannot get past it either.
+    if (
+      !resolveSourceSelection({
+        testId,
+        text,
+        knownCaseIds: cases.map((benchmarkCase) => benchmarkCase.id),
+      }).ready
+    ) {
+      return;
+    }
     setGenerating(true);
     setGenerateError(null);
     setRun(null);
@@ -229,20 +239,27 @@ export default function Page() {
     } finally {
       setGenerating(false);
     }
-  }, [speedScale, styleId, testId, text, volumeScale]);
+  }, [cases, speedScale, styleId, testId, text, volumeScale]);
 
   const selectedCase = cases.find((benchmarkCase) => benchmarkCase.id === testId);
   const connected = status !== null;
-  const hasText = selectedCase !== undefined || text.trim().length > 0;
-  const canGenerate = connected && styleId !== null && hasText && !generating;
+  // Decided from what the page can actually see. A selected case whose body
+  // never loaded blocks Generate rather than letting the server synthesize one
+  // text while the operator reads another.
+  const selection = resolveSourceSelection({
+    testId,
+    text,
+    knownCaseIds: cases.map((benchmarkCase) => benchmarkCase.id),
+  });
+  const canGenerate = connected && styleId !== null && selection.ready && !generating;
   const speedRange = capabilities?.speed ?? { min: 0.5, max: 2, step: 0.05, default: 1 };
   const volumeRange = capabilities?.volume ?? { min: 0, max: 2, step: 0.05, default: 1 };
 
   return (
     <main className="page">
       <header className="page-header">
-        <h1>Voice Input Bench — P1-C</h1>
-        <p>Benchmark Cases + Long Text / Text → local TTS → canonical WAV + Manifest</p>
+        <h1>Voice Input Bench</h1>
+        <p>Text → local TTS → canonical WAV + Manifest</p>
       </header>
 
       <section className="panel">
@@ -381,6 +398,20 @@ export default function Page() {
           固定: Format WAV / Sample Rate {capabilities?.fixedSampleRate ?? 44100} Hz / Stereo{' '}
           {String(capabilities?.fixedStereo ?? false)}
         </p>
+
+        {!selection.ready && selection.reason === 'CASE_NOT_LOADED' && (
+          <>
+            <div style={{ height: 12 }} />
+            <div className="alert error" role="alert">
+              <span className="kind">CASE_NOT_LOADED</span>
+              <p>
+                Benchmark Case <code>{testId}</code> の本文を取得できていません。本文が確認できない
+                Case で Run を作らないため、Generate を無効にしています。再確認するか Manual
+                を選び直してください。
+              </p>
+            </div>
+          </>
+        )}
 
         {noVoicesInstalled && (
           <>

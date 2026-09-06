@@ -96,7 +96,6 @@ data/runs/<run-id>/
 | **P1-B** | Run 永続化。`data/runs/<run-id>` の immutable Run Bundle、Manifest、SHA-256、transactional write。 |
 | **P1-C** | Benchmark Case と長文対応。Case selector、deterministic long-text splitter、segment WAV assembly、`architecture-long-001`、Phase 1 UI completion、Phase 1 Acceptance / README。 |
 
-現在地: **P1-C**（Phase 1 の最終ステップ）
 
 ## Setup
 
@@ -124,8 +123,8 @@ Swagger UI: <http://127.0.0.1:10101/docs>
 
 ### 2. 依存関係をインストールする
 
-```bash
-npm install
+```powershell
+npm.cmd install
 ```
 
 ### 3. 環境変数を設定する（任意）
@@ -143,13 +142,13 @@ cp .env.example .env
 
 ### 4. 開発サーバーを起動する
 
-```bash
-npm run dev
+```powershell
+npm.cmd run dev
 ```
 
 <http://localhost:3000> を開く。
 
-## Usage (P1-C)
+## Usage
 
 1. ページ上部の **AivisSpeech Connection** が `Connected` になっていることを確認する
 2. **Test** で `Manual` または Benchmark Case を選ぶ
@@ -215,29 +214,33 @@ blockAlign が一致しなければ Fail Closed として Run を保存しない
 
 ## Scripts
 
-| コマンド | 内容 |
+> **Windows PowerShell では `npm.cmd` を使う。** PowerShell は `npm.ps1` を拾うため、
+> Execution Policy によっては `npm` が実行できない。`npm.cmd` はその制限を受けない。
+> PowerShell 以外のシェルでは `npm` のままでよい。
+
+| コマンド（PowerShell） | 内容 |
 | --- | --- |
-| `npm run dev` | 開発サーバー |
-| `npm run build` | 本番ビルド |
-| `npm start` | 本番サーバー |
-| `npm run lint` | ESLint |
-| `npm run typecheck` | `tsc --noEmit` |
-| `npm test` | Vitest（**Engine 未起動でも実行可能**） |
-| `npm run smoke:aivis` | 実 Engine への Manual Integration Smoke |
+| `npm.cmd run dev` | 開発サーバー |
+| `npm.cmd run build` | 本番ビルド |
+| `npm.cmd start` | 本番サーバー |
+| `npm.cmd run lint` | ESLint |
+| `npm.cmd run typecheck` | `tsc --noEmit` |
+| `npm.cmd test` | Vitest（**Engine 未起動でも実行可能**） |
+| `npm.cmd run smoke:aivis` | 実 Engine への Manual Integration Smoke |
 
 ### Automated Tests
 
-`npm test` は AivisSpeech Engine に一切接続しない。Provider に `fetchImpl` を注入し、
+`npm.cmd test` は AivisSpeech Engine に一切接続しない。Provider に `fetchImpl` を注入し、
 URL 構築・レスポンスマッピング・各段階のエラー伝播・WAV 検証・不正レスポンス処理を
 すべてオフラインで検証する。
 
 ### Manual Integration Smoke
 
-実 Engine を使う確認は `npm test` から分離してある。
+実 Engine を使う確認は `npm.cmd test` から分離してある。
 
-```bash
-npm run smoke:aivis
-npm run smoke:aivis -- --text "読み上げたいテキスト" --out out.wav
+```powershell
+npm.cmd run smoke:aivis
+npm.cmd run smoke:aivis -- --text "読み上げたいテキスト" --out out.wav
 ```
 
 Engine が起動していない場合、`MANUAL_SMOKE_BLOCKED_ENGINE_NOT_RUNNING` を出力して

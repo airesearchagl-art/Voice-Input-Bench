@@ -17,21 +17,24 @@ Phase 1 Goal:  Text → local TTS → canonical WAV + Manifest
 - AivisSpeech（または AivisSpeech Engine）がローカルで起動していること
 - 音声モデルが 1 つ以上インストールされていること
 
-```bash
-npm install
-npm run build
-npm start
+```powershell
+npm.cmd install
+npm.cmd run build
+npm.cmd start
 ```
+
+> Windows PowerShell では `npm.ps1` が Execution Policy に阻まれることがあるため、
+> `npm.cmd` を使う。PowerShell 以外のシェルでは `npm` のままでよい。
 
 ## 2. Automated Acceptance
 
 Engine を起動していない状態でも、次がすべて PASS すること。
 
-```bash
-npm run lint
-npm run typecheck
-npm test
-npm run build
+```powershell
+npm.cmd run lint
+npm.cmd run typecheck
+npm.cmd test
+npm.cmd run build
 ```
 
 テストは `fetchImpl` を注入する構造になっており、AivisSpeech Engine に一切接続しない。
@@ -117,4 +120,5 @@ Test に `architecture-long-001` を選び、Generate。
   「上書きしない設計 + 事前存在チェック + rename」で担保している。
 - `fsync` は行っていない。OS レベルの電源断に対する耐性はない。
 - Run の retention / cleanup はない。`data/runs/` は増え続ける。
-- P1-B 以前に作られた Run（manifest schema v1）は migration も rewrite もしない。
+- **P1-B で作成済みの Run**（manifest schema v1）は migration も rewrite もしない。
+  アプリは v1 manifest を読まないので、v1 向けの reader も置いていない。

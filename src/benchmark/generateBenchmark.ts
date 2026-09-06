@@ -2,7 +2,7 @@ import { toCanonicalText } from '@/lib/canonicalText';
 import { sha256OfBytes, sha256OfText } from '@/lib/hash';
 import { createRunId } from '@/lib/runId';
 import { LocalRunStore } from '@/storage/LocalRunStore';
-import { assembleSegmentWavs } from '@/audio/wav';
+import { concatWav, parseAndValidateSegments } from '@/audio/wav';
 import { MANIFEST_SCHEMA_VERSION, type RunManifest } from './manifest';
 import { MANUAL_TEST_ID, getBenchmarkCase } from './cases';
 import { DEFAULT_TARGET_MAX_CHARS, SPLIT_STRATEGY, splitCanonicalText } from './splitter';
@@ -223,7 +223,6 @@ export async function generateBenchmarkRun(
   //    aborts before anything is written.
   const segmentWavs: Uint8Array[] = [];
   const providerQueries: ProviderQueryEnvelope['segments'] = [];
-  let contentType = 'audio/wav';
 
   for (const [index, segmentText] of segments.entries()) {
     try {
@@ -235,17 +234,25 @@ export async function generateBenchmarkRun(
       });
       segmentWavs.push(new Uint8Array(speech.audio));
       providerQueries.push({ index, query: speech.providerQuery });
-      contentType = speech.contentType;
     } catch (caught) {
       withSegmentContext(caught, index, segments.length);
     }
   }
 
-  // 7. Assembly. A single-segment Run keeps the engine's bytes untouched;
-  //    multi-segment Runs are stitched from the parsed PCM payloads with
-  //    nothing inserted and nothing applied to the samples.
-  const audioBytes =
-    segmentWavs.length === 1 ? segmentWavs[0]! : assembleSegmentWavs(segmentWavs);
+  // 7. Validate then assemble.
+  //
+  //    Every segment is checked against the Phase 1 audio contract (PCM /
+  //    44100 Hz / mono / frame-aligned data) before anything is written. Making
+  //    the segments merely agree with each other is not enough: an engine that
+  //    returned 48 kHz for all of them would still produce a Run whose manifest
+  //    claims 44100.
+  //
+  //    A single-segment Run is validated and then stored as the engine's
+  //    original bytes — never re-encoded or rebuilt. Multi-segment Runs are
+  //    stitched from the parsed PCM payloads with nothing inserted and nothing
+  //    applied to the samples.
+  const parsedSegments = parseAndValidateSegments(segmentWavs);
+  const audioBytes = segmentWavs.length === 1 ? segmentWavs[0]! : concatWav(parsedSegments);
 
   // 8. Hashes, each over the exact bytes that will be on disk.
   const providerQueryEnvelope: ProviderQueryEnvelope = {
@@ -305,7 +312,9 @@ export async function generateBenchmarkRun(
     },
     audio: {
       file: 'audio.wav',
-      content_type: contentType,
+      // The stored file is a validated RIFF/WAVE either way. Never inherit a
+      // per-segment response header as the assembled file's type.
+      content_type: 'audio/wav',
       sha256: sha256OfBytes(audioBytes),
       bytes: audioBytes.byteLength,
     },

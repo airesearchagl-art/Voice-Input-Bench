@@ -23,10 +23,32 @@ export type WavErrorKind =
   | 'MISSING_DATA'
   /** The data chunk is not a whole number of frames. */
   | 'DATA_NOT_FRAME_ALIGNED'
+  /** Not linear PCM. Phase 1 does not attempt to handle other encodings. */
+  | 'UNSUPPORTED_AUDIO_FORMAT'
+  /** Sample rate is not the Phase 1 fixed 44100 Hz. */
+  | 'UNEXPECTED_SAMPLE_RATE'
+  /** Channel count is not the Phase 1 fixed mono. */
+  | 'UNEXPECTED_CHANNEL_COUNT'
   /** Segments disagree on format / channels / sample rate / bit depth. */
   | 'FORMAT_MISMATCH'
   /** Nothing to assemble. */
   | 'NO_SEGMENT_WAVS';
+
+/**
+ * The audio contract Phase 1 asks the engine for and therefore the only shape a
+ * Run may store.
+ *
+ * Checking segments against each other is not enough: if the engine ignored the
+ * request and returned 48 kHz stereo for every segment, they would agree with
+ * one another and a Run would be written claiming 44100/mono in its manifest.
+ * So each segment is checked against these values, not against its neighbours.
+ */
+export const PHASE1_AUDIO_CONTRACT = {
+  /** WAVE_FORMAT_PCM. */
+  audioFormat: 1,
+  sampleRate: 44100,
+  channels: 1,
+} as const;
 
 export class WavError extends Error {
   readonly kind: WavErrorKind;
@@ -205,7 +227,68 @@ export function concatWav(parts: readonly ParsedWav[]): Uint8Array {
   return out;
 }
 
-/** Parse each WAV and concatenate. A single segment is still validated. */
+/**
+ * Check one segment against {@link PHASE1_AUDIO_CONTRACT}.
+ *
+ * `segmentLabel` names the segment in the error so a failure points at which of
+ * a long Run's pieces came back wrong.
+ */
+export function assertPhase1AudioContract(parsed: ParsedWav, segmentLabel: string): void {
+  const { format } = parsed;
+
+  if (format.audioFormat !== PHASE1_AUDIO_CONTRACT.audioFormat) {
+    throw new WavError(
+      'UNSUPPORTED_AUDIO_FORMAT',
+      `${segmentLabel} が PCM ではありません。Phase 1 は linear PCM のみを扱います。`,
+      `audioFormat=${format.audioFormat} (expected ${PHASE1_AUDIO_CONTRACT.audioFormat})`,
+    );
+  }
+  if (format.sampleRate !== PHASE1_AUDIO_CONTRACT.sampleRate) {
+    throw new WavError(
+      'UNEXPECTED_SAMPLE_RATE',
+      `${segmentLabel} のサンプルレートが ${PHASE1_AUDIO_CONTRACT.sampleRate} Hz ではありません。`,
+      `sampleRate=${format.sampleRate} (expected ${PHASE1_AUDIO_CONTRACT.sampleRate})`,
+    );
+  }
+  if (format.channels !== PHASE1_AUDIO_CONTRACT.channels) {
+    throw new WavError(
+      'UNEXPECTED_CHANNEL_COUNT',
+      `${segmentLabel} がモノラルではありません。`,
+      `channels=${format.channels} (expected ${PHASE1_AUDIO_CONTRACT.channels})`,
+    );
+  }
+}
+
+/**
+ * Parse every segment and check each one against the Phase 1 contract.
+ *
+ * Runs on single-segment Runs too. The caller decides what to store: a
+ * single-segment Run keeps the engine's original bytes, it is only validated
+ * here, never re-encoded or rebuilt.
+ */
+export function parseAndValidateSegments(segmentWavs: readonly Uint8Array[]): ParsedWav[] {
+  if (segmentWavs.length === 0) {
+    throw new WavError('NO_SEGMENT_WAVS', '検証する WAV がありません。');
+  }
+
+  return segmentWavs.map((bytes, index) => {
+    const label =
+      segmentWavs.length === 1 ? 'WAV' : `segment ${index + 1}/${segmentWavs.length} の WAV`;
+    let parsed: ParsedWav;
+    try {
+      parsed = parseWav(bytes);
+    } catch (caught) {
+      if (caught instanceof WavError) {
+        throw new WavError(caught.kind, `${label}: ${caught.message}`, caught.detail);
+      }
+      throw caught;
+    }
+    assertPhase1AudioContract(parsed, label);
+    return parsed;
+  });
+}
+
+/** Parse, validate against the Phase 1 contract, then concatenate. */
 export function assembleSegmentWavs(segmentWavs: readonly Uint8Array[]): Uint8Array {
-  return concatWav(segmentWavs.map((bytes) => parseWav(bytes)));
+  return concatWav(parseAndValidateSegments(segmentWavs));
 }

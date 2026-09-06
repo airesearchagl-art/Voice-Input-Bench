@@ -6,15 +6,16 @@
  * the stored artifacts are the ones the Run claims. Deliberately narrow: no
  * field is added here for a feature that does not exist yet.
  *
- * v2 widens two things over the P1-B schema: `test_id` may now name a built-in
- * Benchmark Case, and `segmentation` carries the splitter target. Existing v1
- * Runs are left exactly as they were written — nothing is migrated or rewritten.
+ * v2 widens two things over the schema P1-B wrote: `test_id` may now name a
+ * built-in Benchmark Case, and `segmentation` carries the splitter target. The
+ * v1 Runs already created by P1-B are left exactly as they were written —
+ * nothing is migrated or rewritten.
  */
 
-export const MANIFEST_SCHEMA_VERSION = 2;
+export const MANIFEST_SCHEMA_VERSION = 2 as const;
 
-export interface RunManifest {
-  schema_version: number;
+export interface RunManifestV2 {
+  schema_version: 2;
   run_id: string;
   /** `manual`, or the ID of the built-in Benchmark Case that supplied the text. */
   test_id: string;
@@ -95,5 +96,12 @@ export interface RunManifest {
   };
 }
 
-/** @deprecated Kept as an alias while callers migrate to {@link RunManifest}. */
-export type RunManifestV1 = RunManifest;
+/**
+ * The manifest shape this code writes and reads.
+ *
+ * There is no `RunManifestV1` type here on purpose. Nothing in the app reads a
+ * v1 manifest, so a compat alias would only claim a compatibility that has
+ * never been exercised. If reading P1-B Runs is ever needed, the actual v1
+ * shape gets its own definition then.
+ */
+export type RunManifest = RunManifestV2;

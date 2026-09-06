@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_TARGET_MAX_CHARS,
   SPLIT_STRATEGY,
+  SplitterError,
   countCodePoints,
   isSafeCutPoint,
   splitCanonicalText,
@@ -236,6 +237,42 @@ describe('built-in cases', () => {
   it('round-trips every built-in case', () => {
     for (const benchmarkCase of BENCHMARK_CASES) {
       expect(splitCanonicalText(benchmarkCase.text).join('')).toBe(benchmarkCase.text);
+    }
+  });
+});
+
+describe('strict segment bound', () => {
+  it('fails closed instead of emitting an oversized segment', () => {
+    // One base character followed by 600 combining marks: a single grapheme
+    // cluster longer than the target, with no safe cut inside the window.
+    const oneHugeGrapheme = `あ${'\u0301'.repeat(600)}あ`;
+
+    let caught: unknown;
+    try {
+      splitCanonicalText(oneHugeGrapheme, 450);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(SplitterError);
+    expect((caught as SplitterError).kind).toBe('UNBREAKABLE_TEXT');
+  });
+
+  it('never returns a segment longer than the target for splittable text', () => {
+    const text = grow('これは長い文章のテストです。', 5000);
+    for (const segment of splitCanonicalText(text, 450)) {
+      expect(countCodePoints(segment)).toBeLessThanOrEqual(450);
+    }
+  });
+
+  it('still splits text where the huge cluster is preceded by a safe cut', () => {
+    // The cluster starts within the first window, so the boundary before it is
+    // usable and the cluster lands whole at the start of the next segment.
+    const text = `${'あ'.repeat(200)}。か${'\u0301'.repeat(100)}${'い'.repeat(600)}`;
+    const segments = splitCanonicalText(text, 450);
+    expect(segments.join('')).toBe(text);
+    for (const segment of segments) {
+      expect(countCodePoints(segment)).toBeLessThanOrEqual(450);
     }
   });
 });

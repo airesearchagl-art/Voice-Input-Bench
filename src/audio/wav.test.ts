@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { WavError, assembleSegmentWavs, concatWav, parseWav } from './wav';
+import {
+  PHASE1_AUDIO_CONTRACT,
+  WavError,
+  assembleSegmentWavs,
+  assertPhase1AudioContract,
+  concatWav,
+  parseAndValidateSegments,
+  parseWav,
+} from './wav';
 
 /**
  * Build a WAV container by hand so the tests exercise the real chunk walk
@@ -226,26 +234,35 @@ describe('concatWav', () => {
     expect(new Uint8Array(parsed.data)).toEqual(data);
   });
 
-  const MISMATCHES: Array<[string, BuildOptions]> = [
-    ['sample rate', { data: pcm(10, 2), sampleRate: 48000 }],
-    ['channel count', { data: pcm(10, 2), channels: 2 }],
-    ['bit depth', { data: pcm(10, 2), bitsPerSample: 8 }],
-    ['audio format', { data: pcm(10, 2), audioFormat: 3 }],
-  ];
+  it('fails closed when two contract-compliant segments still disagree on bit depth', () => {
+    // Both are PCM / 44100 / mono, so the Phase 1 contract check passes and the
+    // segment-to-segment comparison is what catches them.
+    let caught: unknown;
+    try {
+      assembleSegmentWavs([
+        buildWav({ data: pcm(10, 1) }),
+        buildWav({ data: pcm(10, 2), bitsPerSample: 8 }),
+      ]);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(WavError);
+    expect((caught as WavError).kind).toBe('FORMAT_MISMATCH');
+    expect((caught as WavError).detail).toContain('segment0');
+  });
 
-  for (const [label, options] of MISMATCHES) {
-    it(`fails closed when segments disagree on ${label}`, () => {
-      let caught: unknown;
-      try {
-        assembleSegmentWavs([buildWav({ data: pcm(10, 1) }), buildWav(options)]);
-      } catch (error) {
-        caught = error;
-      }
-      expect(caught).toBeInstanceOf(WavError);
-      expect((caught as WavError).kind).toBe('FORMAT_MISMATCH');
-      expect((caught as WavError).detail).toContain('segment0');
-    });
-  }
+  it('compares formats directly when given already-parsed segments', () => {
+    let caught: unknown;
+    try {
+      concatWav([
+        parseWav(buildWav({ data: pcm(10, 1) })),
+        parseWav(buildWav({ data: pcm(10, 2), sampleRate: 48000 })),
+      ]);
+    } catch (error) {
+      caught = error;
+    }
+    expect((caught as WavError).kind).toBe('FORMAT_MISMATCH');
+  });
 
   it('fails closed when there is nothing to assemble', () => {
     expect(() => concatWav([])).toThrow(WavError);
@@ -255,5 +272,85 @@ describe('concatWav', () => {
     expect(() =>
       assembleSegmentWavs([buildWav({ data: pcm(10, 1) }), new Uint8Array([1, 2, 3, 4])]),
     ).toThrow(WavError);
+  });
+});
+
+describe('Phase 1 audio contract', () => {
+  it('declares the contract the engine is asked for', () => {
+    expect(PHASE1_AUDIO_CONTRACT).toEqual({ audioFormat: 1, sampleRate: 44100, channels: 1 });
+  });
+
+  it('accepts a compliant WAV', () => {
+    const parsed = parseAndValidateSegments([buildWav({ data: pcm(100, 1) })]);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]!.format.sampleRate).toBe(44100);
+  });
+
+  const VIOLATIONS: Array<[string, BuildOptions, string]> = [
+    ['48000 Hz', { data: pcm(10, 1), sampleRate: 48000 }, 'UNEXPECTED_SAMPLE_RATE'],
+    ['22050 Hz', { data: pcm(10, 1), sampleRate: 22050 }, 'UNEXPECTED_SAMPLE_RATE'],
+    ['stereo', { data: pcm(10, 1), channels: 2 }, 'UNEXPECTED_CHANNEL_COUNT'],
+    ['IEEE float', { data: pcm(10, 1), audioFormat: 3 }, 'UNSUPPORTED_AUDIO_FORMAT'],
+    ['extensible', { data: pcm(10, 1), audioFormat: 0xfffe }, 'UNSUPPORTED_AUDIO_FORMAT'],
+  ];
+
+  for (const [label, options, kind] of VIOLATIONS) {
+    it(`rejects a single ${label} segment as ${kind}`, () => {
+      let caught: unknown;
+      try {
+        parseAndValidateSegments([buildWav(options)]);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(WavError);
+      expect((caught as WavError).kind).toBe(kind);
+    });
+
+    it(`rejects segments that all agree on ${label}`, () => {
+      // Agreeing with each other is not enough: they must match the contract.
+      let caught: unknown;
+      try {
+        parseAndValidateSegments([buildWav(options), buildWav(options), buildWav(options)]);
+      } catch (error) {
+        caught = error;
+      }
+      expect((caught as WavError).kind).toBe(kind);
+    });
+  }
+
+  it('names which segment failed in a multi-segment Run', () => {
+    let caught: unknown;
+    try {
+      parseAndValidateSegments([
+        buildWav({ data: pcm(10, 1) }),
+        buildWav({ data: pcm(10, 2), sampleRate: 48000 }),
+      ]);
+    } catch (error) {
+      caught = error;
+    }
+    expect((caught as WavError).message).toContain('segment 2/2');
+  });
+
+  it('reports a parse failure with the segment named', () => {
+    let caught: unknown;
+    try {
+      parseAndValidateSegments([buildWav({ data: pcm(10, 1) }), new Uint8Array([1, 2, 3, 4])]);
+    } catch (error) {
+      caught = error;
+    }
+    expect((caught as WavError).kind).toBe('NOT_RIFF_WAVE');
+    expect((caught as WavError).message).toContain('segment 2/2');
+  });
+
+  it('refuses an empty segment list', () => {
+    expect(() => parseAndValidateSegments([])).toThrow(WavError);
+  });
+
+  it('assertPhase1AudioContract accepts and rejects directly', () => {
+    const ok = parseWav(buildWav({ data: pcm(10, 1) }));
+    expect(() => assertPhase1AudioContract(ok, 'WAV')).not.toThrow();
+
+    const bad = parseWav(buildWav({ data: pcm(10, 1), channels: 2 }));
+    expect(() => assertPhase1AudioContract(bad, 'WAV')).toThrow(WavError);
   });
 });

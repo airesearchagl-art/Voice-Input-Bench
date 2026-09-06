@@ -1,4 +1,5 @@
 import { toCanonicalText } from '@/lib/canonicalText';
+import { MANUAL_TEST_ID } from './sourceSelection';
 
 /**
  * Built-in Benchmark Cases.
@@ -12,8 +13,7 @@ import { toCanonicalText } from '@/lib/canonicalText';
  * anyway, so the canonical text of a case Run is exactly what is written here.
  */
 
-/** `test_id` used when the operator typed the text themselves. */
-export const MANUAL_TEST_ID = 'manual';
+export { MANUAL_TEST_ID };
 
 export interface BenchmarkCase {
   id: string;
@@ -92,9 +92,21 @@ const CASES: BenchmarkCase[] = [
   },
 ];
 
-/** Frozen so a request handler cannot mutate the source of truth. */
-export const BENCHMARK_CASES: readonly BenchmarkCase[] = CASES.map((benchmarkCase) =>
-  Object.freeze({ ...benchmarkCase, text: toCanonicalText(benchmarkCase.text) }),
+/**
+ * Frozen, entries and array alike, so a request handler cannot mutate the
+ * source of truth.
+ *
+ * These bodies are a versioned corpus. Once a case ID has been merged, its text
+ * is fixed: editing it would change the Text SHA-256 of every future Run of that
+ * ID, so Runs recorded before and after the edit would claim the same `test_id`
+ * while containing different words. A revised wording ships as a new ID
+ * (`architecture-long-002`, …), leaving `-001` alone. `cases.test.ts` pins each
+ * body's SHA-256 so an accidental edit fails the build.
+ */
+export const BENCHMARK_CASES: readonly BenchmarkCase[] = Object.freeze(
+  CASES.map((benchmarkCase) =>
+    Object.freeze({ ...benchmarkCase, text: toCanonicalText(benchmarkCase.text) }),
+  ),
 );
 
 export function getBenchmarkCase(id: string): BenchmarkCase | undefined {
