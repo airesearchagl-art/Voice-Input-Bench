@@ -2,7 +2,11 @@ import { toCanonicalText } from '@/lib/canonicalText';
 import { sha256OfBytes, sha256OfText } from '@/lib/hash';
 import { createRunId } from '@/lib/runId';
 import { LocalRunStore } from '@/storage/LocalRunStore';
-import { MANIFEST_SCHEMA_VERSION, type RunManifestV1 } from './manifest';
+import { assembleSegmentWavs } from '@/audio/wav';
+import { MANIFEST_SCHEMA_VERSION, type RunManifest } from './manifest';
+import { MANUAL_TEST_ID, getBenchmarkCase } from './cases';
+import { DEFAULT_TARGET_MAX_CHARS, SPLIT_STRATEGY, splitCanonicalText } from './splitter';
+import { TTSProviderError } from '@/tts/TTSProvider';
 import type { AivisSpeechProvider, AivmModelSummary } from '@/tts/AivisSpeechProvider';
 import type { TTSVoice } from '@/tts/TTSProvider';
 
@@ -10,17 +14,21 @@ import type { TTSVoice } from '@/tts/TTSProvider';
  * One Generate → one immutable Run.
  *
  * Everything identifying in the manifest is resolved server-side from fresh
- * engine evidence. The client sends a style ID and two scale values; it does
- * not get to tell us the speaker name, the model, or the engine version. A
- * Run whose identity came from the caller would not be evidence of anything.
+ * engine evidence. The client sends a style ID, two scale values, and either
+ * `manual` text or a Benchmark Case ID; it does not get to tell us the speaker
+ * name, the model, the engine version, or — for a Case — the text itself. A Run
+ * whose identity came from the caller would not be evidence of anything.
  *
- * If identity cannot be pinned down — the style ID is unknown to the engine,
- * or the voice maps to zero or several AIVM models, or the model's UUID/version
- * is missing — no official Run is written. Failing closed keeps `data/runs/`
- * free of Runs that cannot be traced back to a specific model build.
+ * If identity cannot be pinned down — the style ID is unknown to the engine, or
+ * the voice maps to zero or several AIVM models, or the model's UUID/version is
+ * missing — no official Run is written. The same holds if any segment fails to
+ * synthesize, or if the segments disagree about their audio format. Failing
+ * closed keeps `data/runs/` free of Runs that cannot be traced or replayed.
  */
 
 export type BenchmarkErrorKind =
+  /** The requested Benchmark Case ID is not a built-in case. */
+  | 'CASE_NOT_FOUND'
   /** The requested style ID is not in the engine's current `/speakers`. */
   | 'VOICE_NOT_FOUND'
   /** `/aivm_models` could not be read, so model identity is unavailable. */
@@ -30,7 +38,9 @@ export type BenchmarkErrorKind =
   /** Several models claim this speaker; identity is not unique. */
   | 'MODEL_AMBIGUOUS'
   /** The model was found but its UUID, name or version is missing. */
-  | 'MODEL_IDENTITY_INCOMPLETE';
+  | 'MODEL_IDENTITY_INCOMPLETE'
+  /** The splitter produced nothing to synthesize. */
+  | 'NO_SEGMENTS';
 
 export class BenchmarkError extends Error {
   readonly kind: BenchmarkErrorKind;
@@ -44,8 +54,24 @@ export class BenchmarkError extends Error {
   }
 }
 
+/** Stable shape of `provider-query.json`, one entry per synthesized segment. */
+export interface ProviderQueryEnvelope {
+  schema_version: 1;
+  provider_id: string;
+  segments: Array<{
+    index: number;
+    /** The opaque AudioQuery actually sent to `/synthesis`, unknown fields included. */
+    query: unknown;
+  }>;
+}
+
 export interface GenerateBenchmarkRunInput {
-  /** Raw text straight from the UI. Canonicalized here, once. */
+  /** `manual`, or a built-in Benchmark Case ID. */
+  testId: string;
+  /**
+   * Raw text from the UI. Used only when `testId` is `manual`; for a Benchmark
+   * Case the server reads its own copy and ignores whatever the client sent.
+   */
   rawText: string;
   styleId: number;
   speedScale: number;
@@ -58,12 +84,13 @@ export interface GenerateBenchmarkRunDeps {
   /** Injected in tests so run IDs and timestamps are deterministic. */
   now?: () => Date;
   runId?: string;
+  targetMaxChars?: number;
 }
 
 export interface GenerateBenchmarkRunResult {
   runId: string;
   runDir: string;
-  manifest: RunManifestV1;
+  manifest: RunManifest;
 }
 
 /** Resolved model identity, with every field confirmed present. */
@@ -71,6 +98,23 @@ interface ResolvedModel {
   uuid: string;
   name: string;
   version: string;
+}
+
+/**
+ * Resolve the text to synthesize.
+ *
+ * For a Benchmark Case this reads the server-side source of truth. The client's
+ * `rawText` is dropped on the floor: two Runs tagged `architecture-long-001`
+ * must contain the same words, or comparing them means nothing.
+ */
+export function resolveSourceText(testId: string, rawText: string): string {
+  if (testId === MANUAL_TEST_ID) return toCanonicalText(rawText);
+
+  const benchmarkCase = getBenchmarkCase(testId);
+  if (!benchmarkCase) {
+    throw new BenchmarkError('CASE_NOT_FOUND', `Benchmark Case "${testId}" は存在しません。`);
+  }
+  return toCanonicalText(benchmarkCase.text);
 }
 
 function resolveVoice(voices: TTSVoice[], styleId: number): TTSVoice {
@@ -121,15 +165,34 @@ function resolveModel(models: AivmModelSummary[], speakerUuid: string): Resolved
   return { uuid: model.uuid, name: model.name!, version: model.version! };
 }
 
+/** Re-throw a provider failure naming the segment, keeping the original cause category. */
+function withSegmentContext(caught: unknown, index: number, total: number): never {
+  if (caught instanceof TTSProviderError) {
+    throw new TTSProviderError(
+      caught.kind,
+      caught.providerId,
+      `segment ${index + 1}/${total}: ${caught.message}`,
+      {
+        endpoint: caught.endpoint,
+        httpStatus: caught.httpStatus,
+        detail: caught.detail,
+        cause: caught,
+      },
+    );
+  }
+  throw caught;
+}
+
 export async function generateBenchmarkRun(
   input: GenerateBenchmarkRunInput,
   deps: GenerateBenchmarkRunDeps,
 ): Promise<GenerateBenchmarkRunResult> {
   const { provider, store } = deps;
   const now = deps.now ?? (() => new Date());
+  const targetMaxChars = deps.targetMaxChars ?? DEFAULT_TARGET_MAX_CHARS;
 
   // 1. Canonical text, produced once and reused for storage, hashing and TTS.
-  const canonicalText = toCanonicalText(input.rawText);
+  const canonicalText = resolveSourceText(input.testId, input.rawText);
 
   // 2-4. Fresh engine evidence: voice identity, runtime info, model identity.
   //      Read before synthesis so an unidentifiable voice costs nothing.
@@ -147,35 +210,69 @@ export async function generateBenchmarkRun(
   }
   const model = resolveModel(aivmModels.models, voice.speakerUuid);
 
-  // 5-6. Synthesis. The canonical string — untrimmed — is what goes to the engine.
-  const speech = await provider.generateSpeech({
-    text: canonicalText,
-    styleId: voice.styleId,
-    speedScale: input.speedScale,
-    volumeScale: input.volumeScale,
-  });
+  // 5. Deterministic split. Segments are slices of the canonical text, so
+  //    joining them reproduces it exactly.
+  const segments = splitCanonicalText(canonicalText, targetMaxChars);
+  if (segments.length === 0) {
+    throw new BenchmarkError('NO_SEGMENTS', '合成するテキストがありません。');
+  }
+  const strategy = segments.length === 1 ? 'none' : SPLIT_STRATEGY;
 
-  // 7. Hashes, each over the exact bytes that will be on disk.
-  const audioBytes = new Uint8Array(speech.audio);
+  // 6. Synthesis, one segment at a time, every segment on the same voice,
+  //    style, speed, volume, sample rate and channel count. A failure anywhere
+  //    aborts before anything is written.
+  const segmentWavs: Uint8Array[] = [];
+  const providerQueries: ProviderQueryEnvelope['segments'] = [];
+  let contentType = 'audio/wav';
+
+  for (const [index, segmentText] of segments.entries()) {
+    try {
+      const speech = await provider.generateSpeech({
+        text: segmentText,
+        styleId: voice.styleId,
+        speedScale: input.speedScale,
+        volumeScale: input.volumeScale,
+      });
+      segmentWavs.push(new Uint8Array(speech.audio));
+      providerQueries.push({ index, query: speech.providerQuery });
+      contentType = speech.contentType;
+    } catch (caught) {
+      withSegmentContext(caught, index, segments.length);
+    }
+  }
+
+  // 7. Assembly. A single-segment Run keeps the engine's bytes untouched;
+  //    multi-segment Runs are stitched from the parsed PCM payloads with
+  //    nothing inserted and nothing applied to the samples.
+  const audioBytes =
+    segmentWavs.length === 1 ? segmentWavs[0]! : assembleSegmentWavs(segmentWavs);
+
+  // 8. Hashes, each over the exact bytes that will be on disk.
+  const providerQueryEnvelope: ProviderQueryEnvelope = {
+    schema_version: 1,
+    provider_id: provider.id,
+    segments: providerQueries,
+  };
   const providerQueryJson = Buffer.from(
-    `${JSON.stringify(speech.providerQuery, null, 2)}\n`,
+    `${JSON.stringify(providerQueryEnvelope, null, 2)}\n`,
     'utf8',
   );
 
   const generatedAt = now().toISOString();
   const runId = deps.runId ?? createRunId(now());
 
-  // 8. Manifest describes the artifacts by hash, so a later reader can verify
+  // 9. Manifest describes the artifacts by hash, so a later reader can verify
   //    the stored files are the ones this Run was recorded with.
-  const manifest: RunManifestV1 = {
+  const manifest: RunManifest = {
     schema_version: MANIFEST_SCHEMA_VERSION,
     run_id: runId,
-    test_id: 'manual',
+    test_id: input.testId,
     generated_at: generatedAt,
     source: {
       file: 'source.txt',
       encoding: 'utf-8',
       line_endings: 'lf',
+      // The full canonical text, never a segment.
       sha256: sha256OfText(canonicalText),
     },
     provider: {
@@ -198,8 +295,9 @@ export async function generateBenchmarkRun(
       stereo: false,
     },
     segmentation: {
-      strategy: 'none',
-      segment_count: 1,
+      strategy,
+      target_max_chars: targetMaxChars,
+      segment_count: segments.length,
     },
     provider_query: {
       file: 'provider-query.json',
@@ -207,7 +305,7 @@ export async function generateBenchmarkRun(
     },
     audio: {
       file: 'audio.wav',
-      content_type: speech.contentType,
+      content_type: contentType,
       sha256: sha256OfBytes(audioBytes),
       bytes: audioBytes.byteLength,
     },
@@ -217,7 +315,7 @@ export async function generateBenchmarkRun(
     },
   };
 
-  // 9. Transactional write. Nothing under `runId` exists until this succeeds.
+  // 10. Transactional write. Nothing under `runId` exists until this succeeds.
   const stored = await store.saveRun(runId, {
     sourceText: canonicalText,
     audio: audioBytes,

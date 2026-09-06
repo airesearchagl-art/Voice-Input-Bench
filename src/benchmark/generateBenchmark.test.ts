@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AivisSpeechProvider, type FetchLike } from '@/tts/AivisSpeechProvider';
 import { LocalRunStore } from '@/storage/LocalRunStore';
 import { BenchmarkError, generateBenchmarkRun } from './generateBenchmark';
+import { MANUAL_TEST_ID } from './cases';
 import type { RunManifestV1 } from './manifest';
 
 /**
@@ -122,7 +123,13 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-const INPUT = { rawText: 'テストです。', styleId: STYLE_ID, speedScale: 1.25, volumeScale: 0.75 };
+const INPUT = {
+  testId: MANUAL_TEST_ID,
+  rawText: 'テストです。',
+  styleId: STYLE_ID,
+  speedScale: 1.25,
+  volumeScale: 0.75,
+};
 
 describe('successful Run', () => {
   it('writes the four-file bundle and returns a schema v1 manifest', async () => {
@@ -141,7 +148,7 @@ describe('successful Run', () => {
     );
 
     const manifest = result.manifest;
-    expect(manifest.schema_version).toBe(1);
+    expect(manifest.schema_version).toBe(2);
     expect(manifest.run_id).toBe(RUN_ID);
     expect(manifest.test_id).toBe('manual');
     expect(manifest.generated_at).toBe(NOW.toISOString());
@@ -151,7 +158,11 @@ describe('successful Run', () => {
       sample_rate: 44100,
       stereo: false,
     });
-    expect(manifest.segmentation).toEqual({ strategy: 'none', segment_count: 1 });
+    expect(manifest.segmentation).toEqual({
+      strategy: 'none',
+      target_max_chars: 450,
+      segment_count: 1,
+    });
     expect(manifest.reproducibility).toEqual({
       canonical_artifact: true,
       bit_exact_regeneration_expected: false,

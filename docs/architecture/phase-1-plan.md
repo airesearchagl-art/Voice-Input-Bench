@@ -319,7 +319,11 @@ P1-A では **Run の永続化を行わない**。WAV はレスポンスとし�
 
 P1-C をもって Phase 1 は完了する。評価・採点・入力自動化は §1 のとおり Phase 1 の範囲外。
 
-## 8. Suggested Structure
+受け入れ基準は [`../PHASE1_ACCEPTANCE.md`](../PHASE1_ACCEPTANCE.md)。
+
+## 8. Structure
+
+Phase 1 完了時点の実装。
 
 ```text
 src/
@@ -328,10 +332,138 @@ src/
 │  └─ api/
 │     ├─ status/route.ts
 │     ├─ voices/route.ts
-│     └─ generate/route.ts
+│     ├─ cases/route.ts
+│     ├─ generate/route.ts
+│     └─ runs/[runId]/audio/route.ts
+├─ benchmark/
+│  ├─ cases.ts
+│  ├─ splitter.ts
+│  ├─ generateBenchmark.ts
+│  └─ manifest.ts
+├─ audio/
+│  └─ wav.ts
+├─ storage/
+│  └─ LocalRunStore.ts
+├─ lib/
+│  ├─ canonicalText.ts
+│  ├─ hash.ts
+│  ├─ runId.ts
+│  ├─ engineConfig.ts
+│  └─ apiError.ts
 └─ tts/
    ├─ TTSProvider.ts
    └─ AivisSpeechProvider.ts
 ```
 
-将来機能のためだけの階層は作らない。小さな `lib` の追加は必要に応じて可。
+将来機能のためだけの階層は作らない。
+
+## 9. Benchmark Cases（P1-C）
+
+Built-in Benchmark Case は、同じ文章を繰り返し計測できるようにするための固定テキスト。
+
+| ID | 狙い |
+| --- | --- |
+| `architecture-short-001` | 単一 segment に収まる建築ドメインの短文 |
+| `architecture-long-001` | 決定的分割と segment 結合を通す長文 |
+| `filler-001` | 「えーと」「あの」などのフィラー |
+| `correction-001` | 発話中の自己修正・言い直し |
+| `numbers-units-001` | 寸法・面積・風量・速度・時刻の数値と単位 |
+| `coding-001` | 固有名詞・英字略語・コマンド文字列 |
+
+### 本文はサーバー側が正本
+
+Case 本文は `src/benchmark/cases.ts` に置き、**client から渡された本文は使わない**。
+
+client が本文を送れてしまうと、同じ `test_id` を持つ 2 つの Run が違う文章を含みうる。
+そうなった時点で Run 同士の比較は意味を失う。API は `testId` だけを受け取り、
+サーバーが自分の持つ本文を読み直す。
+
+`manifest.test_id` は `manual` か、この一覧の ID のいずれか。
+
+## 10. Long Text（P1-C）
+
+### 10.1 splitter — strategy `sentence-v1`
+
+```text
+canonical text
+    ↓
+sentence-v1（target 450 Unicode code points）
+    ↓
+segments
+```
+
+不変条件:
+
+- 同一入力からは常に同じ segments が得られる（AI / LLM / ICU segmentation を使わない）
+- 文字を追加も削除もしない。`segments.join('') === canonicalText`
+- 各 segment は 450 code points 以下
+- surrogate pair・結合文字・ZWJ 絵文字・異体字セレクタ・肌色修飾・国旗（regional indicator）
+  を途中で分断しない
+
+境界の優先順位:
+
+```text
+paragraph / newline
+    → 。！？!?
+    → 、
+    → safe whitespace / punctuation
+    → hard split
+```
+
+優先度の高い境界でも、segment が極端に短くなる位置（target の 40% 未満）は採らず、
+次の優先度へ落ちる。改行が窓の先頭付近に 1 つだけある場合に 5 文字の segment を
+作ってしまうのを避けるため。
+
+決定性を ICU に依存させないのは、ICU のバージョンが上がると過去の Run の分割が
+再現できなくなるため。分割規則はこのリポジトリの中だけで閉じている。
+
+### 10.2 segment synthesis
+
+全 segment を同じ Voice / Style / Speed / Volume / 44100Hz / mono で、順番に生成する。
+
+途中の segment が 1 つでも失敗したら official Run を保存しない。
+部分的に読み上げられた音声を Run として残すと、その Run は
+「テキスト全体を読み上げた記録」ではなくなる。
+
+### 10.3 WAV assembly
+
+```text
+segment WAV（RIFF/WAVE）
+    ↓ fmt / data チャンクを parse（chunk padding を考慮）
+    ↓ format / channels / sampleRate / bitsPerSample / blockAlign の一致を確認
+    ↓ PCM data を順に連結
+audio.wav
+```
+
+やらないこと:
+
+- 無音の挿入
+- normalization
+- denoise
+- silence removal
+- resample
+- gain 調整
+
+いずれも「保存された音声＝実際に評価に使った音声」という前提を壊す。
+segment 間でフォーマットが一致しない場合は Fail Closed とし、Run を保存しない。
+
+単一 segment の Run では結合を行わず、Engine が返したバイト列をそのまま保存する。
+
+### 10.4 provider-query.json
+
+multi-segment Run でも、各 segment の実際の opaque AudioQuery を欠落なく残す。
+
+```json
+{
+  "schema_version": 1,
+  "provider_id": "aivisspeech",
+  "segments": [
+    { "index": 0, "query": {} }
+  ]
+}
+```
+
+`query` は `/audio_query` のレスポンスにアプリ所有の 4 フィールドを上書きしたもので、
+未知フィールドを含めてそのまま保存する。
+
+P1-B までに作られた Run は migration も rewrite もしない。

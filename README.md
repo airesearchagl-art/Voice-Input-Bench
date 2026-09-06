@@ -96,7 +96,7 @@ data/runs/<run-id>/
 | **P1-B** | Run 永続化。`data/runs/<run-id>` の immutable Run Bundle、Manifest、SHA-256、transactional write。 |
 | **P1-C** | Benchmark Case と長文対応。Case selector、deterministic long-text splitter、segment WAV assembly、`architecture-long-001`、Phase 1 UI completion、Phase 1 Acceptance / README。 |
 
-現在地: **P1-B**
+現在地: **P1-C**（Phase 1 の最終ステップ）
 
 ## Setup
 
@@ -149,14 +149,17 @@ npm run dev
 
 <http://localhost:3000> を開く。
 
-## Usage (P1-B)
+## Usage (P1-C)
 
 1. ページ上部の **AivisSpeech Connection** が `Connected` になっていることを確認する
-2. **Test Text** にテキストを入力する
+2. **Test** で `Manual` または Benchmark Case を選ぶ
+   - `Manual` の場合は **Test Text** にテキストを入力する
+   - Benchmark Case の場合は本文が読み取り専用で表示される（本文はサーバー側の正本を使う）
 3. **Voice / Style** を選ぶ
 4. **Speed** / **Volume** を調整する
 5. **Generate** を押す
-6. **Output** に Run ID / Text SHA-256 / Audio SHA-256 / bytes / Generated At が表示される
+6. **Output** に Run ID / Test ID / Segmentation / Text SHA-256 / Audio SHA-256 / bytes /
+   Generated At が表示される
 7. audio player で**保存済みの** `audio.wav` を再生する
 
 1 回の Generate が 1 つの immutable Run になる。
@@ -166,13 +169,49 @@ data/runs/<run-id>/
 ├─ source.txt           canonical text
 ├─ audio.wav            canonical artifact
 ├─ provider-query.json  Provider へ送った実リクエスト
-└─ manifest.json        Manifest schema v1
+└─ manifest.json        Manifest schema v2
 ```
 
 Run は上書きされない。同じテキストを再生成しても新しい Run が作られる。
 
 audio player は `GET /api/runs/<run-id>/audio` を読むので、聞こえているのは
 メモリ上のコピーではなくディスクに保存された canonical artifact そのもの。
+
+### Benchmark Cases
+
+| ID | 内容 |
+| --- | --- |
+| `architecture-short-001` | 建築ドメインの短文（1 segment） |
+| `architecture-long-001` | 建築ドメインの長文（複数 segment） |
+| `filler-001` | 「えーと」「あの」などのフィラー |
+| `correction-001` | 発話中の言い直し |
+| `numbers-units-001` | 寸法・面積・風量・速度・時刻 |
+| `coding-001` | 固有名詞・英字略語・コマンド文字列 |
+
+Case 本文はサーバー側（`src/benchmark/cases.ts`）が正本。client が送った本文は
+使わないので、同じ `test_id` の Run 同士は必ず同じ文章を含む。
+
+### 長文の分割と結合
+
+450 code points を超えるテキストは、決定的な splitter（strategy `sentence-v1`）で
+分割し、segment ごとに同じ Voice / Speed / Volume / 44100Hz / mono で生成してから
+1 つの WAV に結合する。
+
+```text
+canonical text
+    ↓  sentence-v1（paragraph → 。！？!? → 、 → safe punctuation → hard split）
+segments（segments.join('') === canonical text）
+    ↓  segment ごとに /audio_query → /synthesis
+segment WAV
+    ↓  RIFF/WAVE を parse し PCM を順に連結
+audio.wav
+```
+
+結合時に無音挿入・normalization・denoise・silence removal・resample・gain 調整は
+一切行わない。segment 間で format / channels / sampleRate / bitsPerSample /
+blockAlign が一致しなければ Fail Closed として Run を保存しない。
+
+途中の segment が 1 つでも失敗した場合も、official Run は作らない。
 
 ## Scripts
 
@@ -215,11 +254,16 @@ src/
 │  └─ api/
 │     ├─ status/route.ts          接続状態 + Engine Version + /aivm_models
 │     ├─ voices/route.ts          Voice / Style 一覧 + capabilities
+│     ├─ cases/route.ts           Built-in Benchmark Case 一覧
 │     ├─ generate/route.ts        Text -> immutable Run（Run metadata を返す）
 │     └─ runs/[runId]/audio/route.ts  保存済み canonical audio.wav
 ├─ benchmark/
+│  ├─ cases.ts                     Built-in Benchmark Case のサーバー側正本
+│  ├─ splitter.ts                  決定的長文分割（sentence-v1）
 │  ├─ generateBenchmark.ts         Run オーケストレーション（fresh evidence 解決）
-│  └─ manifest.ts                  Manifest schema v1
+│  └─ manifest.ts                  Manifest schema v2
+├─ audio/
+│  └─ wav.ts                       RIFF/WAVE parse + segment 結合
 ├─ storage/
 │  └─ LocalRunStore.ts             transactional な immutable Run 保存
 ├─ lib/
@@ -237,6 +281,7 @@ scripts/
 
 docs/
 ├─ INITIAL_PRODUCT_DIRECTION.md   プロダクト方針の初期記録
+├─ PHASE1_ACCEPTANCE.md           Phase 1 の受け入れ基準
 └─ architecture/
    └─ phase-1-plan.md             Phase 1 の設計方針と境界
 
