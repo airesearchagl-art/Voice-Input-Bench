@@ -228,6 +228,144 @@ describe('/speakers → internal voice mapping', () => {
   });
 });
 
+describe('/speakers voice identity is fail-closed', () => {
+  const VALID_STYLE = { name: 'ノーマル', id: 888753760, type: 'talk' };
+  const VALID_SPEAKER = {
+    name: 'Anneli',
+    speaker_uuid: 'e756b8e4-b606-4e15-99b1-3f9c6a1b2e1a',
+    styles: [VALID_STYLE],
+    version: '1.0.0',
+  };
+
+  /** Build a /speakers payload from one speaker, with fields overridden or dropped. */
+  function speakersPayload(
+    speakerOverrides: Record<string, unknown> = {},
+    styleOverrides: Record<string, unknown> = {},
+  ) {
+    const style: Record<string, unknown> = { ...VALID_STYLE, ...styleOverrides };
+    for (const [key, value] of Object.entries(styleOverrides)) {
+      if (value === undefined) delete style[key];
+    }
+    const speaker: Record<string, unknown> = {
+      ...VALID_SPEAKER,
+      styles: [style],
+      ...speakerOverrides,
+    };
+    for (const [key, value] of Object.entries(speakerOverrides)) {
+      if (value === undefined) delete speaker[key];
+    }
+    return [speaker];
+  }
+
+  async function expectMalformed(payload: unknown) {
+    const { provider } = createProvider({ '/speakers': () => jsonResponse(payload) });
+    const error = await expectProviderError(provider.listVoices());
+    expect(error.kind).toBe('MALFORMED_RESPONSE');
+    expect(error.endpoint).toBe('/speakers');
+    return error;
+  }
+
+  it('maps a fully valid speaker', async () => {
+    const { provider } = createProvider({ '/speakers': () => jsonResponse(speakersPayload()) });
+
+    await expect(provider.listVoices()).resolves.toEqual([
+      {
+        styleId: 888753760,
+        speakerName: 'Anneli',
+        speakerUuid: 'e756b8e4-b606-4e15-99b1-3f9c6a1b2e1a',
+        styleName: 'ノーマル',
+        label: 'Anneli / ノーマル',
+      },
+    ]);
+  });
+
+  const INVALID_NAMES: Array<[string, unknown]> = [
+    ['missing', undefined],
+    ['null', null],
+    ['empty string', ''],
+    ['whitespace only', '   '],
+    ['not a string', 123],
+  ];
+
+  describe('speaker.name', () => {
+    for (const [label, value] of INVALID_NAMES) {
+      it(`fails when speaker.name is ${label}`, async () => {
+        const error = await expectMalformed(speakersPayload({ name: value }));
+        expect(error.message).toContain('name');
+      });
+    }
+  });
+
+  describe('speaker.speaker_uuid', () => {
+    for (const [label, value] of INVALID_NAMES) {
+      it(`fails when speaker.speaker_uuid is ${label}`, async () => {
+        const error = await expectMalformed(speakersPayload({ speaker_uuid: value }));
+        expect(error.message).toContain('speaker_uuid');
+      });
+    }
+  });
+
+  describe('speaker.styles', () => {
+    it('fails when styles is missing', async () => {
+      await expectMalformed(speakersPayload({ styles: undefined }));
+    });
+
+    it('fails when styles is not an array', async () => {
+      await expectMalformed(speakersPayload({ styles: { id: 1 } }));
+    });
+
+    it('fails when a style is not an object', async () => {
+      await expectMalformed([{ ...VALID_SPEAKER, styles: ['ノーマル'] }]);
+    });
+  });
+
+  describe('style.name', () => {
+    for (const [label, value] of INVALID_NAMES) {
+      it(`fails when style.name is ${label}`, async () => {
+        const error = await expectMalformed(speakersPayload({}, { name: value }));
+        expect(error.message).toContain('name');
+      });
+    }
+  });
+
+  describe('style.id', () => {
+    const INVALID_IDS: Array<[string, unknown]> = [
+      ['missing', undefined],
+      ['null', null],
+      ['a string', '888753760'],
+      ['not an integer', 1.5],
+      ['NaN', Number.NaN],
+    ];
+
+    for (const [label, value] of INVALID_IDS) {
+      it(`fails when style.id is ${label}`, async () => {
+        const error = await expectMalformed(speakersPayload({}, { id: value }));
+        expect(error.message).toContain('id');
+      });
+    }
+  });
+
+  it('fails the whole call when any one speaker in the list is invalid', async () => {
+    await expectMalformed([
+      VALID_SPEAKER,
+      { name: 'Broken', speaker_uuid: '', styles: [VALID_STYLE] },
+    ]);
+  });
+
+  it('never emits a voice with a blank name, uuid or style name', async () => {
+    const { provider } = createProvider({
+      '/speakers': () => jsonResponse([VALID_SPEAKER]),
+    });
+
+    for (const voice of await provider.listVoices()) {
+      expect(voice.speakerName.trim()).not.toBe('');
+      expect(voice.speakerUuid.trim()).not.toBe('');
+      expect(voice.styleName.trim()).not.toBe('');
+      expect(Number.isInteger(voice.styleId)).toBe(true);
+    }
+  });
+});
+
 describe('/version', () => {
   it('accepts the bare JSON string AivisSpeech returns', async () => {
     const { provider } = createProvider({ '/version': () => jsonResponse('1.1.0') });

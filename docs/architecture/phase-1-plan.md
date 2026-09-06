@@ -22,11 +22,18 @@ Phase 1 は「入力テキストから、ローカル TTS で音声を生成し�
 
 含まないもの:
 
-- STT
-- 自動採点 / CER / LLM 評価
+- Windows 音声入力への自動投入
+- Aqua Voice への自動投入
+- STT 自動取得 / Whisper 連携
+- CER / Semantic evaluation / LLM grading
+- Markdown Report
+- SNS 連携
 - データベース / ORM
 - SaaS / 認証 / 課金
 - クラウドデプロイ
+
+Phase 1 において、生成済み WAV を Windows 音声入力や Aqua Voice へ投入する操作は
+**手動**で行う。自動投入は Phase 1 の境界の外に置く。
 
 ## 2. Provider Boundary
 
@@ -221,11 +228,55 @@ Phase 1 全体で次を前提とする。
 - **生成済み WAV そのものを canonical artifact として保持する**
 - **再生成は既存 Run を上書きせず、新しい Run として記録する**
 
+### 6.1 canonical source text
+
+Run に残すテキスト・ハッシュ対象のテキスト・TTS へ渡すテキストが 1 文字でも食い違うと、
+Manifest のハッシュが「実際に読み上げられた文字列」を指さなくなる。そのため Phase 1 では
+**canonical text をひとつだけ定義し、3 箇所すべてで同じ文字列を使う**。
+
+```text
+raw UI text
+    ↓
+CRLF / CR → LF
+    ↓
+canonical text
+├─ source.txt
+├─ Text SHA-256 input
+└─ TTS input
+```
+
+**canonicalization は改行コードの正規化だけ**（`
+` および `` を `
+` へ）。
+
+禁止する変換:
+
+| 禁止 | 理由 |
+| --- | --- |
+| trim | 前後の空白は入力内容の一部 |
+| 全角 / 半角変換 | 読み上げ結果が変わりうる |
+| Unicode 文字の置換（正規化形の変更を含む） | 入力内容の書き換えにあたる |
+| 句読点の変更 | 韻律・区切りに直接影響する |
+| 空白の圧縮 | 同上 |
+| 誤字修正 | 評価対象そのものを書き換えてしまう |
+| AI による整形 | 再現不能な変換を挟むことになる |
+
+改行コードだけを対象にするのは、それが「入力内容の差」ではなく「入力経路の差」
+（OS・エディタ・貼り付け元）に由来するノイズだから。それ以外の見た目上の差は
+**評価対象そのもの**であり、bench 側で均してはならない。
+
+`source.txt` には **canonical text** を保存する（「正規化前の原文」ではない）。
+Text SHA-256 も canonical text に対して取り、TTS へも canonical text を渡す。
+
+> canonicalization の実装は P1-B（Run 永続化）で行う。P1-A では契約の定義のみ。
+
+### 6.2 Run Bundle
+
 Run Bundle（P1-B 以降）:
 
 ```text
 data/runs/<run-id>/
-├─ source.txt
+├─ source.txt           canonical text
 ├─ audio.wav
 ├─ provider-query.json
 └─ manifest.json
@@ -262,11 +313,13 @@ P1-A では **Run の永続化を行わない**。WAV はレスポンスとし�
 ### P1-C — Benchmark Cases & Long Text
 
 - Benchmark Case selector
-- long-text deterministic splitter
-- segment WAV 結合
+- deterministic long-text splitter
+- segment WAV assembly
 - `architecture-long-001`
-- Windows / Aqua Voice 入力自動化
-- STT / CER / LLM 評価 / Markdown Report
+- Phase 1 UI completion
+- Phase 1 Acceptance / README
+
+P1-C をもって Phase 1 は完了する。評価・採点・入力自動化は §1 のとおり Phase 1 の範囲外。
 
 ## 8. Suggested Structure
 

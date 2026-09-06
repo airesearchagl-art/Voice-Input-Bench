@@ -123,12 +123,19 @@ export default function Page() {
   }, []);
 
   const loadVoices = useCallback(async () => {
+    // Clear voice state up front. If this load fails, no previously selected
+    // voice may survive: Generate would otherwise post a styleId the engine has
+    // not confirmed in this session, and the Run would cite a voice we never
+    // actually looked up.
     setVoicesError(null);
     setNoVoicesInstalled(false);
+    setVoices([]);
+    setStyleId(null);
+    setCapabilities(null);
+
     try {
       const response = await fetch('/api/voices', { cache: 'no-store' });
       if (!response.ok) {
-        setVoices([]);
         setVoicesError(await readApiError(response));
         return;
       }
@@ -144,7 +151,6 @@ export default function Page() {
       setNoVoicesInstalled(body.warning === 'NO_VOICES_INSTALLED');
       setStyleId(body.voices[0]?.styleId ?? null);
     } catch (caught) {
-      setVoices([]);
       setVoicesError({
         kind: 'ENGINE_CONNECTION_FAILED',
         message: caught instanceof Error ? caught.message : String(caught),

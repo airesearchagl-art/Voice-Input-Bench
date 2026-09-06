@@ -68,10 +68,25 @@ Text → local TTS → canonical WAV + Manifest
 
 ## Out of Scope for Phase 1
 
-以下は Phase 1 の対象外とする。
+以下は Phase 1 の対象外とする。Phase 1 の境界をこれらへ拡張しない。
 
-- STT（音声認識）
-- 自動採点 / CER / LLM による評価
+### 入力自動化・評価系（Phase 1 外）
+
+- Windows 音声入力への自動投入
+- Aqua Voice への自動投入
+- STT 自動取得
+- Whisper 連携
+- CER
+- Semantic evaluation
+- LLM grading
+- Markdown Report
+- SNS 連携
+
+> Phase 1 において、生成済み WAV を Windows 音声入力や Aqua Voice へ投入する操作は
+> **手動**で行う。自動投入は Phase 1 の範囲に含めない。
+
+### 基盤系（Phase 1 外）
+
 - データベース / ORM
 - SaaS 化
 - 認証 / 認可
@@ -102,13 +117,53 @@ WAV は再生成可能な中間物ではなく、Run の一次成果物として
 
 Run は immutable。これにより「いつの計測か」「どのエンジンでの結果か」が失われない。
 
+### canonical source text
+
+Run に残すテキストと、ハッシュを取るテキストと、TTS へ渡すテキストが食い違うと、
+Manifest のハッシュが「実際に読み上げられた文字列」を指さなくなり、再現性が壊れる。
+そのため Phase 1 では **canonical text をひとつだけ定義し、3 箇所すべてで同じ文字列を使う**。
+
+```text
+raw UI text
+    ↓
+CRLF / CR → LF
+    ↓
+canonical text
+├─ source.txt
+├─ Text SHA-256 input
+└─ TTS input
+```
+
+**canonicalization は改行コードの正規化だけ**（`
+` および `` を `
+` へ）。
+それ以外の変換は一切行わない。
+
+禁止する変換:
+
+- trim（前後の空白除去）
+- 全角 / 半角変換
+- Unicode 文字の勝手な置換（正規化形の変更を含む）
+- 句読点の変更
+- 空白の圧縮
+- 誤字修正
+- AI による整形
+
+改行コードだけを対象にするのは、それが「入力内容の差」ではなく「入力経路の差」
+（OS・エディタ・貼り付け元）に由来するノイズであり、これを残すと同一テキストが
+別ハッシュになってしまうため。逆に、それ以外の見た目上の些細な差は
+**評価対象そのもの**なので、bench 側で勝手に均してはならない。
+
+`source.txt` は「正規化前の原文」ではなく **canonical text** を保存する。
+Text SHA-256 も canonical text に対して取り、TTS へも canonical text を渡す。
+
 ### Run Bundle
 
 将来の Run 保存形式は次を想定する。
 
 ```text
 data/runs/<run-id>/
-├─ source.txt           入力テキスト（正規化前の原文）
+├─ source.txt           canonical text（改行を LF に正規化した入力テキスト）
 ├─ audio.wav            canonical artifact
 ├─ provider-query.json  Provider へ実際に送ったリクエスト内容
 └─ manifest.json        Run メタデータ
@@ -142,11 +197,14 @@ data/runs/<run-id>/
 ### P1-C — Benchmark Cases & Long Text
 
 - Benchmark Case selector
-- 長文の決定的分割（deterministic splitter）
-- segment WAV 結合
+- deterministic long-text splitter（長文の決定的分割）
+- segment WAV assembly（segment WAV 結合）
 - `architecture-long-001`
-- Windows / Aqua Voice 入力自動化
-- STT / CER / LLM 評価 / Markdown Report
+- Phase 1 UI completion
+- Phase 1 Acceptance / README
+
+P1-C をもって Phase 1 は完了する。評価・採点・入力自動化は Phase 1 の範囲外
+（[Out of Scope for Phase 1](#out-of-scope-for-phase-1) を参照）。
 
 ## Non-Goals（当面つくらないもの）
 

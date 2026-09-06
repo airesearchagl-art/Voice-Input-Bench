@@ -27,13 +27,19 @@ Provider Adapter 方式（`TTSProvider` インターフェース + Provider 個�
 
 ### Phase 1 対象外（Out of Scope）
 
-- STT（音声認識）
-- 自動採点 / CER / LLM評価
-- データベース
-- SaaS化
+- Windows 音声入力への自動投入
+- Aqua Voice への自動投入
+- STT 自動取得 / Whisper 連携
+- CER / Semantic evaluation / LLM grading
+- Markdown Report
+- SNS 連携
+- データベース / ORM
+- SaaS 化
 - 認証 / 認可
 - 課金
 - クラウドデプロイ
+
+生成した WAV を Windows 音声入力や Aqua Voice へ投入する操作は、Phase 1 では**手動**で行う。
 
 ## Reproducibility Model
 
@@ -49,11 +55,32 @@ TTS エンジンはバージョン・モデル・実行環境によって出力�
 - **再生成は既存 Run を上書きしない。** 常に新しい Run として記録する。
 - Run は生成条件（入力テキスト・Provider・エンジン情報・リクエスト内容）とともに保存する。
 
+### canonical source text
+
+Run に残すテキスト・ハッシュ対象のテキスト・TTS へ渡すテキストは、**同じ 1 本の文字列**を使う。
+
+```text
+raw UI text
+    ↓
+CRLF / CR → LF
+    ↓
+canonical text
+├─ source.txt
+├─ Text SHA-256 input
+└─ TTS input
+```
+
+canonicalization は**改行コードの正規化だけ**。trim / 全角半角変換 / Unicode 置換 /
+句読点変更 / 空白圧縮 / 誤字修正 / AI 整形は行わない。詳細は
+[`docs/architecture/phase-1-plan.md`](docs/architecture/phase-1-plan.md) §6.1 を参照。
+
+> canonicalization の実装は P1-B。P1-A では契約の定義のみ。
+
 ### 将来の Run Bundle 構成
 
 ```text
 data/runs/<run-id>/
-├─ source.txt           入力テキスト
+├─ source.txt           canonical text
 ├─ audio.wav            canonical artifact（正）
 ├─ provider-query.json  Provider へ送った実リクエスト
 └─ manifest.json        Run メタデータ（ハッシュ・エンジン情報・パラメータ）
@@ -67,7 +94,7 @@ data/runs/<run-id>/
 | --- | --- |
 | **P1-A** | Genesis baseline + AivisSpeech Contract Spike。最小ローカルWebアプリで `Text → WAV` を通す。Provider境界を確定させる。 |
 | **P1-B** | Run 永続化。`data/runs/<run-id>` の immutable Run Bundle、Manifest、SHA-256、transactional write。 |
-| **P1-C** | Benchmark Case と長文対応。Case selector、決定的な長文分割、segment WAV 結合、レポート出力。 |
+| **P1-C** | Benchmark Case と長文対応。Case selector、deterministic long-text splitter、segment WAV assembly、`architecture-long-001`、Phase 1 UI completion、Phase 1 Acceptance / README。 |
 
 現在地: **P1-A**
 
@@ -75,8 +102,11 @@ data/runs/<run-id>/
 
 ### Requirements
 
-- Node.js 20.9 以上（開発・検証は Node.js 24.15.0 / npm 11.12.1）
+- **Node.js 24.x**（canonical runtime。検証は Node.js 24.15.0 / npm 11.12.1）
 - [AivisSpeech](https://aivis-project.com/) または AivisSpeech Engine（ローカル起動）
+
+> Phase 1 は Node 24.x を canonical runtime として扱い、対応範囲を広げない。
+> `package.json` の `engines` も `^24.0.0` に固定してある。
 
 ### 1. AivisSpeech Engine を起動する
 

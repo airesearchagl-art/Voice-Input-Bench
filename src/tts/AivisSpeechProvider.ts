@@ -93,6 +93,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
 function truncate(text: string): string {
   return text.length > DETAIL_MAX_LENGTH ? `${text.slice(0, DETAIL_MAX_LENGTH)}…` : text;
 }
@@ -287,6 +291,12 @@ export class AivisSpeechProvider implements TTSProvider {
    * engine-side ID, and that ID is what `/audio_query` and `/synthesis` take.
    * So we flatten to (speaker, style) pairs.
    *
+   * Voice identity is validated fail-closed. The AivisSpeech contract requires
+   * `speaker.name`, `speaker.speaker_uuid`, `speaker.styles`, `style.name` and
+   * `style.id`, so a missing or malformed one is a MALFORMED_RESPONSE — never a
+   * voice with a blank name. A voice that cannot be identified cannot be cited
+   * later as "the voice this Run used", which is the whole point of recording it.
+   *
    * An empty engine response yields an empty list — the caller is responsible
    * for surfacing "no voices installed" explicitly rather than rendering it as
    * a normal, empty selector.
@@ -312,8 +322,23 @@ export class AivisSpeechProvider implements TTSProvider {
         });
       }
 
-      const speakerName = typeof speaker.name === 'string' ? speaker.name : '';
-      const speakerUuid = typeof speaker.speaker_uuid === 'string' ? speaker.speaker_uuid : '';
+      if (!isNonEmptyString(speaker.name)) {
+        throw this.error(
+          'MALFORMED_RESPONSE',
+          '/speakers の speaker に有効な name がありません。',
+          { endpoint: '/speakers', detail: truncate(JSON.stringify(speaker)) },
+        );
+      }
+      if (!isNonEmptyString(speaker.speaker_uuid)) {
+        throw this.error(
+          'MALFORMED_RESPONSE',
+          '/speakers の speaker に有効な speaker_uuid がありません。',
+          { endpoint: '/speakers', detail: truncate(JSON.stringify(speaker)) },
+        );
+      }
+
+      const speakerName = speaker.name;
+      const speakerUuid = speaker.speaker_uuid;
       const styles = speaker.styles;
 
       if (!Array.isArray(styles)) {
@@ -324,20 +349,34 @@ export class AivisSpeechProvider implements TTSProvider {
       }
 
       for (const style of styles) {
-        if (!isPlainObject(style) || typeof style.id !== 'number') {
-          throw this.error('MALFORMED_RESPONSE', '/speakers の style に数値の id がありません。', {
+        if (!isPlainObject(style)) {
+          throw this.error('MALFORMED_RESPONSE', '/speakers の style がオブジェクトではありません。', {
             endpoint: '/speakers',
             detail: truncate(JSON.stringify(style)),
           });
         }
 
-        const styleName = typeof style.name === 'string' ? style.name : '';
+        const styleId = style.id;
+        if (typeof styleId !== 'number' || !Number.isInteger(styleId)) {
+          throw this.error('MALFORMED_RESPONSE', '/speakers の style に有効な id がありません。', {
+            endpoint: '/speakers',
+            detail: truncate(JSON.stringify(style)),
+          });
+        }
+
+        if (!isNonEmptyString(style.name)) {
+          throw this.error('MALFORMED_RESPONSE', '/speakers の style に有効な name がありません。', {
+            endpoint: '/speakers',
+            detail: truncate(JSON.stringify(style)),
+          });
+        }
+
         voices.push({
-          styleId: style.id,
+          styleId,
           speakerName,
           speakerUuid,
-          styleName,
-          label: styleName ? `${speakerName} / ${styleName}` : speakerName,
+          styleName: style.name,
+          label: `${speakerName} / ${style.name}`,
         });
       }
     }
