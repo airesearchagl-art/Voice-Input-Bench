@@ -4,6 +4,10 @@ import { BenchmarkError, type BenchmarkErrorKind } from '@/benchmark/generateBen
 import { RunStoreError, type RunStoreErrorKind } from '@/storage/LocalRunStore';
 import { WavError, type WavErrorKind } from '@/audio/wav';
 import { SplitterError, type SplitterErrorKind } from '@/benchmark/splitter';
+import { ResultStoreError, type ResultStoreErrorKind } from '@/storage/LocalResultStore';
+import { RunEvidenceError, type RunEvidenceErrorKind } from '@/results/runEvidence';
+import { ToolResolutionError, type ToolResolutionErrorKind } from '@/results/tools';
+import { SaveResultError, type SaveResultErrorKind } from '@/results/saveResult';
 
 /**
  * HTTP status per error cause.
@@ -31,6 +35,29 @@ const STATUS_BY_BENCHMARK_KIND: Record<BenchmarkErrorKind, number> = {
   MODEL_NOT_FOUND: 409,
   MODEL_AMBIGUOUS: 409,
   MODEL_IDENTITY_INCOMPLETE: 409,
+};
+
+/**
+ * A Result that cannot cite a verified Run is the caller pointing at something
+ * that is not there (404) or no longer matches its manifest (409). Neither is a
+ * server fault, and neither may produce a Result.
+ */
+const STATUS_BY_RUN_EVIDENCE_KIND: Record<RunEvidenceErrorKind, number> = {
+  RUN_NOT_FOUND: 404,
+  RUN_MANIFEST_UNREADABLE: 409,
+  RUN_MANIFEST_SCHEMA_UNSUPPORTED: 409,
+  RUN_MANIFEST_INCOMPLETE: 409,
+  RUN_FILE_MISSING: 409,
+  RUN_HASH_MISMATCH: 409,
+};
+
+const STATUS_BY_RESULT_STORE_KIND: Record<ResultStoreErrorKind, number> = {
+  RESULT_ALREADY_EXISTS: 409,
+  INVALID_RESULT_ID: 400,
+  RESULT_PATH_ESCAPES_ROOT: 400,
+  RESULT_NOT_FOUND: 404,
+  RESULT_WRITE_FAILED: 500,
+  RESULT_UNREADABLE: 500,
 };
 
 const STATUS_BY_STORE_KIND: Record<RunStoreErrorKind, number> = {
@@ -68,6 +95,10 @@ export interface ApiErrorBody {
       | RunStoreErrorKind
       | WavErrorKind
       | SplitterErrorKind
+      | RunEvidenceErrorKind
+      | ResultStoreErrorKind
+      | ToolResolutionErrorKind
+      | SaveResultErrorKind
       | 'BAD_REQUEST'
       | 'UNEXPECTED';
     message: string;
@@ -102,6 +133,32 @@ export function toErrorResponse(caught: unknown): NextResponse<ApiErrorBody> {
         error: { kind: caught.kind, message: caught.message, detail: caught.detail },
       } as const,
       { status: STATUS_BY_BENCHMARK_KIND[caught.kind] },
+    );
+  }
+
+  if (caught instanceof RunEvidenceError) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: { kind: caught.kind, message: caught.message, detail: caught.detail },
+      } as const,
+      { status: STATUS_BY_RUN_EVIDENCE_KIND[caught.kind] },
+    );
+  }
+
+  if (caught instanceof ResultStoreError) {
+    return NextResponse.json(
+      { ok: false, error: { kind: caught.kind, message: caught.message } } as const,
+      { status: STATUS_BY_RESULT_STORE_KIND[caught.kind] },
+    );
+  }
+
+  if (caught instanceof ToolResolutionError || caught instanceof SaveResultError) {
+    // The request described a tool, delivery path or transcript the registry
+    // does not accept: a bad request, not a failed one.
+    return NextResponse.json(
+      { ok: false, error: { kind: caught.kind, message: caught.message } } as const,
+      { status: 400 },
     );
   }
 
