@@ -249,3 +249,54 @@ audio {
   color: var(--muted);
   font-size: 12px;
 }
+
+/* Manual STT Results */
+
+input[type='text'] {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.kv.compact {
+  grid-template-columns: 130px 1fr;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+
+.transcripts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+}
+
+.transcript-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: var(--bg);
+  min-width: 0;
+}
+
+.transcript-card h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+
+pre.transcript {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}

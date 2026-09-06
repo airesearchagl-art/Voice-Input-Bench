@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { AivisSpeechProvider } from '@/tts/AivisSpeechProvider';
 import { LocalRunStore } from '@/storage/LocalRunStore';
+import { LocalResultStore } from '@/storage/LocalResultStore';
 
 /**
  * Local-first default: AivisSpeech Engine listens on 10101 out of the box, so
@@ -34,6 +35,20 @@ export function getRunsDir(env: EnvLike = process.env): string {
 
 export function createRunStore(): LocalRunStore {
   return new LocalRunStore(getRunsDir());
+}
+
+/**
+ * Results root. A separate tree from `data/runs/` on purpose: Phase 1 Runs are
+ * immutable, and Phase 2 observations must not be able to land inside one.
+ * `VIB_RESULTS_DIR` overrides it (tests point it at a temp directory).
+ */
+export function getResultsDir(env: EnvLike = process.env): string {
+  const raw = env.VIB_RESULTS_DIR?.trim();
+  return raw && raw.length > 0 ? raw : path.join(process.cwd(), 'data', 'results');
+}
+
+export function createResultStore(): LocalResultStore {
+  return new LocalResultStore(getResultsDir());
 }
 
 /**

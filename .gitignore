@@ -1,6 +1,9 @@
 # Run artifacts (canonical artifacts are local-only, never committed)
 data/runs/
 
+# Manual STT results (observations recorded locally, never committed)
+data/results/
+
 # Environment
 .env
 .env.local
