@@ -73,17 +73,122 @@ data/runs/<run-id>/
 
 ## Setup
 
-> セットアップ手順は P1-A のアプリ実装とあわせて追記する。
+### Requirements
+
+- Node.js 20.9 以上（開発・検証は Node.js 24.15.0 / npm 11.12.1）
+- [AivisSpeech](https://aivis-project.com/) または AivisSpeech Engine（ローカル起動）
+
+### 1. AivisSpeech Engine を起動する
+
+AivisSpeech（または AivisSpeech Engine 単体）をローカルで起動する。
+既定のポートは `10101`。起動後、次で疎通を確認できる。
+
+```bash
+curl http://127.0.0.1:10101/version
+```
+
+Swagger UI: <http://127.0.0.1:10101/docs>
+
+> このリポジトリは AivisSpeech のインストールや設定変更を行わない。
+> エンジンの導入・設定はユーザー側の責任範囲とする。
+
+### 2. 依存関係をインストールする
+
+```bash
+npm install
+```
+
+### 3. 環境変数を設定する（任意）
+
+```bash
+cp .env.example .env
+```
+
+| 変数 | 既定値 | 用途 |
+| --- | --- | --- |
+| `AIVIS_ENGINE_URL` | `http://127.0.0.1:10101` | AivisSpeech Engine のベース URL |
+| `AIVIS_ENGINE_TIMEOUT_MS` | `30000` | Engine 呼び出しのタイムアウト (ms) |
+
+既定値で動くため、`.env` は無くても起動する。`.env` は Git 管理外。
+
+### 4. 開発サーバーを起動する
+
+```bash
+npm run dev
+```
+
+<http://localhost:3000> を開く。
+
+## Usage (P1-A)
+
+1. ページ上部の **AivisSpeech Connection** が `Connected` になっていることを確認する
+2. **Test Text** にテキストを入力する
+3. **Voice / Style** を選ぶ
+4. **Speed** / **Volume** を調整する
+5. **Generate** を押す
+6. **Output** の audio player で再生する
+
+P1-A では音声を保存しない。生成した WAV はブラウザに返すだけで、
+`data/runs/` への永続化は P1-B の範囲。
+
+## Scripts
+
+| コマンド | 内容 |
+| --- | --- |
+| `npm run dev` | 開発サーバー |
+| `npm run build` | 本番ビルド |
+| `npm start` | 本番サーバー |
+| `npm run lint` | ESLint |
+| `npm run typecheck` | `tsc --noEmit` |
+| `npm test` | Vitest（**Engine 未起動でも実行可能**） |
+| `npm run smoke:aivis` | 実 Engine への Manual Integration Smoke |
+
+### Automated Tests
+
+`npm test` は AivisSpeech Engine に一切接続しない。Provider に `fetchImpl` を注入し、
+URL 構築・レスポンスマッピング・各段階のエラー伝播・WAV 検証・不正レスポンス処理を
+すべてオフラインで検証する。
+
+### Manual Integration Smoke
+
+実 Engine を使う確認は `npm test` から分離してある。
+
+```bash
+npm run smoke:aivis
+npm run smoke:aivis -- --text "読み上げたいテキスト" --out out.wav
+```
+
+Engine が起動していない場合、`MANUAL_SMOKE_BLOCKED_ENGINE_NOT_RUNNING` を出力して
+終了コード 2 で終わる。
 
 ## Repository Layout
 
 ```text
+src/
+├─ app/
+│  ├─ page.tsx                    P1-A の単一ページ UI
+│  ├─ layout.tsx
+│  ├─ globals.css
+│  └─ api/
+│     ├─ status/route.ts          接続状態 + Engine Version + /aivm_models
+│     ├─ voices/route.ts          Voice / Style 一覧 + capabilities
+│     └─ generate/route.ts        Text -> WAV
+├─ lib/
+│  ├─ engineConfig.ts             AIVIS_ENGINE_URL の解決
+│  └─ apiError.ts                 原因別 HTTP ステータスへの変換
+└─ tts/
+   ├─ TTSProvider.ts              Provider 境界（interface / error kinds）
+   └─ AivisSpeechProvider.ts      AivisSpeech 専用 Adapter
+
+scripts/
+└─ aivis-smoke.mjs                Manual Integration Smoke
+
 docs/
 ├─ INITIAL_PRODUCT_DIRECTION.md   プロダクト方針の初期記録
 └─ architecture/
    └─ phase-1-plan.md             Phase 1 の設計方針と境界
 
-data/runs/   Run 生成物の出力先（Git管理外）
+data/runs/   Run 生成物の出力先（Git管理外・P1-B で使用）
 ```
 
 ## License

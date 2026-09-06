@@ -32,3 +32,6 @@ coverage/
 Thumbs.db
 .vscode/
 .idea/
+
+# TypeScript
+*.tsbuildinfo

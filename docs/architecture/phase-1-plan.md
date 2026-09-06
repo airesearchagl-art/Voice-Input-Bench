@@ -107,6 +107,28 @@ http://127.0.0.1:10101/docs
 
 ドキュメントや他実装の型定義は参考情報にとどめ、実レスポンスと矛盾した場合は実レスポンスを採る。
 
+#### Verification status (P1-A time of writing)
+
+| 項目 | 状態 |
+| --- | --- |
+| 実行中 Engine の Swagger との突き合わせ | **未実施** |
+| 実 API レスポンスとの突き合わせ | **未実施** |
+| 根拠 | AivisSpeech Engine 公式ドキュメント記載の仕様 |
+
+P1-A 実装時点で、ローカルの AivisSpeech Engine が起動していなかったため、
+`http://127.0.0.1:10101/docs` および実レスポンスとの突き合わせは行えていない。
+
+そのため実装は**防御的**に書いてある。
+
+- `/version` は bare JSON string と `{ version }` オブジェクトの両方を受け付ける
+- `/speakers` は要素・`styles`・`style.id` の形状を個別に検証する
+- `/aivm_models` は失敗しても Engine Version の取得を巻き込まない probe として扱う
+- `/audio_query` のレスポンスは形状を検証せず opaque に通す
+- `/synthesis` は RIFF/WAVE ヘッダを検証する
+
+想定と実レスポンスが食い違った場合は `MALFORMED_RESPONSE` として区別され、
+接続エラーとは混同されない。**実 Engine での突き合わせは P1-A の残作業として残る。**
+
 ### 3.3 AudioQuery を独自共通型へ変換しない
 
 `/audio_query` のレスポンスを独自の共通型へマッピングし直すと、
