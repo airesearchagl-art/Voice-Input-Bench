@@ -35,6 +35,24 @@ describe('isSameOrInside', () => {
     expect(isSameOrInside(path.join(RUNS, 'a', '..'), RUNS)).toBe(true);
     expect(isSameOrInside(path.join(RUNS, '..', 'results'), RUNS)).toBe(false);
   });
+
+  it('treats a child whose name begins with dots as a child', () => {
+    // The escape is a `..` path segment, not the two characters. A directory
+    // literally named `..evaluations` is an ordinary child, and calling it
+    // "outside" would refuse a legal layout.
+    expect(isSameOrInside(path.join(RUNS, '..evaluations'), RUNS)).toBe(true);
+    expect(isSameOrInside(path.join(RUNS, '..results'), RUNS)).toBe(true);
+    expect(isSameOrInside(path.join(RUNS, '..foo', 'bar'), RUNS)).toBe(true);
+    expect(isSameOrInside(path.join(RUNS, '...'), RUNS)).toBe(true);
+  });
+
+  it('is false for the parent directory itself', () => {
+    expect(isSameOrInside(path.dirname(RUNS), RUNS)).toBe(false);
+  });
+
+  it('is false for a sibling reached through the parent', () => {
+    expect(isSameOrInside(path.join(RUNS, '..', 'evaluations'), RUNS)).toBe(false);
+  });
 });
 
 describe('assertRootIsolation', () => {
@@ -123,6 +141,151 @@ describe('assertStorageRootsIsolated (runs / results / sessions)', () => {
         runs: RUNS,
         results: `${RUNS}-results`,
         sessions: `${RUNS}-sessions`,
+      }),
+    ).not.toThrow();
+  });
+});
+
+describe('assertStorageRootsIsolated (four roots)', () => {
+  const SESSIONS = path.join(tmpdir(), 'vib-iso', 'data', 'sessions');
+  const EVALUATIONS = path.join(tmpdir(), 'vib-iso', 'data', 'evaluations');
+
+  function expectViolation(roots: Parameters<typeof assertStorageRootsIsolated>[0]) {
+    let caught: unknown;
+    try {
+      assertStorageRootsIsolated(roots);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(StorageBoundaryError);
+    expect((caught as StorageBoundaryError).kind).toBe('ROOT_ISOLATION_VIOLATED');
+  }
+
+  it('accepts four sibling roots', () => {
+    expect(() =>
+      assertStorageRootsIsolated({
+        runs: RUNS,
+        results: RESULTS,
+        sessions: SESSIONS,
+        evaluations: EVALUATIONS,
+      }),
+    ).not.toThrow();
+  });
+
+  const VIOLATIONS: Array<[string, Parameters<typeof assertStorageRootsIsolated>[0]]> = [
+    [
+      'evaluations == runs',
+      { runs: RUNS, results: RESULTS, sessions: SESSIONS, evaluations: RUNS },
+    ],
+    [
+      'evaluations inside runs',
+      { runs: RUNS, results: RESULTS, sessions: SESSIONS, evaluations: path.join(RUNS, 'e') },
+    ],
+    [
+      'evaluations inside results',
+      { runs: RUNS, results: RESULTS, sessions: SESSIONS, evaluations: path.join(RESULTS, 'e') },
+    ],
+    [
+      'evaluations inside sessions',
+      { runs: RUNS, results: RESULTS, sessions: SESSIONS, evaluations: path.join(SESSIONS, 'e') },
+    ],
+    [
+      'runs inside evaluations',
+      {
+        runs: path.join(EVALUATIONS, 'runs'),
+        results: RESULTS,
+        sessions: SESSIONS,
+        evaluations: EVALUATIONS,
+      },
+    ],
+    [
+      'results inside evaluations',
+      {
+        runs: RUNS,
+        results: path.join(EVALUATIONS, 'results'),
+        sessions: SESSIONS,
+        evaluations: EVALUATIONS,
+      },
+    ],
+    [
+      'sessions inside evaluations',
+      {
+        runs: RUNS,
+        results: RESULTS,
+        sessions: path.join(EVALUATIONS, 'sessions'),
+        evaluations: EVALUATIONS,
+      },
+    ],
+  ];
+
+  for (const [label, roots] of VIOLATIONS) {
+    it(`refuses ${label}`, () => expectViolation(roots));
+  }
+
+  // The `..name` cases are the ones a `startsWith('..')` check let through: the
+  // path really is inside the other root, it just looks like an escape.
+  const DOTTED_VIOLATIONS: Array<[string, Parameters<typeof assertStorageRootsIsolated>[0]]> = [
+    [
+      'evaluations at <runs>/..evaluations',
+      {
+        runs: RUNS,
+        results: RESULTS,
+        sessions: SESSIONS,
+        evaluations: path.join(RUNS, '..evaluations'),
+      },
+    ],
+    [
+      'evaluations at <results>/..evaluations',
+      {
+        runs: RUNS,
+        results: RESULTS,
+        sessions: SESSIONS,
+        evaluations: path.join(RESULTS, '..evaluations'),
+      },
+    ],
+    [
+      'evaluations at <sessions>/..evaluations',
+      {
+        runs: RUNS,
+        results: RESULTS,
+        sessions: SESSIONS,
+        evaluations: path.join(SESSIONS, '..evaluations'),
+      },
+    ],
+    [
+      'runs at <evaluations>/..runs',
+      {
+        runs: path.join(EVALUATIONS, '..runs'),
+        results: RESULTS,
+        sessions: SESSIONS,
+        evaluations: EVALUATIONS,
+      },
+    ],
+  ];
+
+  for (const [label, roots] of DOTTED_VIOLATIONS) {
+    it(`refuses ${label}`, () => expectViolation(roots));
+  }
+
+  it('does not mistake a dotted sibling for a nested root', () => {
+    // `<data>/..evaluations` next to `<data>/runs` is a sibling, not a child.
+    expect(() =>
+      assertStorageRootsIsolated({
+        runs: RUNS,
+        results: RESULTS,
+        sessions: SESSIONS,
+        evaluations: path.join(path.dirname(RUNS), '..evaluations'),
+      }),
+    ).not.toThrow();
+  });
+
+  it('does not mistake runs-archive for a nested root', () => {
+    expect(() =>
+      assertStorageRootsIsolated({
+        runs: RUNS,
+        results: RESULTS,
+        sessions: SESSIONS,
+        evaluations: `${RUNS}-archive`,
       }),
     ).not.toThrow();
   });

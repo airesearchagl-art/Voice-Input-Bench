@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RunCatalogEntry } from '@/results/runEvidence';
 import type { IntegrityTrust, StoredResult } from '@/results/resultSchema';
+import type { EvaluationV1 } from '@/evaluation/evaluationSchema';
 import { DELIVERY_PATHS, STT_TOOL_IDS, type DeliveryPath, type SttToolId } from '@/results/tools';
 import {
   applyFailed,
@@ -44,6 +45,29 @@ type ResultEntry =
       detail?: string;
       integrityTrust?: IntegrityTrust;
     };
+
+type EvaluationEntry =
+  | {
+      status: 'verified';
+      evaluationId: string;
+      evaluation: EvaluationV1;
+      referenceText: string;
+      hypothesisText: string;
+    }
+  | {
+      status: 'rejected';
+      evaluationId: string;
+      resultId?: string;
+      reason: string;
+      message: string;
+      detail?: string;
+    };
+
+/** Everything the panel shows for one Run, loaded under one generation. */
+interface RunPanelData {
+  results: ResultEntry[];
+  evaluations: EvaluationEntry[];
+}
 
 const DELIVERY_PATH_LABELS: Record<DeliveryPath, string> = {
   'speaker-to-mic': 'スピーカー → マイク（実音響）',
@@ -88,21 +112,132 @@ function ErrorBox({ title, error }: { title: string; error: ApiErrorShape }) {
   );
 }
 
-type ResultsState = SelectionLoadState<ResultEntry[], ApiErrorShape>;
+/** Enough digits to tell two close readings apart, without implying precision. */
+function formatCer(cer: number): string {
+  return cer.toFixed(4);
+}
+
+/**
+ * raw-char-v1 for one Result.
+ *
+ * The metrics are shown next to the two texts they came from, because a CER on
+ * its own says nothing about *what* differed. This is coverage of a measurement,
+ * not a grade: there is no ranking here and no better or worse tool.
+ */
+function RawEvaluationSection({
+  resultId,
+  sealed,
+  entries,
+  busy,
+  disabled,
+  error,
+  onCreate,
+}: {
+  resultId: string;
+  sealed: boolean;
+  entries: EvaluationEntry[];
+  busy: boolean;
+  disabled: boolean;
+  error: ApiErrorShape | null;
+  onCreate: () => void;
+}) {
+  if (!sealed) {
+    return (
+      <div className="raw-eval">
+        <h4>Raw Character Evaluation</h4>
+        <p className="fixed-note">
+          この Result は integrity 署名を持たない legacy (schema v1) のため、
+          <strong>raw-char-v1 の strict evaluation 対象外</strong>です。観測としては
+          読めますが、tool identity が保存後に編集されていないことを証明できません。
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="raw-eval">
+      <h4>Raw Character Evaluation</h4>
+      <button type="button" className="secondary" onClick={onCreate} disabled={disabled}>
+        {busy ? '評価中…' : 'Raw評価を作成'}
+      </button>
+
+      {error && <ErrorBox title={`Evaluation（${resultId}）`} error={error} />}
+
+      {entries.length === 0 && (
+        <p className="fixed-note">この Result にはまだ raw-char-v1 の評価がありません。</p>
+      )}
+
+      {entries.map((entry) =>
+        entry.status === 'verified' ? (
+          <div key={entry.evaluationId} className="raw-eval-card">
+            <dl className="kv compact">
+              <dt>Evaluation ID</dt>
+              <dd>{entry.evaluation.evaluation_id}</dd>
+              <dt>Evaluator ID</dt>
+              <dd>{entry.evaluation.evaluator.id}</dd>
+              <dt>Unit</dt>
+              <dd>{entry.evaluation.evaluator.unit}</dd>
+              <dt>Normalization</dt>
+              <dd>{entry.evaluation.evaluator.normalization}</dd>
+              <dt>Exact Match</dt>
+              <dd>{entry.evaluation.metrics.exact_match ? 'true' : 'false'}</dd>
+              <dt>CER</dt>
+              <dd>{formatCer(entry.evaluation.metrics.cer)}</dd>
+              <dt>Edit Distance</dt>
+              <dd>{entry.evaluation.metrics.edit_distance}</dd>
+              <dt>S / D / I</dt>
+              <dd>
+                {entry.evaluation.metrics.substitutions} / {entry.evaluation.metrics.deletions} /{' '}
+                {entry.evaluation.metrics.insertions}
+              </dd>
+              <dt>Reference chars</dt>
+              <dd>{entry.evaluation.metrics.reference_chars}</dd>
+              <dt>Hypothesis chars</dt>
+              <dd>{entry.evaluation.metrics.hypothesis_chars}</dd>
+              <dt>Created At</dt>
+              <dd>{entry.evaluation.created_at}</dd>
+            </dl>
+
+            <div className="raw-eval-texts">
+              <div>
+                <span className="hint">canonical source（reference）</span>
+                <pre className="transcript">{entry.referenceText}</pre>
+              </div>
+              <div>
+                <span className="hint">raw transcript（hypothesis）</span>
+                <pre className="transcript">{entry.hypothesisText}</pre>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <ErrorBox
+            key={entry.evaluationId}
+            title={entry.evaluationId}
+            error={{ kind: entry.reason, message: entry.message, detail: entry.detail }}
+          />
+        ),
+      )}
+    </div>
+  );
+}
+
+type ResultsState = SelectionLoadState<RunPanelData, ApiErrorShape>;
+
+const EMPTY_PANEL: RunPanelData = { results: [], evaluations: [] };
 
 export default function ManualSttResults({ latestRunId }: { latestRunId: string | null }) {
   const [runs, setRuns] = useState<RunCatalogEntry[]>([]);
   const [runsError, setRunsError] = useState<ApiErrorShape | null>(null);
 
   /**
-   * The selected Run and its Results, as one piece of state.
+   * The selected Run with its Results and Evaluations, as one piece of state.
    *
-   * Keeping them together is the point: a Result list is only meaningful next
-   * to the Run it was read for, so the two can never drift apart while a fetch
-   * is in flight.
+   * Keeping them together is the point: a Result list and a CER are only
+   * meaningful next to the Run they were read for, so none of the three can
+   * drift apart from the others while a fetch is in flight.
    */
   const [results, setResults] = useState<ResultsState>(() =>
-    idleSelection<ResultEntry[], ApiErrorShape>(),
+    idleSelection<RunPanelData, ApiErrorShape>(),
   );
   /** Mirrors `results` for the synchronous reads that mint a new generation. */
   const resultsRef = useRef<ResultsState>(results);
@@ -117,6 +252,14 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
   const [saving, setSaving] = useState(false);
   /** Carries the Run it belongs to, so a late failure is never read as another Run's. */
   const [saveError, setSaveError] = useState<{ runId: string; error: ApiErrorShape } | null>(null);
+
+  /** The Result currently being evaluated, if any. */
+  const [evaluating, setEvaluating] = useState<string | null>(null);
+  const [evaluationError, setEvaluationError] = useState<{
+    runId: string;
+    resultId: string;
+    error: ApiErrorShape;
+  } | null>(null);
 
   const loadRuns = useCallback(async () => {
     // Clear first: a failed reload must not leave a stale Run list that the
@@ -159,25 +302,43 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
     const next = selectTarget(resultsRef.current, runId === '' ? null : runId);
     resultsRef.current = next;
     setResults(next);
-    // The save form belongs to the Run that is on screen.
+    // The save form and any evaluation failure belong to the Run on screen.
     setSaveError(null);
+    setEvaluationError(null);
 
     const { requestId, selected } = next;
     if (selected === null) return;
 
     void (async () => {
       try {
-        const response = await fetch(`/api/results?runId=${encodeURIComponent(selected)}`, {
-          cache: 'no-store',
-          signal: controller.signal,
-        });
-        if (!response.ok) {
-          const error = await readApiError(response);
+        // Both lists are fetched under the same generation. Loading them
+        // separately would let a Run's Evaluations sit next to another Run's
+        // Results for as long as one request outlived the other.
+        const query = `runId=${encodeURIComponent(selected)}`;
+        const [resultsResponse, evaluationsResponse] = await Promise.all([
+          fetch(`/api/results?${query}`, { cache: 'no-store', signal: controller.signal }),
+          fetch(`/api/evaluations?${query}`, { cache: 'no-store', signal: controller.signal }),
+        ]);
+
+        const failed = !resultsResponse.ok ? resultsResponse : !evaluationsResponse.ok ? evaluationsResponse : null;
+        if (failed) {
+          const error = await readApiError(failed);
           setResults((state) => applyFailed(state, { requestId, selected, error }));
           return;
         }
-        const body = (await response.json()) as { results: ResultEntry[] };
-        setResults((state) => applyLoaded(state, { requestId, selected, value: body.results }));
+
+        const [resultsBody, evaluationsBody] = (await Promise.all([
+          resultsResponse.json(),
+          evaluationsResponse.json(),
+        ])) as [{ results: ResultEntry[] }, { evaluations: EvaluationEntry[] }];
+
+        setResults((state) =>
+          applyLoaded(state, {
+            requestId,
+            selected,
+            value: { results: resultsBody.results, evaluations: evaluationsBody.evaluations },
+          }),
+        );
       } catch (caught) {
         if (caught instanceof DOMException && caught.name === 'AbortError') return;
         setResults((state) =>
@@ -208,8 +369,23 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
 
   const selectedRunId = results.selected ?? '';
   const selectedRun = runs.find((entry) => entry.runId === selectedRunId);
-  const resultEntries = results.value ?? [];
+  const panel = results.value ?? EMPTY_PANEL;
+  const resultEntries = panel.results;
   const resultsError = results.status === 'failed' ? results.error : null;
+
+  /** Verified Evaluations grouped by the Result they measured. */
+  const evaluationsByResult = new Map<string, EvaluationEntry[]>();
+  for (const entry of panel.evaluations) {
+    const resultId = entry.status === 'verified' ? entry.evaluation.result_id : entry.resultId;
+    if (!resultId) continue;
+    const bucket = evaluationsByResult.get(resultId);
+    if (bucket) bucket.push(entry);
+    else evaluationsByResult.set(resultId, [entry]);
+  }
+  /** Rejected Evaluations that name no Result to hang them under. */
+  const orphanEvaluations = panel.evaluations.filter(
+    (entry) => entry.status === 'rejected' && !entry.resultId,
+  );
   // Matches the server: whitespace-only is a real observation, an empty box is
   // not. Trimming here would refuse to record "the tool returned only spaces".
   const canSave =
@@ -260,6 +436,47 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
       setSaving(false);
     }
   }, [customToolName, deliveryPath, rawTranscript, selectRun, selectedRun, toolId, toolVersion]);
+
+  /**
+   * Evaluate one sealed Result against its Run's canonical text.
+   *
+   * Only the Result ID is sent. Everything the measurement is about is resolved
+   * server-side, so nothing this page believes can influence the numbers.
+   */
+  const createEvaluation = useCallback(
+    async (resultId: string, runId: string) => {
+      setEvaluating(resultId);
+      setEvaluationError(null);
+      try {
+        const response = await fetch('/api/evaluations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ resultId }),
+        });
+        if (!response.ok) {
+          setEvaluationError({ runId, resultId, error: await readApiError(response) });
+          return;
+        }
+        // Same guard as saving: the POST can outlive the selection that started
+        // it, and reloading this Run now would replace whatever Run the
+        // operator has moved to.
+        if (!isStillSelected(resultsRef.current, runId)) return;
+        selectRun(runId);
+      } catch (caught) {
+        setEvaluationError({
+          runId,
+          resultId,
+          error: {
+            kind: 'UNEXPECTED',
+            message: caught instanceof Error ? caught.message : String(caught),
+          },
+        });
+      } finally {
+        setEvaluating(null);
+      }
+    },
+    [selectRun],
+  );
 
   return (
     <section className="panel">
@@ -455,6 +672,20 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
                   </dd>
                 </dl>
                 <pre className="transcript">{entry.transcript}</pre>
+
+                <RawEvaluationSection
+                  resultId={entry.resultId}
+                  sealed={entry.integrityTrust === 'sealed'}
+                  entries={evaluationsByResult.get(entry.resultId) ?? []}
+                  busy={evaluating === entry.resultId}
+                  disabled={evaluating !== null}
+                  error={
+                    evaluationError && evaluationError.resultId === entry.resultId
+                      ? evaluationError.error
+                      : null
+                  }
+                  onCreate={() => void createEvaluation(entry.resultId, selectedRunId)}
+                />
               </article>
             ) : (
               // Verification failed. Shown as a problem, never as a transcript
@@ -469,6 +700,21 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
             ),
           )}
         </div>
+      )}
+
+      {orphanEvaluations.length > 0 && (
+        <>
+          <div style={{ height: 12 }} />
+          {orphanEvaluations.map((entry) =>
+            entry.status === 'rejected' ? (
+              <ErrorBox
+                key={entry.evaluationId}
+                title={entry.evaluationId}
+                error={{ kind: entry.reason, message: entry.message, detail: entry.detail }}
+              />
+            ) : null,
+          )}
+        </>
       )}
     </section>
   );

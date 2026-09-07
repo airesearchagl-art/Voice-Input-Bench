@@ -241,3 +241,141 @@ describe('a save that finishes after the operator moved on', () => {
     expect(state.value).toEqual(RESULTS_B);
   });
 });
+
+/**
+ * P3-A adds raw character Evaluations to the same panel.
+ *
+ * Results and Evaluations are loaded as one value under one generation. Keeping
+ * them in separate states would let Run A's CER sit beside Run B's transcripts
+ * for as long as one request outlived the other — and a CER read against the
+ * wrong canonical text is not a weaker number, it is a wrong one.
+ */
+interface EvaluationEntry {
+  evaluationId: string;
+  resultId: string;
+}
+
+interface RunPanelData {
+  results: ResultEntry[];
+  evaluations: EvaluationEntry[];
+}
+
+type PanelState = SelectionLoadState<RunPanelData, ApiErrorShape>;
+
+const PANEL_A: RunPanelData = {
+  results: RESULTS_A,
+  evaluations: [{ evaluationId: 'eval-a', resultId: 'result-a' }],
+};
+const PANEL_B: RunPanelData = {
+  results: RESULTS_B,
+  evaluations: [{ evaluationId: 'eval-b', resultId: 'result-b' }],
+};
+
+function idlePanel(): PanelState {
+  return idleSelection<RunPanelData, ApiErrorShape>();
+}
+
+function issuePanel(state: PanelState, runId: string) {
+  const next = selectTarget(state, runId === '' ? null : runId);
+  return { state: next, requestId: next.requestId, selected: next.selected };
+}
+
+describe('Results and Evaluations move together', () => {
+  it('drops both lists the moment the Run changes', () => {
+    let state = idlePanel();
+    const a = issuePanel(state, RUN_A);
+    state = applyLoaded(a.state, { requestId: a.requestId, selected: a.selected, value: PANEL_A });
+    expect(state.value).toEqual(PANEL_A);
+
+    const b = issuePanel(state, RUN_B);
+    // No Evaluation is left on screen without the Results it belongs to.
+    expect(b.state.value).toBeNull();
+    expect(b.state.status).toBe('loading');
+  });
+
+  it('ignores a late Evaluation list from the Run the operator left', () => {
+    let state = idlePanel();
+    const a = issuePanel(state, RUN_A);
+    const b = issuePanel(a.state, RUN_B);
+
+    state = applyLoaded(b.state, { requestId: b.requestId, selected: b.selected, value: PANEL_B });
+    state = applyLoaded(state, { requestId: a.requestId, selected: a.selected, value: PANEL_A });
+
+    expect(state.selected).toBe(RUN_B);
+    expect(state.value).toEqual(PANEL_B);
+  });
+
+  it('ignores a late Evaluation failure from the Run the operator left', () => {
+    let state = idlePanel();
+    const a = issuePanel(state, RUN_A);
+    const b = issuePanel(a.state, RUN_B);
+
+    state = applyLoaded(b.state, { requestId: b.requestId, selected: b.selected, value: PANEL_B });
+    state = applyFailed(state, {
+      requestId: a.requestId,
+      selected: a.selected,
+      error: { kind: 'EVALUATION_METRICS_MISMATCH', message: 'Run A の評価が再現しません。' },
+    });
+
+    expect(state.status).toBe('loaded');
+    expect(state.value).toEqual(PANEL_B);
+    expect(state.error).toBeNull();
+  });
+});
+
+describe('an evaluation POST that finishes after the operator moved on', () => {
+  it('does not reload the evaluated Run over the Run now on screen', () => {
+    let state = idlePanel();
+    const a = issuePanel(state, RUN_A);
+    state = applyLoaded(a.state, { requestId: a.requestId, selected: a.selected, value: PANEL_A });
+
+    // Evaluate a Result on Run A, capturing the Run it belongs to.
+    const evaluatedRunId = RUN_A;
+
+    // The operator switches to Run B while the POST is in flight.
+    const b = issuePanel(state, RUN_B);
+    state = applyLoaded(b.state, { requestId: b.requestId, selected: b.selected, value: PANEL_B });
+
+    // The POST completes. The panel checks before starting the follow-up read.
+    expect(isStillSelected(state, evaluatedRunId)).toBe(false);
+
+    expect(state.selected).toBe(RUN_B);
+    expect(state.value).toEqual(PANEL_B);
+  });
+
+  it('does reload when the operator never left the evaluated Run', () => {
+    let state = idlePanel();
+    const a = issuePanel(state, RUN_A);
+    state = applyLoaded(a.state, { requestId: a.requestId, selected: a.selected, value: PANEL_A });
+
+    expect(isStillSelected(state, RUN_A)).toBe(true);
+
+    const reload = issuePanel(state, RUN_A);
+    const withSecond: RunPanelData = {
+      results: PANEL_A.results,
+      evaluations: [...PANEL_A.evaluations, { evaluationId: 'eval-a2', resultId: 'result-a' }],
+    };
+    state = applyLoaded(reload.state, {
+      requestId: reload.requestId,
+      selected: reload.selected,
+      value: withSecond,
+    });
+
+    expect(state.selected).toBe(RUN_A);
+    expect(state.value?.evaluations).toHaveLength(2);
+  });
+
+  it('stays idle when an evaluation reload lands after the selection is cleared', () => {
+    const a = issuePanel(idlePanel(), RUN_A);
+    const cleared = issuePanel(a.state, '');
+
+    const after = applyLoaded(cleared.state, {
+      requestId: a.requestId,
+      selected: a.selected,
+      value: PANEL_A,
+    });
+
+    expect(after.status).toBe('idle');
+    expect(after.value).toBeNull();
+  });
+});
