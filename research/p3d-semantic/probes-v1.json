@@ -1,0 +1,363 @@
+{
+  "corpus_id": "probes-v1",
+  "authored_by": "human",
+  "note": "Gold labels are human-authored and frozen. They are never sent to any model: the loader strips the `gold` field before a probe reaches an embedding or a rubric request. See scripts/lib/probes.mjs and its test.",
+  "label_definitions": {
+    "preserved": "A reader acting on the hypothesis would do the same thing as a reader acting on the reference. Spelling, script, width, case, numeral form and unit form may differ.",
+    "changed": "A reader acting on the hypothesis would do something different, or would be missing something they needed. Includes reversed direction, reversed polarity, a different value or unit, a dropped fact and an added fact."
+  },
+  "reason_codes": [
+    "SURFACE_ONLY",
+    "NUMERAL_OR_UNIT_FORM",
+    "DOMAIN_TERM_FORM",
+    "PARAPHRASE",
+    "SELF_CORRECTION",
+    "VALUE",
+    "UNIT",
+    "DIRECTION_LOCATION",
+    "NEGATION",
+    "INSTRUCTION_ACTION",
+    "OMISSION",
+    "ADDITION",
+    "ACTOR",
+    "ORDERING"
+  ],
+  "probes": [
+    {
+      "id": "p01",
+      "category": "surface",
+      "reference": "GitHub に PR を出してください。",
+      "hypothesis": "github に PR を出してください。",
+      "hard_negative": false,
+      "gold": {
+        "label": "preserved",
+        "reason_code": "SURFACE_ONLY",
+        "note": "Case only. Required hard case: GitHub vs github."
+      }
+    },
+    {
+      "id": "p02",
+      "category": "surface",
+      "reference": "ＰＲ を出してください。",
+      "hypothesis": "PR を出してください.",
+      "hard_negative": false,
+      "gold": {
+        "label": "preserved",
+        "reason_code": "SURFACE_ONLY",
+        "note": "Fullwidth letters and an ideographic full stop."
+      }
+    },
+    {
+      "id": "p03",
+      "category": "surface",
+      "reference": "天井高は 2700mm を確保してください。",
+      "hypothesis": "天井高は2700mmを確保してください。",
+      "hard_negative": false,
+      "gold": {
+        "label": "preserved",
+        "reason_code": "SURFACE_ONLY",
+        "note": "Spacing only."
+      }
+    },
+    {
+      "id": "p04",
+      "category": "numeral-unit-form",
+      "reference": "天井高は 2700mm を確保してください。",
+      "hypothesis": "天井高は二千七百ミリを確保してください。",
+      "hard_negative": false,
+      "gold": {
+        "label": "preserved",
+        "reason_code": "NUMERAL_OR_UNIT_FORM",
+        "note": "Required hard case: 2700mm vs 二千七百ミリ. Same quantity, different numeral and unit spelling."
+      }
+    },
+    {
+      "id": "p05",
+      "category": "domain-term-form",
+      "reference": "コア側に water closet をまとめる方針です。",
+      "hypothesis": "コア側にウォータークローゼットをまとめる方針です。",
+      "hard_negative": false,
+      "gold": {
+        "label": "preserved",
+        "reason_code": "DOMAIN_TERM_FORM",
+        "note": "Required hard case: water closet vs ウォータークローゼット."
+      }
+    },
+    {
+      "id": "p06",
+      "category": "numeral-unit-form",
+      "reference": "基準階の専有面積は 320㎡ です。",
+      "hypothesis": "基準階の専有面積は320平米です。",
+      "hard_negative": false,
+      "gold": {
+        "label": "preserved",
+        "reason_code": "NUMERAL_OR_UNIT_FORM",
+        "note": "Same area, different unit spelling."
+      }
+    },
+    {
+      "id": "p07",
+      "category": "numeral-unit-form",
+      "reference": "次回の定例は 午前10時 から開始します。",
+      "hypothesis": "次回の定例は午前十時から開始します。",
+      "hard_negative": false,
+      "gold": {
+        "label": "preserved",
+        "reason_code": "NUMERAL_OR_UNIT_FORM",
+        "note": "Same clock time, different numeral form."
+      }
+    },
+    {
+      "id": "p08",
+      "category": "domain-term-form",
+      "reference": "モデルの更新は Revit 側で行ってください。",
+      "hypothesis": "モデルの更新はレビット側で行ってください。",
+      "hard_negative": false,
+      "gold": {
+        "label": "preserved",
+        "reason_code": "DOMAIN_TERM_FORM",
+        "note": "Tool name transliterated."
+      }
+    },
+    {
+      "id": "p09",
+      "category": "domain-term-form",
+      "reference": "会議室は north side に寄せてください。",
+      "hypothesis": "会議室はノースサイドに寄せてください。",
+      "hard_negative": false,
+      "gold": {
+        "label": "preserved",
+        "reason_code": "DOMAIN_TERM_FORM",
+        "note": "Same direction, transliterated. Pairs with p13, which changes the direction itself."
+      }
+    },
+    {
+      "id": "p10",
+      "category": "paraphrase",
+      "reference": "来週までには固めたいという感じです。",
+      "hypothesis": "来週までに決めたいと考えています。",
+      "hard_negative": false,
+      "gold": {
+        "label": "preserved",
+        "reason_code": "PARAPHRASE",
+        "note": "Same commitment and same deadline."
+      }
+    },
+    {
+      "id": "p11",
+      "category": "paraphrase",
+      "reference": "えーと、まずですね、あの、基準階のプランなんですけど、そのー、コア側の納まりがまだ決まっていなくて。",
+      "hypothesis": "まず基準階のプランですが、コア側の納まりがまだ決まっていません。",
+      "hard_negative": false,
+      "gold": {
+        "label": "preserved",
+        "reason_code": "PARAPHRASE",
+        "note": "Fillers removed, content identical."
+      }
+    },
+    {
+      "id": "p12",
+      "category": "self-correction",
+      "reference": "天井高は二千六百ミリで、あ、すみません、二千七百ミリでした。",
+      "hypothesis": "天井高は二千七百ミリです。",
+      "hard_negative": false,
+      "gold": {
+        "label": "preserved",
+        "reason_code": "SELF_CORRECTION",
+        "note": "Required hard case: the final intent of a self-correction is kept. The retracted 2600 is correctly absent."
+      }
+    },
+    {
+      "id": "p13",
+      "category": "direction",
+      "reference": "会議室は north side に寄せてください。",
+      "hypothesis": "会議室は south side に寄せてください。",
+      "hard_negative": true,
+      "gold": {
+        "label": "changed",
+        "reason_code": "DIRECTION_LOCATION",
+        "note": "Required hard case: north side vs south side. Two characters apart, opposite instruction."
+      }
+    },
+    {
+      "id": "p14",
+      "category": "negation",
+      "reference": "設備ルートとの干渉は梁貫通で逃がさない方針です。",
+      "hypothesis": "設備ルートとの干渉は梁貫通で逃がす方針です。",
+      "hard_negative": true,
+      "gold": {
+        "label": "changed",
+        "reason_code": "NEGATION",
+        "note": "Required hard case: 梁貫通で逃がさない vs 梁貫通で逃がす. Polarity reversed."
+      }
+    },
+    {
+      "id": "p15",
+      "category": "value",
+      "reference": "天井高は 2700mm を確保してください。",
+      "hypothesis": "天井高は 2600mm を確保してください。",
+      "hard_negative": true,
+      "gold": {
+        "label": "changed",
+        "reason_code": "VALUE",
+        "note": "Required hard case: 2700mm vs 2600mm. One digit, a different building."
+      }
+    },
+    {
+      "id": "p16",
+      "category": "value",
+      "reference": "次回の定例は 午前10時 から開始します。",
+      "hypothesis": "次回の定例は 午後10時 から開始します。",
+      "hard_negative": true,
+      "gold": {
+        "label": "changed",
+        "reason_code": "VALUE",
+        "note": "Required hard case: 午前10時 vs 午後10時. Twelve hours apart."
+      }
+    },
+    {
+      "id": "p17",
+      "category": "unit",
+      "reference": "基準階の専有面積は 320㎡ です。",
+      "hypothesis": "基準階の専有面積は 320mm です。",
+      "hard_negative": true,
+      "gold": {
+        "label": "changed",
+        "reason_code": "UNIT",
+        "note": "Same number, incompatible unit."
+      }
+    },
+    {
+      "id": "p18",
+      "category": "unit",
+      "reference": "外気処理空調機の風量は 590㎥/h で計画しています。",
+      "hypothesis": "外気処理空調機の風量は 590m/s で計画しています。",
+      "hard_negative": true,
+      "gold": {
+        "label": "changed",
+        "reason_code": "UNIT",
+        "note": "Airflow reported as a velocity."
+      }
+    },
+    {
+      "id": "p19",
+      "category": "direction",
+      "reference": "west side の会議室だけは西日が厳しいので、外付けのルーバーを検討してください。",
+      "hypothesis": "east side の会議室だけは西日が厳しいので、外付けのルーバーを検討してください。",
+      "hard_negative": true,
+      "gold": {
+        "label": "changed",
+        "reason_code": "DIRECTION_LOCATION",
+        "note": "Opposite façade."
+      }
+    },
+    {
+      "id": "p20",
+      "category": "direction",
+      "reference": "外気処理空調機を屋上に置く案で進めてください。",
+      "hypothesis": "外気処理空調機を地下機械室に置く案で進めてください。",
+      "hard_negative": true,
+      "gold": {
+        "label": "changed",
+        "reason_code": "DIRECTION_LOCATION",
+        "note": "Different location, different structural and routing consequences."
+      }
+    },
+    {
+      "id": "p21",
+      "category": "instruction-action",
+      "reference": "電気室の位置も、幹線ルートと合わせて一度整理しておいてください。",
+      "hypothesis": "電気室の位置も、幹線ルートと合わせて一度整理しておきました。",
+      "hard_negative": true,
+      "gold": {
+        "label": "changed",
+        "reason_code": "INSTRUCTION_ACTION",
+        "note": "A request became a report of completed work."
+      }
+    },
+    {
+      "id": "p22",
+      "category": "value",
+      "reference": "ルーバーのピッチは現時点では三百ミリを想定しています。",
+      "hypothesis": "ルーバーのピッチは現時点では三千ミリを想定しています。",
+      "hard_negative": true,
+      "gold": {
+        "label": "changed",
+        "reason_code": "VALUE",
+        "note": "One order of magnitude."
+      }
+    },
+    {
+      "id": "p23",
+      "category": "omission",
+      "reference": "天井高は二千七百ミリを確保し、会議室は north side に寄せてください。",
+      "hypothesis": "会議室は north side に寄せてください。",
+      "hard_negative": false,
+      "gold": {
+        "label": "changed",
+        "reason_code": "OMISSION",
+        "note": "A required dimension is simply gone."
+      }
+    },
+    {
+      "id": "p24",
+      "category": "addition",
+      "reference": "会議室は north side に寄せてください。",
+      "hypothesis": "会議室は north side に寄せて、天井高は二千七百ミリを確保してください。",
+      "hard_negative": false,
+      "gold": {
+        "label": "changed",
+        "reason_code": "ADDITION",
+        "note": "An instruction nobody gave."
+      }
+    },
+    {
+      "id": "p25",
+      "category": "self-correction",
+      "reference": "面積は、えーと、三百二十平米、ではなくて三百五十平米で見ておいてください。",
+      "hypothesis": "面積は三百二十平米で見ておいてください。",
+      "hard_negative": true,
+      "gold": {
+        "label": "changed",
+        "reason_code": "SELF_CORRECTION",
+        "note": "The retracted value survived and the corrected one did not. The mirror image of p12."
+      }
+    },
+    {
+      "id": "p26",
+      "category": "ordering",
+      "reference": "マージ前に必ず npm run build を通してください。",
+      "hypothesis": "マージ後に npm run build を通してください。",
+      "hard_negative": true,
+      "gold": {
+        "label": "changed",
+        "reason_code": "ORDERING",
+        "note": "The gate moved to after the thing it was meant to gate."
+      }
+    },
+    {
+      "id": "p27",
+      "category": "actor",
+      "reference": "この判断は意匠側と構造側で合意してから決めましょう。",
+      "hypothesis": "この判断は意匠側だけで決めましょう。",
+      "hard_negative": true,
+      "gold": {
+        "label": "changed",
+        "reason_code": "ACTOR",
+        "note": "One party dropped out of a decision that required both."
+      }
+    },
+    {
+      "id": "p28",
+      "category": "domain-term-form",
+      "reference": "低層部は打ち放しコンクリートとします。",
+      "hypothesis": "低層部は打ちっぱなしコンクリートとします。",
+      "hard_negative": false,
+      "gold": {
+        "label": "preserved",
+        "reason_code": "DOMAIN_TERM_FORM",
+        "note": "Colloquial spelling of the same finish."
+      }
+    }
+  ]
+}

@@ -1,0 +1,66 @@
+{
+  "captured_at": "2026-09-07T17:01:23.465Z",
+  "note": "Recorded so a rerun can be compared to this one. Nothing here was downloaded by the spike: both runtimes and both models were already installed on this machine.",
+  "machine": {
+    "node": "v24.15.0",
+    "platform": "win32 10.0.26200",
+    "arch": "x64",
+    "cpus": 24,
+    "total_memory_gb": 63.4
+  },
+  "runtimes": {
+    "llm": {
+      "name": "Ollama",
+      "endpoint": "http://127.0.0.1:11434",
+      "api": "ollama (/api/chat)",
+      "models_present": [
+        {
+          "name": "Gemma4:latest",
+          "family": "gemma4",
+          "parameter_size": "8.0B",
+          "quantization": "Q4_K_M",
+          "digest": "c6eb396dbd5992bbe3f5cdb947e8bbc0ee413d7c17e2beaae69f5d569cf982eb",
+          "size_bytes": 9608350718,
+          "modified_at": "2026-04-26T21:05:59.4896774+09:00"
+        },
+        {
+          "name": "deepseek-coder-v2:16b",
+          "family": "deepseek2",
+          "parameter_size": "15.7B",
+          "quantization": "Q4_0",
+          "digest": "63fb193b3a9b4322a18e8c6b250ca2e70a5ff531e962dbf95ba089b2566f2fa5",
+          "size_bytes": 8905126121,
+          "modified_at": "2026-04-26T20:32:57.4114213+09:00"
+        },
+        {
+          "name": "llama3.1:8b",
+          "family": "llama",
+          "parameter_size": "8.0B",
+          "quantization": "Q4_K_M",
+          "digest": "46e0c10c039e019119339687c3c1757cc81b9da49709a3b3924863ba87ca666e",
+          "size_bytes": 4920753328,
+          "modified_at": "2026-04-26T20:28:51.0975898+09:00"
+        }
+      ]
+    },
+    "embedding": {
+      "name": "LM Studio",
+      "endpoint": "http://127.0.0.1:1234",
+      "api": "openai-compatible (/v1/embeddings)",
+      "models_present": [
+        "qwen/qwen3.5-9b",
+        "ministral-3-14b-instruct-2512",
+        "google/gemma-4-12b-qat",
+        "gemma-4-12b-coder-fable5-composer2.5-v1",
+        "qwen3-coder-30b-a3b-instruct",
+        "qwen/qwen3.6-27b",
+        "text-embedding-nomic-embed-text-v1.5"
+      ]
+    }
+  },
+  "models_used": {
+    "llm": "llama3.1:8b",
+    "embedding": "text-embedding-nomic-embed-text-v1.5"
+  },
+  "downloads_performed": 0
+}

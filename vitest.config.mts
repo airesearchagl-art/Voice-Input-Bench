@@ -10,7 +10,7 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'research/**/*.test.mjs'],
     // scripts/aivis-smoke.mjs is a manual integration smoke and is never run here.
     exclude: ['node_modules/**', '.next/**', 'scripts/**'],
   },
