@@ -175,7 +175,7 @@ describe('POST /api/evaluations', () => {
       evaluationId: string;
       evaluation: {
         schema_version: number;
-        evaluator: { id: string; unit: string; normalization: string };
+        evaluator: Record<string, string>;
         run_id: string;
         result_id: string;
         metrics: { edit_distance: number; cer: number; exact_match: boolean };
@@ -487,7 +487,6 @@ describe('POST /api/evaluations with the surface evaluator', () => {
         schema_version: number;
         evaluator: { id: string; unit: string; normalization: string };
         normalized: {
-          profile: string;
           reference: { sha256: string; chars: number };
           hypothesis: { sha256: string; chars: number };
         };
@@ -499,9 +498,14 @@ describe('POST /api/evaluations with the surface evaluator', () => {
     expect(body.evaluation.evaluator).toEqual({
       id: 'surface-normalized-char-v1',
       unit: 'unicode-code-point',
-      normalization: 'surface-normalize-v1',
+      normalization_profile: 'surface-normalize-v1',
+      width_mapping: 'fullwidth-ascii-range-v1',
+      case_fold: 'ascii-lower-v1',
+      punctuation_aliases: 'punctuation-alias-v1',
+      space_policy: 'ascii-space-trim-collapse-v1',
+      line_break_policy: 'preserve-lf-v1',
+      distance: 'levenshtein-code-point-sdi-v1',
     });
-    expect(body.evaluation.normalized.profile).toBe('surface-normalize-v1');
     expect(body.evaluation.normalized.reference.chars).toBeGreaterThan(0);
     // 二千七百ミリ against 2700ミリ is a real difference, not typography.
     expect(body.evaluation.metrics.exact_match).toBe(false);

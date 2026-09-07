@@ -43,11 +43,7 @@ import {
   type SurfaceEvaluationPayloadV3,
   type SurfaceEvaluationV3,
 } from './surfaceEvaluationSchema';
-import {
-  SURFACE_CHAR_ALGORITHM,
-  SURFACE_NORMALIZE_PROFILE,
-  surfaceNormalize,
-} from './surfaceNormalize';
+import { SURFACE_CHAR_ALGORITHM, surfaceNormalize } from './surfaceNormalize';
 import { verifyStoredSurfaceEvaluation } from './verifyStoredSurfaceEvaluation';
 
 /**
@@ -328,7 +324,6 @@ function buildSurfacePayload(
     hypothesis: rawChar.hypothesis,
     run_evidence: rawChar.run_evidence,
     normalized: {
-      profile: SURFACE_NORMALIZE_PROFILE,
       reference: {
         sha256: sha256OfText(normalizedReference),
         chars: toCodePoints(normalizedReference).length,

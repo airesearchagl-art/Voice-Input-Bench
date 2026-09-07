@@ -1,9 +1,21 @@
 import { sha256OfText } from '@/lib/hash';
 import {
+  SURFACE_CASE_FOLD,
   SURFACE_CHAR_ALGORITHM,
+  SURFACE_DISTANCE,
+  SURFACE_LINE_BREAK_POLICY,
   SURFACE_NORMALIZE_PROFILE,
+  SURFACE_PUNCTUATION_ALIASES,
+  SURFACE_SPACE_POLICY,
+  SURFACE_WIDTH_MAPPING,
+  type SurfaceCaseFold,
   type SurfaceCharAlgorithm,
+  type SurfaceDistance,
+  type SurfaceLineBreakPolicy,
   type SurfaceNormalizeProfile,
+  type SurfacePunctuationAliases,
+  type SurfaceSpacePolicy,
+  type SurfaceWidthMapping,
 } from './surfaceNormalize';
 import { RAW_CHAR_UNIT, type RawCharMetrics, type RawCharUnit } from './rawChar';
 import type { EvaluationIntegrityV1, EvaluationPayloadV1 } from './evaluationSchema';
@@ -33,29 +45,55 @@ export const SURFACE_EVALUATION_SCHEMA_VERSION = 3 as const;
 /**
  * Self-describing evaluator contract.
  *
- * Same three fields as raw-char-v1, and deliberately so: this *is* raw-char-v1's
- * comparison, run over text that one named profile has already touched. The
- * only thing that differs is what `normalization` says, which is exactly the
- * difference a reader needs to see when the two CERs sit next to each other.
+ * A profile name alone says "some typography was folded". It does not say
+ * *which* typography, and that is exactly what a surface CER depends on: change
+ * the width mapping, the case fold, the punctuation aliases, what happens to
+ * spaces or line breaks, or the distance function, and the same two texts
+ * produce a different number.
+ *
+ * So all of it travels with every measurement, under the seal. Each field names
+ * a versioned sub-contract rather than describing it, which makes widening one
+ * a rename — old artifacts keep claiming the semantics they were actually
+ * measured under, instead of silently inheriting new ones. Golden tests pin
+ * each name to its exact content.
  *
  * Server-fixed. No part of it is ever taken from a request.
  */
 export interface SurfaceEvaluatorV3 {
   id: SurfaceCharAlgorithm;
   unit: RawCharUnit;
-  normalization: SurfaceNormalizeProfile;
+  normalization_profile: SurfaceNormalizeProfile;
+  width_mapping: SurfaceWidthMapping;
+  case_fold: SurfaceCaseFold;
+  punctuation_aliases: SurfacePunctuationAliases;
+  space_policy: SurfaceSpacePolicy;
+  line_break_policy: SurfaceLineBreakPolicy;
+  distance: SurfaceDistance;
 }
 
 export const SURFACE_CHAR_EVALUATOR: SurfaceEvaluatorV3 = {
   id: SURFACE_CHAR_ALGORITHM,
   unit: RAW_CHAR_UNIT,
-  normalization: SURFACE_NORMALIZE_PROFILE,
+  normalization_profile: SURFACE_NORMALIZE_PROFILE,
+  width_mapping: SURFACE_WIDTH_MAPPING,
+  case_fold: SURFACE_CASE_FOLD,
+  punctuation_aliases: SURFACE_PUNCTUATION_ALIASES,
+  space_policy: SURFACE_SPACE_POLICY,
+  line_break_policy: SURFACE_LINE_BREAK_POLICY,
+  distance: SURFACE_DISTANCE,
 };
 
+/** The order the evaluator's fields are hashed and compared in. */
 export const SURFACE_EVALUATOR_FIELDS = [
   'id',
   'unit',
-  'normalization',
+  'normalization_profile',
+  'width_mapping',
+  'case_fold',
+  'punctuation_aliases',
+  'space_policy',
+  'line_break_policy',
+  'distance',
 ] as const satisfies ReadonlyArray<keyof SurfaceEvaluatorV3>;
 
 /** What one side of the comparison looked like after normalization. */
@@ -87,9 +125,11 @@ export interface SurfaceEvaluationPayloadV3 {
    * Kept next to the raw hashes on purpose: together they say which bytes were
    * read and what they became, which is what makes the metrics reproducible
    * rather than merely plausible.
+   *
+   * Which profile produced them is not repeated here. `evaluator` is the single
+   * record of that, so the two can never disagree about what was run.
    */
   normalized: {
-    profile: SurfaceNormalizeProfile;
     reference: NormalizedSide;
     hypothesis: NormalizedSide;
   };
@@ -117,7 +157,13 @@ export function canonicalSurfaceEvaluationPayload(payload: SurfaceEvaluationPayl
     evaluator: {
       id: payload.evaluator.id,
       unit: payload.evaluator.unit,
-      normalization: payload.evaluator.normalization,
+      normalization_profile: payload.evaluator.normalization_profile,
+      width_mapping: payload.evaluator.width_mapping,
+      case_fold: payload.evaluator.case_fold,
+      punctuation_aliases: payload.evaluator.punctuation_aliases,
+      space_policy: payload.evaluator.space_policy,
+      line_break_policy: payload.evaluator.line_break_policy,
+      distance: payload.evaluator.distance,
     },
     run_id: payload.run_id,
     result_id: payload.result_id,
@@ -151,7 +197,6 @@ export function canonicalSurfaceEvaluationPayload(payload: SurfaceEvaluationPayl
       audio_sha256: payload.run_evidence.audio_sha256,
     },
     normalized: {
-      profile: payload.normalized.profile,
       reference: {
         sha256: payload.normalized.reference.sha256,
         chars: payload.normalized.reference.chars,

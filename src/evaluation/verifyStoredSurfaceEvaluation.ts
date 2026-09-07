@@ -9,10 +9,7 @@ import {
   type SurfaceEvaluationPayloadV3,
   type SurfaceEvaluationV3,
 } from './surfaceEvaluationSchema';
-import {
-  SURFACE_NORMALIZE_PROFILE,
-  surfaceNormalize,
-} from './surfaceNormalize';
+import { surfaceNormalize } from './surfaceNormalize';
 import { evaluateRawChar, toCodePoints } from './rawChar';
 import type { EvaluationSubject } from './evaluationSubject';
 import {
@@ -144,7 +141,7 @@ export function verifyStoredSurfaceEvaluation(input: {
   if (!isSurfaceCharEvaluator(raw.evaluator)) {
     fail(
       'EVALUATION_EVALUATOR_MISMATCH',
-      'evaluator が surface-normalized-char-v1 / unicode-code-point / surface-normalize-v1 と一致しません。',
+      'evaluator が surface-normalized-char-v1 の contract 9 field と一致しません。',
       `recorded=${JSON.stringify(raw.evaluator)} expected=${JSON.stringify(SURFACE_CHAR_EVALUATOR)}`,
     );
   }
@@ -225,7 +222,6 @@ export function verifyStoredSurfaceEvaluation(input: {
   const hypothesisSide = normalizedSection.hypothesis as Record<string, unknown>;
 
   const normalizationChecks: Array<[string, unknown, unknown]> = [
-    ['normalized.profile', normalizedSection.profile, SURFACE_NORMALIZE_PROFILE],
     ['normalized.reference.sha256', referenceSide.sha256, sha256OfText(normalizedReference)],
     [
       'normalized.reference.chars',

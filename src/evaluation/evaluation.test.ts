@@ -1435,7 +1435,13 @@ describe('creating a surface-normalized Evaluation', () => {
       evaluator: {
         id: 'surface-normalized-char-v1',
         unit: 'unicode-code-point',
-        normalization: 'surface-normalize-v1',
+        normalization_profile: 'surface-normalize-v1',
+        width_mapping: 'fullwidth-ascii-range-v1',
+        case_fold: 'ascii-lower-v1',
+        punctuation_aliases: 'punctuation-alias-v1',
+        space_policy: 'ascii-space-trim-collapse-v1',
+        line_break_policy: 'preserve-lf-v1',
+        distance: 'levenshtein-code-point-sdi-v1',
       },
       run_id: RUN_ID,
       result_id: RESULT_ID,
@@ -1457,7 +1463,6 @@ describe('creating a surface-normalized Evaluation', () => {
     const normalizedHypothesis = surfaceNormalize(WINDOWS_TRANSCRIPT);
 
     expect(outcome.evaluation.normalized).toEqual({
-      profile: 'surface-normalize-v1',
       reference: {
         sha256: sha(normalizedReference),
         chars: Array.from(normalizedReference).length,
@@ -1681,23 +1686,33 @@ describe('stored surface Evaluations are re-derived on read', () => {
     }
   });
 
-  it('rejects an artifact claiming a different normalization profile', async () => {
-    await seedSurface();
-    await patchSurface((evaluation) => {
-      (evaluation.normalized as Record<string, unknown>).profile = 'surface-normalize-v2';
-    }, true);
+  it('keeps the profile in one place only', async () => {
+    const outcome = await seedSurface();
+    // `evaluator.normalization_profile` is the single record of which
+    // profile ran. `normalized` carries hashes and lengths, nothing that
+    // could disagree with it.
+    expect(outcome.evaluation.evaluator.normalization_profile).toBe('surface-normalize-v1');
+    expect(Object.keys(outcome.evaluation.normalized).sort()).toEqual([
+      'hypothesis',
+      'reference',
+    ]);
 
-    const entry = await listOne();
-    expect(entry.status).toBe('rejected');
-    if (entry.status === 'rejected') {
-      expect(entry.reason).toBe('EVALUATION_NORMALIZATION_MISMATCH');
-    }
+    const stored = JSON.parse(
+      await readFile(evaluationStore.resolveEvaluationFile(EVALUATION_ID), 'utf8'),
+    ) as { normalized: Record<string, unknown> };
+    expect(stored.normalized.profile).toBeUndefined();
   });
 
   const SURFACE_EVALUATOR_EDITS: Array<[string, string]> = [
     ['id', 'normalized-char-v1'],
     ['unit', 'utf-16-code-unit'],
-    ['normalization', 'surface-normalize-v2'],
+    ['normalization_profile', 'surface-normalize-v2'],
+    ['width_mapping', 'nfkc-width-v1'],
+    ['case_fold', 'unicode-lower-v1'],
+    ['punctuation_aliases', 'punctuation-alias-v2'],
+    ['space_policy', 'any-whitespace-collapse-v1'],
+    ['line_break_policy', 'collapse-lf-v1'],
+    ['distance', 'damerau-levenshtein-v1'],
   ];
 
   for (const [field, value] of SURFACE_EVALUATOR_EDITS) {

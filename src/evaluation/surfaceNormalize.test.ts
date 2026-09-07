@@ -1,11 +1,26 @@
 import { describe, expect, it } from 'vitest';
 import {
+  FULLWIDTH_ASCII_RANGE,
+  PRESERVED_WHITESPACE,
+  PUNCTUATION_ALIASES,
+  SPACE_POLICY_CHARS,
+  SURFACE_CASE_FOLD,
   SURFACE_CHAR_ALGORITHM,
+  SURFACE_DISTANCE,
+  SURFACE_LINE_BREAK_POLICY,
   SURFACE_NORMALIZE_PROFILE,
   SURFACE_NORMALIZE_STEPS,
+  SURFACE_PUNCTUATION_ALIASES,
+  SURFACE_SPACE_POLICY,
+  SURFACE_WIDTH_MAPPING,
   surfaceNormalize,
   surfaceNormalizedLength,
 } from './surfaceNormalize';
+import {
+  SURFACE_CHAR_EVALUATOR,
+  SURFACE_EVALUATOR_FIELDS,
+  isSurfaceCharEvaluator,
+} from './surfaceEvaluationSchema';
 import { evaluateRawChar } from './rawChar';
 
 /**
@@ -42,6 +57,120 @@ describe('golden contract: surface-normalize-v1', () => {
   it('names the profile and the evaluator', () => {
     expect(SURFACE_NORMALIZE_PROFILE).toBe('surface-normalize-v1');
     expect(SURFACE_CHAR_ALGORITHM).toBe('surface-normalized-char-v1');
+  });
+});
+
+describe('golden contract: the nine evaluator fields', () => {
+  it('names each versioned sub-contract', () => {
+    expect(SURFACE_CHAR_EVALUATOR).toEqual({
+      id: 'surface-normalized-char-v1',
+      unit: 'unicode-code-point',
+      normalization_profile: 'surface-normalize-v1',
+      width_mapping: 'fullwidth-ascii-range-v1',
+      case_fold: 'ascii-lower-v1',
+      punctuation_aliases: 'punctuation-alias-v1',
+      space_policy: 'ascii-space-trim-collapse-v1',
+      line_break_policy: 'preserve-lf-v1',
+      distance: 'levenshtein-code-point-sdi-v1',
+    });
+  });
+
+  it('is exactly nine fields, in this order', () => {
+    expect(SURFACE_EVALUATOR_FIELDS).toEqual([
+      'id',
+      'unit',
+      'normalization_profile',
+      'width_mapping',
+      'case_fold',
+      'punctuation_aliases',
+      'space_policy',
+      'line_break_policy',
+      'distance',
+    ]);
+    expect(Object.keys(SURFACE_CHAR_EVALUATOR)).toHaveLength(9);
+    expect(Object.keys(SURFACE_CHAR_EVALUATOR).sort()).toEqual(
+      [...SURFACE_EVALUATOR_FIELDS].sort(),
+    );
+  });
+
+  it('exports each name as its own constant', () => {
+    expect(SURFACE_WIDTH_MAPPING).toBe('fullwidth-ascii-range-v1');
+    expect(SURFACE_CASE_FOLD).toBe('ascii-lower-v1');
+    expect(SURFACE_PUNCTUATION_ALIASES).toBe('punctuation-alias-v1');
+    expect(SURFACE_SPACE_POLICY).toBe('ascii-space-trim-collapse-v1');
+    expect(SURFACE_LINE_BREAK_POLICY).toBe('preserve-lf-v1');
+    expect(SURFACE_DISTANCE).toBe('levenshtein-code-point-sdi-v1');
+  });
+
+  it('accepts only the exact record', () => {
+    expect(isSurfaceCharEvaluator(SURFACE_CHAR_EVALUATOR)).toBe(true);
+    expect(isSurfaceCharEvaluator({ ...SURFACE_CHAR_EVALUATOR, case_fold: 'unicode-lower-v1' })).toBe(
+      false,
+    );
+    // An extra field describes semantics this build has never heard of.
+    expect(isSurfaceCharEvaluator({ ...SURFACE_CHAR_EVALUATOR, rounding: 'nearest-v1' })).toBe(false);
+    const { distance: _distance, ...missingOne } = SURFACE_CHAR_EVALUATOR;
+    expect(isSurfaceCharEvaluator(missingOne)).toBe(false);
+    expect(isSurfaceCharEvaluator(null)).toBe(false);
+    expect(isSurfaceCharEvaluator([])).toBe(false);
+  });
+});
+
+describe('golden contract: what each sub-contract name means', () => {
+  it('fullwidth-ascii-range-v1 is U+FF01..U+FF5E offset by U+FEE0', () => {
+    expect(FULLWIDTH_ASCII_RANGE).toEqual({ start: 0xff01, end: 0xff5e, offset: 0xfee0 });
+    // The whole range maps, and nothing on either side of it does.
+    for (let code = FULLWIDTH_ASCII_RANGE.start; code <= FULLWIDTH_ASCII_RANGE.end; code += 1) {
+      const expected = String.fromCodePoint(code - FULLWIDTH_ASCII_RANGE.offset).toLowerCase();
+      expect(surfaceNormalize(String.fromCodePoint(code))).toBe(expected);
+    }
+    expect(surfaceNormalize('＀')).toBe('＀');
+    expect(surfaceNormalize('｟')).toBe('｟');
+  });
+
+  it('ascii-lower-v1 folds only ASCII A-Z', () => {
+    expect(surfaceNormalize('ABCXYZ')).toBe('abcxyz');
+    for (const outside of ['Ä', 'Σ', 'Б', 'İ']) {
+      expect(surfaceNormalize(outside)).toBe(outside);
+    }
+  });
+
+  it('punctuation-alias-v1 is exactly two replacements and no deletions', () => {
+    expect(PUNCTUATION_ALIASES).toEqual({ '。': '.', '、': ',' });
+    expect(Object.keys(PUNCTUATION_ALIASES)).toHaveLength(2);
+    for (const [from, to] of Object.entries(PUNCTUATION_ALIASES)) {
+      expect(surfaceNormalize(from)).toBe(to);
+    }
+    // Other Japanese punctuation is left alone rather than folded or dropped.
+    for (const kept of ['・', '「', '」', '！', '？'.normalize()]) {
+      expect(surfaceNormalize(kept).length).toBeGreaterThan(0);
+    }
+    expect(surfaceNormalize('・')).toBe('・');
+  });
+
+  it('ascii-space-trim-collapse-v1 acts on U+0020 only', () => {
+    expect(SPACE_POLICY_CHARS).toEqual([' ']);
+    expect(surfaceNormalize('  a   b  ')).toBe('a b');
+    // U+3000 becomes U+0020 first, so it participates.
+    expect(surfaceNormalize('　a　　b　')).toBe('a b');
+    // A tab does not.
+    expect(surfaceNormalize('\ta\t\tb\t')).toBe('\ta\t\tb\t');
+  });
+
+  it('preserve-lf-v1 passes LF and tab through untouched', () => {
+    expect(PRESERVED_WHITESPACE).toEqual(['\n', '\t']);
+    expect(surfaceNormalize('a\n\n\tb')).toBe('a\n\n\tb');
+    // A CR is not an ASCII space and is not a line feed: it passes through.
+    expect(surfaceNormalize('a\r\nb')).toBe('a\r\nb');
+  });
+
+  it('levenshtein-code-point-sdi-v1 is raw-char-v1 over the normalized pair', () => {
+    const metrics = evaluateRawChar(surfaceNormalize('ＡＢ'), surfaceNormalize('ab'));
+    expect(metrics.exact_match).toBe(true);
+    // Same S/D/I shape and the same unclamped CER as raw-char-v1.
+    const over = evaluateRawChar(surfaceNormalize('Ａ'), surfaceNormalize('xyz'));
+    expect(over.cer).toBeGreaterThan(1);
+    expect(over.substitutions + over.deletions + over.insertions).toBe(over.edit_distance);
   });
 });
 

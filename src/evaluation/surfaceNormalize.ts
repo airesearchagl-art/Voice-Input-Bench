@@ -26,11 +26,60 @@ export type SurfaceNormalizeProfile = typeof SURFACE_NORMALIZE_PROFILE;
 export const SURFACE_CHAR_ALGORITHM = 'surface-normalized-char-v1' as const;
 export type SurfaceCharAlgorithm = typeof SURFACE_CHAR_ALGORITHM;
 
-/** Fullwidth ASCII block: U+FF01 (！) … U+FF5E (～). */
-const FULLWIDTH_ASCII_START = 0xff01;
-const FULLWIDTH_ASCII_END = 0xff5e;
-/** Distance from a fullwidth form to its ASCII counterpart. */
-const FULLWIDTH_ASCII_OFFSET = 0xfee0;
+/**
+ * The named sub-contracts the profile is made of.
+ *
+ * A profile name alone says "some typography was folded". These say which:
+ * which width mapping, which case fold, which punctuation aliases, what happens
+ * to spaces and line breaks, and how the two normalized texts are then
+ * compared. Each is versioned so that widening one is a new name rather than a
+ * quiet edit that leaves old artifacts claiming semantics they were never
+ * measured under.
+ */
+export const SURFACE_WIDTH_MAPPING = 'fullwidth-ascii-range-v1' as const;
+export type SurfaceWidthMapping = typeof SURFACE_WIDTH_MAPPING;
+
+export const SURFACE_CASE_FOLD = 'ascii-lower-v1' as const;
+export type SurfaceCaseFold = typeof SURFACE_CASE_FOLD;
+
+export const SURFACE_PUNCTUATION_ALIASES = 'punctuation-alias-v1' as const;
+export type SurfacePunctuationAliases = typeof SURFACE_PUNCTUATION_ALIASES;
+
+export const SURFACE_SPACE_POLICY = 'ascii-space-trim-collapse-v1' as const;
+export type SurfaceSpacePolicy = typeof SURFACE_SPACE_POLICY;
+
+export const SURFACE_LINE_BREAK_POLICY = 'preserve-lf-v1' as const;
+export type SurfaceLineBreakPolicy = typeof SURFACE_LINE_BREAK_POLICY;
+
+/** The comparison applied after normalization — raw-char-v1's, unchanged. */
+export const SURFACE_DISTANCE = 'levenshtein-code-point-sdi-v1' as const;
+export type SurfaceDistance = typeof SURFACE_DISTANCE;
+
+/**
+ * fullwidth-ascii-range-v1: exactly U+FF01 (！) … U+FF5E (～), mapped by
+ * subtracting U+FEE0. Nothing outside that block is touched, so halfwidth
+ * katakana and every other compatibility form is left alone.
+ */
+export const FULLWIDTH_ASCII_RANGE = {
+  start: 0xff01,
+  end: 0xff5e,
+  offset: 0xfee0,
+} as const;
+
+const FULLWIDTH_ASCII_START = FULLWIDTH_ASCII_RANGE.start;
+const FULLWIDTH_ASCII_END = FULLWIDTH_ASCII_RANGE.end;
+const FULLWIDTH_ASCII_OFFSET = FULLWIDTH_ASCII_RANGE.offset;
+
+/**
+ * punctuation-alias-v1: two replacements, and no deletions.
+ *
+ * 「です。」 becomes 「です.」, never 「です」 — a full stop that was written is
+ * a full stop that stays.
+ */
+export const PUNCTUATION_ALIASES = {
+  '。': '.',
+  '、': ',',
+} as const;
 
 /** U+3000, the ideographic space. */
 const IDEOGRAPHIC_SPACE = '　';
@@ -38,6 +87,16 @@ const IDEOGRAPHIC_SPACE = '　';
 const IDEOGRAPHIC_FULL_STOP = '。';
 /** U+3001, the ideographic comma. */
 const IDEOGRAPHIC_COMMA = '、';
+
+/**
+ * ascii-space-trim-collapse-v1: runs of U+0020 collapse to one, and U+0020 at
+ * the very start or end of the text is dropped. U+3000 becomes U+0020 first, so
+ * it participates; a tab never does.
+ */
+export const SPACE_POLICY_CHARS = [' '] as const;
+
+/** preserve-lf-v1: U+000A and U+0009 pass through untouched. */
+export const PRESERVED_WHITESPACE = ['\n', '\t'] as const;
 
 /**
  * The pipeline, in order, as a readable record.
