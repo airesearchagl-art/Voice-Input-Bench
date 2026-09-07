@@ -24,6 +24,18 @@ import {
   EvaluationVerificationError,
   verifyStoredEvaluation,
 } from './verifyStoredEvaluation';
+import {
+  CRITICAL_EVALUATION_SCHEMA_VERSION,
+  CRITICAL_INFO_EVALUATOR,
+  computeCriticalEvaluationSemanticSha256,
+  toStoredEntity,
+  toStoredMatch,
+  type CriticalEvaluationPayloadV2,
+  type CriticalEvaluationV2,
+} from './criticalEvaluationSchema';
+import { CRITICAL_INFO_ALGORITHM, analyzeCriticalInfo } from './criticalInfo';
+import { RAW_CHAR_ALGORITHM } from './rawChar';
+import { verifyStoredCriticalEvaluation } from './verifyStoredCriticalEvaluation';
 
 /**
  * Creating and reading raw character Evaluations.
@@ -112,12 +124,32 @@ function buildPayload(
   };
 }
 
+/** Either shape, as written and as read back. Told apart by `schema_version`. */
+export type StoredEvaluation = EvaluationV1 | CriticalEvaluationV2;
+
+/** The evaluators a caller may ask for by name. */
+export const EVALUATOR_IDS = [RAW_CHAR_ALGORITHM, CRITICAL_INFO_ALGORITHM] as const;
+export type EvaluatorId = (typeof EVALUATOR_IDS)[number];
+
+export function isEvaluatorId(value: unknown): value is EvaluatorId {
+  return EVALUATOR_IDS.some((id) => id === value);
+}
+
 export interface CreateEvaluationOutcome {
   evaluationId: string;
   evaluationDir: string;
-  evaluation: EvaluationV1;
+  evaluation: StoredEvaluation;
   referenceText: string;
   hypothesisText: string;
+}
+
+/** The same outcome, narrowed to the evaluator that produced it. */
+export interface CreateRawCharEvaluationOutcome extends CreateEvaluationOutcome {
+  evaluation: EvaluationV1;
+}
+
+export interface CreateCriticalEvaluationOutcome extends CreateEvaluationOutcome {
+  evaluation: CriticalEvaluationV2;
 }
 
 /**
@@ -134,7 +166,7 @@ export interface CreateEvaluationOutcome {
 export async function createRawCharEvaluation(
   input: { resultId: string },
   deps: EvaluationDeps,
-): Promise<CreateEvaluationOutcome> {
+): Promise<CreateRawCharEvaluationOutcome> {
   const now = deps.now ?? (() => new Date());
 
   assertIsolated(deps);
@@ -170,6 +202,106 @@ export async function createRawCharEvaluation(
   };
 }
 
+function buildCriticalPayload(
+  evaluationId: string,
+  createdAt: string,
+  subject: EvaluationSubject,
+): CriticalEvaluationPayloadV2 {
+  const analysis = analyzeCriticalInfo(subject.referenceText, subject.hypothesisText);
+  const rawChar = buildPayload(evaluationId, createdAt, subject);
+
+  return {
+    schema_version: CRITICAL_EVALUATION_SCHEMA_VERSION,
+    evaluation_id: evaluationId,
+    created_at: createdAt,
+    evaluator: {
+      id: CRITICAL_INFO_EVALUATOR.id,
+      unit: CRITICAL_INFO_EVALUATOR.unit,
+      normalization: CRITICAL_INFO_EVALUATOR.normalization,
+    },
+    run_id: subject.runId,
+    result_id: subject.resultId,
+    // The subject and the input hashes are resolved identically for both
+    // evaluators; only the measurement differs.
+    subject: rawChar.subject,
+    reference: rawChar.reference,
+    hypothesis: rawChar.hypothesis,
+    run_evidence: rawChar.run_evidence,
+    entities: {
+      reference: analysis.referenceEntities.map(toStoredEntity),
+      hypothesis: analysis.hypothesisEntities.map(toStoredEntity),
+    },
+    matches: analysis.matches.map(toStoredMatch),
+    missing: analysis.missing.map(toStoredEntity),
+    extra: analysis.extra.map(toStoredEntity),
+    metrics: analysis.metrics,
+  };
+}
+
+/**
+ * Evaluate one sealed Result for critical information preservation.
+ *
+ * Same evidence chain as raw-char-v1 — the Result names its Run, the Run is
+ * verified from disk, the Result is checked against that verification — and a
+ * different question asked of the same two texts: not how far the characters
+ * drifted, but which facts came through.
+ */
+export async function createCriticalInfoEvaluation(
+  input: { resultId: string },
+  deps: EvaluationDeps,
+): Promise<CreateCriticalEvaluationOutcome> {
+  const now = deps.now ?? (() => new Date());
+
+  assertIsolated(deps);
+
+  const subject = await resolveEvaluationSubject(
+    { runStore: deps.runStore, resultStore: deps.resultStore },
+    input.resultId,
+  );
+
+  const createdAt = now().toISOString();
+  const evaluationId = deps.evaluationId ?? createEvaluationId(now());
+  const payload = buildCriticalPayload(evaluationId, createdAt, subject);
+
+  const evaluation: CriticalEvaluationV2 = {
+    ...payload,
+    integrity: {
+      algorithm: 'sha256',
+      semantic_sha256: computeCriticalEvaluationSemanticSha256(payload),
+    },
+  };
+
+  const stored = await deps.evaluationStore.saveEvaluation(
+    evaluationId,
+    Buffer.from(`${JSON.stringify(evaluation, null, 2)}\n`, 'utf8'),
+  );
+
+  return {
+    evaluationId: stored.evaluationId,
+    evaluationDir: stored.evaluationDir,
+    evaluation,
+    referenceText: subject.referenceText,
+    hypothesisText: subject.hypothesisText,
+  };
+}
+
+/**
+ * Evaluate one sealed Result with the named evaluator.
+ *
+ * The name is matched against a closed list. An unknown evaluator is refused
+ * rather than defaulted: silently measuring something other than what was asked
+ * for would store a number under the wrong heading.
+ */
+export async function createEvaluation(
+  input: { resultId: string; evaluatorId: EvaluatorId },
+  deps: EvaluationDeps,
+): Promise<CreateEvaluationOutcome> {
+  if (input.evaluatorId === CRITICAL_INFO_ALGORITHM) {
+    return createCriticalInfoEvaluation({ resultId: input.resultId }, deps);
+  }
+  return createRawCharEvaluation({ resultId: input.resultId }, deps);
+}
+
 /**
  * A stored Evaluation as the UI lists it.
  *
@@ -181,7 +313,7 @@ export type EvaluationListEntry =
   | {
       status: 'verified';
       evaluationId: string;
-      evaluation: EvaluationV1;
+      evaluation: StoredEvaluation;
       /** The exact texts the metrics were re-derived from, for side-by-side reading. */
       referenceText: string;
       hypothesisText: string;
@@ -228,6 +360,25 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * Verify a stored Evaluation with the verifier its own schema calls for.
+ *
+ * `schema_version` decides, not anything the caller wants: v1 is a raw-char-v1
+ * Evaluation and v2 a critical-info-v1 one. Reading either with the other's
+ * verifier would recompute the wrong measurement and then complain that it does
+ * not match.
+ */
+function verifyByStoredSchema(input: {
+  evaluationId: string;
+  stored: Record<string, unknown>;
+  subject: EvaluationSubject;
+}): StoredEvaluation {
+  if (input.stored.schema_version === CRITICAL_EVALUATION_SCHEMA_VERSION) {
+    return verifyStoredCriticalEvaluation(input);
+  }
+  return verifyStoredEvaluation(input);
+}
+
+/**
  * Evaluations attached to one Run, oldest first.
  *
  * The Run is verified once before any Evaluation is considered; if it does not
@@ -268,7 +419,7 @@ export async function listEvaluationsForRun(
         { runStore: deps.runStore, resultStore: deps.resultStore },
         resultId ?? '',
       );
-      const evaluation = verifyStoredEvaluation({ evaluationId, stored, subject });
+      const evaluation = verifyByStoredSchema({ evaluationId, stored, subject });
       entries.push({
         status: 'verified',
         evaluationId,
@@ -285,7 +436,7 @@ export async function listEvaluationsForRun(
 }
 
 export interface VerifiedEvaluation {
-  evaluation: EvaluationV1;
+  evaluation: StoredEvaluation;
   referenceText: string;
   hypothesisText: string;
 }
@@ -315,7 +466,7 @@ export async function loadVerifiedEvaluation(
     { runStore: deps.runStore, resultStore: deps.resultStore },
     stored.result_id,
   );
-  const evaluation = verifyStoredEvaluation({ evaluationId, stored, subject });
+  const evaluation = verifyByStoredSchema({ evaluationId, stored, subject });
 
   return {
     evaluation,

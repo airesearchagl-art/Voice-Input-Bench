@@ -41,6 +41,7 @@ import {
   type EvaluationVerificationErrorKind,
 } from '@/evaluation/verifyStoredEvaluation';
 import { RawCharError, type RawCharErrorKind } from '@/evaluation/rawChar';
+import { CriticalInfoError, type CriticalInfoErrorKind } from '@/evaluation/criticalInfo';
 
 /**
  * HTTP status per error cause.
@@ -170,6 +171,7 @@ export interface ApiErrorBody {
       | EvaluationSubjectErrorKind
       | EvaluationVerificationErrorKind
       | RawCharErrorKind
+      | CriticalInfoErrorKind
       | 'BAD_REQUEST'
       | 'UNEXPECTED';
     message: string;
@@ -287,9 +289,10 @@ export function toErrorResponse(caught: unknown): NextResponse<ApiErrorBody> {
     );
   }
 
-  if (caught instanceof RawCharError) {
-    // A property of the texts themselves — an empty reference has no CER —
-    // rather than a failed request.
+  if (caught instanceof RawCharError || caught instanceof CriticalInfoError) {
+    // A property of the texts themselves — an empty reference has no CER, and a
+    // reference with no numbers in it has no preservation rate — rather than a
+    // failed request.
     return NextResponse.json(
       {
         ok: false,

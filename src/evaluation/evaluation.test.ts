@@ -11,11 +11,19 @@ import { StorageBoundaryError } from '@/storage/rootIsolation';
 import { saveManualSttResult } from '@/results/saveResult';
 import { BUILT_IN_TOOL_NAMES } from '@/results/tools';
 import {
+  createCriticalInfoEvaluation,
+  createEvaluation,
   createRawCharEvaluation,
+  isEvaluatorId,
   listEvaluationsForRun,
   loadVerifiedEvaluation,
   type EvaluationDeps,
 } from './createEvaluation';
+import {
+  computeCriticalEvaluationSemanticSha256,
+  type CriticalEvaluationPayloadV2,
+} from './criticalEvaluationSchema';
+import { CriticalInfoError, analyzeCriticalInfo } from './criticalInfo';
 import { computeEvaluationSemanticSha256, type EvaluationPayloadV1 } from './evaluationSchema';
 import { EvaluationSubjectError } from './evaluationSubject';
 import { evaluateRawChar } from './rawChar';
@@ -41,6 +49,10 @@ const WINDOWS_TRANSCRIPT =
 const AQUA_TRANSCRIPT =
   '基準階の会議室は north side に寄せて、天井高は二千七百ミリを確保してください。';
 
+const WRONG_VALUE_TRANSCRIPT =
+  '基準階の会議室はノースサイドに寄せて、天井高は2600ミリを確保してください。';
+const NO_ENTITY_SOURCE = '基準階の会議室は north side に寄せてください。';
+
 const AUDIO = new Uint8Array([0x52, 0x49, 0x46, 0x46, 1, 2, 3, 4, 0x57, 0x41, 0x56, 0x45, 9, 9]);
 const PROVIDER_QUERY = Buffer.from('{"schema_version":1,"segments":[]}\n', 'utf8');
 
@@ -50,13 +62,17 @@ function sha(bytes: Uint8Array | string): string {
     .digest('hex');
 }
 
-function manifestFor(runId: string, testId = 'architecture-short-001'): Record<string, unknown> {
+function manifestFor(
+  runId: string,
+  testId = 'architecture-short-001',
+  sourceText = SOURCE_TEXT,
+): Record<string, unknown> {
   return {
     schema_version: 2,
     run_id: runId,
     test_id: testId,
     generated_at: NOW.toISOString(),
-    source: { file: 'source.txt', encoding: 'utf-8', line_endings: 'lf', sha256: sha(SOURCE_TEXT) },
+    source: { file: 'source.txt', encoding: 'utf-8', line_endings: 'lf', sha256: sha(sourceText) },
     provider: {
       id: 'aivisspeech',
       engine_name: 'AivisSpeech',
@@ -103,12 +119,19 @@ function deps(overrides: Partial<EvaluationDeps> = {}): EvaluationDeps {
   };
 }
 
-async function writeRun(runId = RUN_ID, testId?: string): Promise<void> {
+async function writeRun(
+  runId = RUN_ID,
+  testId?: string,
+  sourceText = SOURCE_TEXT,
+): Promise<void> {
   await runStore.saveRun(runId, {
-    sourceText: SOURCE_TEXT,
+    sourceText,
     audio: AUDIO,
     providerQueryJson: PROVIDER_QUERY,
-    manifestJson: Buffer.from(`${JSON.stringify(manifestFor(runId, testId), null, 2)}\n`, 'utf8'),
+    manifestJson: Buffer.from(
+      `${JSON.stringify(manifestFor(runId, testId, sourceText), null, 2)}\n`,
+      'utf8',
+    ),
   });
 }
 
@@ -271,9 +294,11 @@ describe('creating a raw character Evaluation', () => {
       deps({ evaluationId: EVALUATION_ID }),
     );
 
-    expect(outcome.evaluation.metrics.exact_match).toBe(true);
-    expect(outcome.evaluation.metrics.edit_distance).toBe(0);
-    expect(outcome.evaluation.metrics.cer).toBe(0);
+    expect(outcome.evaluation.metrics).toMatchObject({
+      exact_match: true,
+      edit_distance: 0,
+      cer: 0,
+    });
   });
 
   it('writes the file as one immutable directory with no temp residue', async () => {
@@ -488,12 +513,25 @@ describe('stored Evaluations are re-derived on read', () => {
   it('rejects an unsupported schema version', async () => {
     await seed();
     await patchEvaluation(EVALUATION_ID, (evaluation) => {
-      evaluation.schema_version = 2;
+      evaluation.schema_version = 3;
     });
 
     const entry = await listOne();
     expect(entry.status).toBe('rejected');
     if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_SCHEMA_UNSUPPORTED');
+  });
+
+  it('rejects a raw-char Evaluation relabelled as the critical schema', async () => {
+    await seed();
+    // `schema_version` picks the verifier, so this asks the critical-info
+    // reader to make sense of a raw-char artifact. It cannot, and says so.
+    await patchEvaluation(EVALUATION_ID, (evaluation) => {
+      evaluation.schema_version = 2;
+    });
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_MALFORMED');
   });
 
   it('records the evaluator semantics under the seal', async () => {
@@ -849,5 +887,385 @@ describe('four-root isolation', () => {
       deps({ evaluationId: EVALUATION_ID }),
     );
     expect(outcome.evaluationId).toBe(EVALUATION_ID);
+  });
+});
+
+/**
+ * P3-B — critical information Evaluations, in the same root as P3-A's.
+ *
+ * The two evaluators answer different questions about the same pair of texts,
+ * and both artifacts live in `data/evaluations/`. What has to hold is that
+ * neither disturbs the other: a v1 Evaluation is never rewritten or migrated to
+ * make room for v2, and each is read back by the verifier its own schema calls
+ * for.
+ */
+describe('creating a critical information Evaluation', () => {
+  it('measures which facts survived, at schema v2', async () => {
+    await writeRun();
+    await saveSealedResult();
+
+    const outcome = await createCriticalInfoEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationId: EVALUATION_ID }),
+    );
+
+    const expected = analyzeCriticalInfo(SOURCE_TEXT, WINDOWS_TRANSCRIPT);
+    expect(outcome.evaluation).toMatchObject({
+      schema_version: 2,
+      evaluation_id: EVALUATION_ID,
+      evaluator: {
+        id: 'critical-info-v1',
+        unit: 'critical-entity',
+        normalization: 'fixed-alias-table',
+      },
+      run_id: RUN_ID,
+      result_id: RESULT_ID,
+      metrics: expected.metrics,
+    });
+    expect(outcome.evaluation.integrity.semantic_sha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('preserves 二千七百ミリ as 2700ミリ', async () => {
+    await writeRun();
+    await saveSealedResult();
+
+    const outcome = await createCriticalInfoEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationId: EVALUATION_ID }),
+    );
+
+    expect(outcome.evaluation.metrics).toMatchObject({
+      reference_entities: 1,
+      hypothesis_entities: 1,
+      matched: 1,
+      missing: 0,
+      extra: 0,
+      preservation_rate: 1,
+      exact_entity_multiset_match: true,
+    });
+    expect(outcome.evaluation.matches).toEqual([
+      {
+        key: 'number:2700:mm',
+        reference_surface: '二千七百ミリ',
+        reference_offset: expect.any(Number),
+        hypothesis_surface: '2700ミリ',
+        hypothesis_offset: expect.any(Number),
+      },
+    ]);
+  });
+
+  it('stores the working, not just the rate', async () => {
+    await writeRun();
+    await saveSealedResult(RESULT_ID, 'windows-standard-voice-input', WRONG_VALUE_TRANSCRIPT);
+
+    const outcome = await createCriticalInfoEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationId: EVALUATION_ID }),
+    );
+
+    expect(outcome.evaluation.entities.reference.map((entity) => entity.key)).toEqual([
+      'number:2700:mm',
+    ]);
+    expect(outcome.evaluation.entities.hypothesis.map((entity) => entity.key)).toEqual([
+      'number:2600:mm',
+    ]);
+    expect(outcome.evaluation.missing.map((entity) => entity.surface)).toEqual(['二千七百ミリ']);
+    expect(outcome.evaluation.extra.map((entity) => entity.surface)).toEqual(['2600ミリ']);
+    expect(outcome.evaluation.metrics).toMatchObject({
+      matched: 0,
+      missing: 1,
+      extra: 1,
+      preservation_rate: 0,
+      exact_entity_multiset_match: false,
+    });
+  });
+
+  it('refuses a legacy v1 Result and writes nothing', async () => {
+    await writeRun();
+    await saveLegacyV1Result(RESULT_ID);
+
+    const error = await createCriticalInfoEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationId: EVALUATION_ID }),
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(EvaluationSubjectError);
+    expect((error as EvaluationSubjectError).kind).toBe('EVALUATION_RESULT_NOT_SEALED');
+    expect(await evaluationStore.listEvaluationIds()).toEqual([]);
+  });
+
+  it('fails closed when the canonical text carries no critical information', async () => {
+    // Nothing to preserve means no honest rate to report — 100% least of all.
+    await writeRun(RUN_ID, 'architecture-short-001', NO_ENTITY_SOURCE);
+    await saveSealedResult(RESULT_ID, 'windows-standard-voice-input', '会議室はノースサイドです。');
+
+    const error = await createCriticalInfoEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationId: EVALUATION_ID }),
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(CriticalInfoError);
+    expect((error as CriticalInfoError).kind).toBe('CRITICAL_INFO_NO_REFERENCE_ENTITY');
+    expect(await evaluationStore.listEvaluationIds()).toEqual([]);
+    expect(await tempResidue(evaluationsRoot)).toEqual([]);
+  });
+
+  it('leaves the Run, Result and Session trees exactly as they were', async () => {
+    await writeRun();
+    await saveSealedResult();
+
+    const before = {
+      runs: await treeFingerprint(runsRoot),
+      results: await treeFingerprint(resultsRoot),
+      sessions: await treeFingerprint(sessionsRoot),
+    };
+
+    await createCriticalInfoEvaluation({ resultId: RESULT_ID }, deps({ evaluationId: EVALUATION_ID }));
+    await listEvaluationsForRun(deps(), RUN_ID);
+    await loadVerifiedEvaluation(deps(), EVALUATION_ID);
+
+    expect(await treeFingerprint(runsRoot)).toEqual(before.runs);
+    expect(await treeFingerprint(resultsRoot)).toEqual(before.results);
+    expect(await treeFingerprint(sessionsRoot)).toEqual(before.sessions);
+  });
+});
+
+describe('choosing an evaluator by name', () => {
+  it('runs raw-char-v1 when asked for it', async () => {
+    await writeRun();
+    await saveSealedResult();
+    const outcome = await createEvaluation(
+      { resultId: RESULT_ID, evaluatorId: 'raw-char-v1' },
+      deps({ evaluationId: EVALUATION_ID }),
+    );
+    expect(outcome.evaluation.schema_version).toBe(1);
+    expect(outcome.evaluation.evaluator.id).toBe('raw-char-v1');
+  });
+
+  it('runs critical-info-v1 when asked for it', async () => {
+    await writeRun();
+    await saveSealedResult();
+    const outcome = await createEvaluation(
+      { resultId: RESULT_ID, evaluatorId: 'critical-info-v1' },
+      deps({ evaluationId: EVALUATION_ID }),
+    );
+    expect(outcome.evaluation.schema_version).toBe(2);
+    expect(outcome.evaluation.evaluator.id).toBe('critical-info-v1');
+  });
+
+  it('only accepts evaluators it implements', () => {
+    expect(isEvaluatorId('raw-char-v1')).toBe(true);
+    expect(isEvaluatorId('critical-info-v1')).toBe(true);
+    expect(isEvaluatorId('normalized-char-v1')).toBe(false);
+    expect(isEvaluatorId('')).toBe(false);
+    expect(isEvaluatorId(undefined)).toBe(false);
+  });
+});
+
+describe('stored critical Evaluations are re-derived on read', () => {
+  async function seedCritical() {
+    await writeRun();
+    await saveSealedResult(RESULT_ID, 'windows-standard-voice-input', WRONG_VALUE_TRANSCRIPT);
+    return createCriticalInfoEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationId: EVALUATION_ID }),
+    );
+  }
+
+  async function listOne() {
+    const entries = await listEvaluationsForRun(deps(), RUN_ID);
+    expect(entries).toHaveLength(1);
+    return entries[0]!;
+  }
+
+  /** Edit a v2 Evaluation, optionally re-sealing it the way its author would. */
+  async function patchCritical(
+    mutate: (evaluation: Record<string, unknown>) => void,
+    reseal = false,
+  ) {
+    const file = evaluationStore.resolveEvaluationFile(EVALUATION_ID);
+    const evaluation = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    mutate(evaluation);
+    if (reseal) {
+      delete evaluation.integrity;
+      evaluation.integrity = {
+        algorithm: 'sha256',
+        semantic_sha256: computeCriticalEvaluationSemanticSha256(
+          evaluation as unknown as CriticalEvaluationPayloadV2,
+        ),
+      };
+    }
+    await writeFile(file, `${JSON.stringify(evaluation, null, 2)}\n`);
+  }
+
+  it('returns a verified entry for an untouched Evaluation', async () => {
+    await seedCritical();
+    const entry = await listOne();
+    expect(entry.status).toBe('verified');
+    if (entry.status === 'verified') {
+      expect(entry.evaluation.schema_version).toBe(2);
+      expect(entry.referenceText).toBe(SOURCE_TEXT);
+      expect(entry.hypothesisText).toBe(WRONG_VALUE_TRANSCRIPT);
+    }
+  });
+
+  it('accepts a reformatted evaluation.json with reordered keys', async () => {
+    await seedCritical();
+    const file = evaluationStore.resolveEvaluationFile(EVALUATION_ID);
+    const original = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+
+    const reverseKeys = (value: Record<string, unknown>): Record<string, unknown> => {
+      const out: Record<string, unknown> = {};
+      for (const key of Object.keys(value).reverse()) out[key] = value[key];
+      return out;
+    };
+
+    const reordered = reverseKeys(original);
+    reordered.evaluator = reverseKeys(original.evaluator as Record<string, unknown>);
+    reordered.metrics = reverseKeys(original.metrics as Record<string, unknown>);
+    await writeFile(file, JSON.stringify(reordered, null, 4));
+
+    expect((await listOne()).status).toBe('verified');
+  });
+
+  it('rejects an edited preservation rate', async () => {
+    await seedCritical();
+    await patchCritical((evaluation) => {
+      (evaluation.metrics as Record<string, unknown>).preservation_rate = 1;
+    });
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_INTEGRITY_MISMATCH');
+  });
+
+  it('rejects an edited preservation rate even when re-sealed', async () => {
+    await seedCritical();
+    // Consistent on its face: the rate, the counts and the flag all agree.
+    // Only recomputing from the texts catches it.
+    await patchCritical((evaluation) => {
+      const metrics = evaluation.metrics as Record<string, unknown>;
+      metrics.matched = 1;
+      metrics.missing = 0;
+      metrics.extra = 0;
+      metrics.preservation_rate = 1;
+      metrics.exact_entity_multiset_match = true;
+    }, true);
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_METRICS_MISMATCH');
+  });
+
+  it('rejects a rewritten entity list even when re-sealed', async () => {
+    await seedCritical();
+    await patchCritical((evaluation) => {
+      const entities = evaluation.entities as Record<string, unknown>;
+      entities.hypothesis = [
+        { kind: 'number', surface: '二千七百ミリ', key: 'number:2700:mm', offset: 0 },
+      ];
+    }, true);
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_ENTITIES_MISMATCH');
+  });
+
+  it('rejects a rewritten missing list even when re-sealed', async () => {
+    await seedCritical();
+    await patchCritical((evaluation) => {
+      evaluation.missing = [];
+    }, true);
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_ENTITIES_MISMATCH');
+  });
+
+  it('rejects an evaluator that is a different measurement', async () => {
+    await seedCritical();
+    await patchCritical((evaluation) => {
+      (evaluation.evaluator as Record<string, unknown>).normalization = 'none';
+    }, true);
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_EVALUATOR_MISMATCH');
+  });
+
+  it('rejects an Evaluation whose transcript changed underneath it', async () => {
+    await seedCritical();
+    await writeFile(
+      resultStore.resolveResultFile(RESULT_ID, 'transcript.txt'),
+      '書き換えられた書き起こし',
+    );
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('RESULT_TRANSCRIPT_HASH_MISMATCH');
+  });
+
+  it('loadVerifiedEvaluation returns both texts for side-by-side reading', async () => {
+    await seedCritical();
+    const verified = await loadVerifiedEvaluation(deps(), EVALUATION_ID);
+    expect(verified.referenceText).toBe(SOURCE_TEXT);
+    expect(verified.hypothesisText).toBe(WRONG_VALUE_TRANSCRIPT);
+    expect(verified.evaluation.schema_version).toBe(2);
+  });
+});
+
+describe('P3-A and P3-B Evaluations share a root without disturbing each other', () => {
+  it('lists a raw-char v1 and a critical v2 Evaluation side by side', async () => {
+    await writeRun();
+    await saveSealedResult();
+    await createRawCharEvaluation({ resultId: RESULT_ID }, deps({ evaluationId: EVALUATION_ID }));
+    await createCriticalInfoEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationId: EVALUATION_ID_2 }),
+    );
+
+    const entries = await listEvaluationsForRun(deps(), RUN_ID);
+    expect(entries.map((entry) => entry.status)).toEqual(['verified', 'verified']);
+    expect(
+      entries.map((entry) =>
+        entry.status === 'verified' ? entry.evaluation.evaluator.id : null,
+      ),
+    ).toEqual(['raw-char-v1', 'critical-info-v1']);
+  });
+
+  it('never rewrites an existing P3-A Evaluation', async () => {
+    await writeRun();
+    await saveSealedResult();
+    await createRawCharEvaluation({ resultId: RESULT_ID }, deps({ evaluationId: EVALUATION_ID }));
+
+    const file = evaluationStore.resolveEvaluationFile(EVALUATION_ID);
+    const before = sha(new Uint8Array(await readFile(file)));
+
+    await createCriticalInfoEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationId: EVALUATION_ID_2 }),
+    );
+    await listEvaluationsForRun(deps(), RUN_ID);
+    await loadVerifiedEvaluation(deps(), EVALUATION_ID);
+
+    expect(sha(new Uint8Array(await readFile(file)))).toBe(before);
+    const stored = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    expect(stored.schema_version).toBe(1);
+    expect(stored.entities).toBeUndefined();
+  });
+
+  it('reads each Evaluation back with the verifier its own schema calls for', async () => {
+    await writeRun();
+    await saveSealedResult();
+    await createRawCharEvaluation({ resultId: RESULT_ID }, deps({ evaluationId: EVALUATION_ID }));
+    await createCriticalInfoEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationId: EVALUATION_ID_2 }),
+    );
+
+    const rawChar = await loadVerifiedEvaluation(deps(), EVALUATION_ID);
+    const critical = await loadVerifiedEvaluation(deps(), EVALUATION_ID_2);
+    expect(rawChar.evaluation.schema_version).toBe(1);
+    expect(critical.evaluation.schema_version).toBe(2);
   });
 });

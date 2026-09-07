@@ -379,3 +379,70 @@ describe('an evaluation POST that finishes after the operator moved on', () => {
     expect(after.value).toBeNull();
   });
 });
+
+/**
+ * P3-B adds a second evaluator behind its own button.
+ *
+ * Which evaluator ran changes nothing about the guard: a POST that outlives the
+ * selection that started it must not pull its Run's data back over whatever the
+ * operator moved to. A preservation rate shown under the wrong Run's canonical
+ * text is not a weaker number, it is a claim about a text nobody measured.
+ */
+describe('a critical-info evaluation POST that finishes after the operator moved on', () => {
+  it('does not reload the evaluated Run over the Run now on screen', () => {
+    let state = idlePanel();
+    const a = issuePanel(state, RUN_A);
+    state = applyLoaded(a.state, { requestId: a.requestId, selected: a.selected, value: PANEL_A });
+
+    // "Critical情報を評価" pressed on a Result of Run A.
+    const evaluatedRunId = RUN_A;
+
+    const b = issuePanel(state, RUN_B);
+    state = applyLoaded(b.state, { requestId: b.requestId, selected: b.selected, value: PANEL_B });
+
+    expect(isStillSelected(state, evaluatedRunId)).toBe(false);
+    expect(state.selected).toBe(RUN_B);
+    expect(state.value).toEqual(PANEL_B);
+  });
+
+  it('ignores a late panel load carrying the evaluated Run’s entities', () => {
+    let state = idlePanel();
+    const a = issuePanel(state, RUN_A);
+    const b = issuePanel(a.state, RUN_B);
+
+    state = applyLoaded(b.state, { requestId: b.requestId, selected: b.selected, value: PANEL_B });
+    state = applyLoaded(state, {
+      requestId: a.requestId,
+      selected: a.selected,
+      value: {
+        results: PANEL_A.results,
+        evaluations: [...PANEL_A.evaluations, { evaluationId: 'eval-a-critical', resultId: 'result-a' }],
+      },
+    });
+
+    expect(state.value).toEqual(PANEL_B);
+  });
+
+  it('does reload when the operator never left the evaluated Run', () => {
+    let state = idlePanel();
+    const a = issuePanel(state, RUN_A);
+    state = applyLoaded(a.state, { requestId: a.requestId, selected: a.selected, value: PANEL_A });
+
+    expect(isStillSelected(state, RUN_A)).toBe(true);
+
+    const reload = issuePanel(state, RUN_A);
+    state = applyLoaded(reload.state, {
+      requestId: reload.requestId,
+      selected: reload.selected,
+      value: {
+        results: PANEL_A.results,
+        evaluations: [
+          ...PANEL_A.evaluations,
+          { evaluationId: 'eval-a-critical', resultId: 'result-a' },
+        ],
+      },
+    });
+
+    expect(state.value?.evaluations).toHaveLength(2);
+  });
+});
