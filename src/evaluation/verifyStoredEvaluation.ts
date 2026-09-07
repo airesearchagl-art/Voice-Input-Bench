@@ -54,7 +54,16 @@ export type EvaluationVerificationErrorKind =
    *
    * Only critical-info-v1 stores that working; raw-char-v1 has none to check.
    */
-  | 'EVALUATION_ENTITIES_MISMATCH';
+  | 'EVALUATION_ENTITIES_MISMATCH'
+  /**
+   * Re-running the normalization profile does not reproduce the stored
+   * normalized hashes or lengths.
+   *
+   * Only surface-normalized-char-v1 normalizes before comparing, so only it has
+   * this to check — and without it a stored CER could belong to a profile other
+   * than the one the artifact names.
+   */
+  | 'EVALUATION_NORMALIZATION_MISMATCH';
 
 export class EvaluationVerificationError extends Error {
   readonly kind: EvaluationVerificationErrorKind;
