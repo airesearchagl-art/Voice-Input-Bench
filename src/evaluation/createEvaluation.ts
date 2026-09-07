@@ -36,6 +36,19 @@ import {
 import { CRITICAL_INFO_ALGORITHM, analyzeCriticalInfo } from './criticalInfo';
 import { RAW_CHAR_ALGORITHM } from './rawChar';
 import { verifyStoredCriticalEvaluation } from './verifyStoredCriticalEvaluation';
+import {
+  SURFACE_CHAR_EVALUATOR,
+  SURFACE_EVALUATION_SCHEMA_VERSION,
+  computeSurfaceEvaluationSemanticSha256,
+  type SurfaceEvaluationPayloadV3,
+  type SurfaceEvaluationV3,
+} from './surfaceEvaluationSchema';
+import {
+  SURFACE_CHAR_ALGORITHM,
+  SURFACE_NORMALIZE_PROFILE,
+  surfaceNormalize,
+} from './surfaceNormalize';
+import { verifyStoredSurfaceEvaluation } from './verifyStoredSurfaceEvaluation';
 
 /**
  * Creating and reading raw character Evaluations.
@@ -125,10 +138,14 @@ function buildPayload(
 }
 
 /** Either shape, as written and as read back. Told apart by `schema_version`. */
-export type StoredEvaluation = EvaluationV1 | CriticalEvaluationV2;
+export type StoredEvaluation = EvaluationV1 | CriticalEvaluationV2 | SurfaceEvaluationV3;
 
 /** The evaluators a caller may ask for by name. */
-export const EVALUATOR_IDS = [RAW_CHAR_ALGORITHM, CRITICAL_INFO_ALGORITHM] as const;
+export const EVALUATOR_IDS = [
+  RAW_CHAR_ALGORITHM,
+  SURFACE_CHAR_ALGORITHM,
+  CRITICAL_INFO_ALGORITHM,
+] as const;
 export type EvaluatorId = (typeof EVALUATOR_IDS)[number];
 
 export function isEvaluatorId(value: unknown): value is EvaluatorId {
@@ -150,6 +167,10 @@ export interface CreateRawCharEvaluationOutcome extends CreateEvaluationOutcome 
 
 export interface CreateCriticalEvaluationOutcome extends CreateEvaluationOutcome {
   evaluation: CriticalEvaluationV2;
+}
+
+export interface CreateSurfaceEvaluationOutcome extends CreateEvaluationOutcome {
+  evaluation: SurfaceEvaluationV3;
 }
 
 /**
@@ -283,6 +304,91 @@ export async function createCriticalInfoEvaluation(
   };
 }
 
+function buildSurfacePayload(
+  evaluationId: string,
+  createdAt: string,
+  subject: EvaluationSubject,
+): SurfaceEvaluationPayloadV3 {
+  const rawChar = buildPayload(evaluationId, createdAt, subject);
+  const normalizedReference = surfaceNormalize(subject.referenceText);
+  const normalizedHypothesis = surfaceNormalize(subject.hypothesisText);
+
+  return {
+    schema_version: SURFACE_EVALUATION_SCHEMA_VERSION,
+    evaluation_id: evaluationId,
+    created_at: createdAt,
+    // Server-fixed, never from the request.
+    evaluator: { ...SURFACE_CHAR_EVALUATOR },
+    run_id: subject.runId,
+    result_id: subject.resultId,
+    // The subject and the raw input hashes are resolved identically for every
+    // evaluator; only the measurement differs.
+    subject: rawChar.subject,
+    reference: rawChar.reference,
+    hypothesis: rawChar.hypothesis,
+    run_evidence: rawChar.run_evidence,
+    normalized: {
+      profile: SURFACE_NORMALIZE_PROFILE,
+      reference: {
+        sha256: sha256OfText(normalizedReference),
+        chars: toCodePoints(normalizedReference).length,
+      },
+      hypothesis: {
+        sha256: sha256OfText(normalizedHypothesis),
+        chars: toCodePoints(normalizedHypothesis).length,
+      },
+    },
+    metrics: evaluateRawChar(normalizedReference, normalizedHypothesis),
+  };
+}
+
+/**
+ * Evaluate one sealed Result after setting typography aside.
+ *
+ * Same evidence chain and the same Levenshtein comparison as raw-char-v1, run
+ * over text that surface-normalize-v1 has folded. What comes out is a second
+ * reading of the same pair, not a correction of the first: both are stored, and
+ * neither replaces the other.
+ */
+export async function createSurfaceCharEvaluation(
+  input: { resultId: string },
+  deps: EvaluationDeps,
+): Promise<CreateSurfaceEvaluationOutcome> {
+  const now = deps.now ?? (() => new Date());
+
+  assertIsolated(deps);
+
+  const subject = await resolveEvaluationSubject(
+    { runStore: deps.runStore, resultStore: deps.resultStore },
+    input.resultId,
+  );
+
+  const createdAt = now().toISOString();
+  const evaluationId = deps.evaluationId ?? createEvaluationId(now());
+  const payload = buildSurfacePayload(evaluationId, createdAt, subject);
+
+  const evaluation: SurfaceEvaluationV3 = {
+    ...payload,
+    integrity: {
+      algorithm: 'sha256',
+      semantic_sha256: computeSurfaceEvaluationSemanticSha256(payload),
+    },
+  };
+
+  const stored = await deps.evaluationStore.saveEvaluation(
+    evaluationId,
+    Buffer.from(`${JSON.stringify(evaluation, null, 2)}\n`, 'utf8'),
+  );
+
+  return {
+    evaluationId: stored.evaluationId,
+    evaluationDir: stored.evaluationDir,
+    evaluation,
+    referenceText: subject.referenceText,
+    hypothesisText: subject.hypothesisText,
+  };
+}
+
 /**
  * Evaluate one sealed Result with the named evaluator.
  *
@@ -296,6 +402,9 @@ export async function createEvaluation(
 ): Promise<CreateEvaluationOutcome> {
   if (input.evaluatorId === CRITICAL_INFO_ALGORITHM) {
     return createCriticalInfoEvaluation({ resultId: input.resultId }, deps);
+  }
+  if (input.evaluatorId === SURFACE_CHAR_ALGORITHM) {
+    return createSurfaceCharEvaluation({ resultId: input.resultId }, deps);
   }
   return createRawCharEvaluation({ resultId: input.resultId }, deps);
 }
@@ -315,6 +424,12 @@ export type EvaluationListEntry =
       /** The exact texts the metrics were re-derived from, for side-by-side reading. */
       referenceText: string;
       hypothesisText: string;
+      /**
+       * The same two texts after the profile ran. Present only for an evaluator
+       * that normalizes, so the reader can see what was actually compared
+       * rather than take the CER on trust.
+       */
+      normalized?: NormalizedTexts;
     }
   | {
       status: 'rejected';
@@ -373,6 +488,9 @@ function verifyByStoredSchema(input: {
   if (input.stored.schema_version === CRITICAL_EVALUATION_SCHEMA_VERSION) {
     return verifyStoredCriticalEvaluation(input);
   }
+  if (input.stored.schema_version === SURFACE_EVALUATION_SCHEMA_VERSION) {
+    return verifyStoredSurfaceEvaluation(input);
+  }
   return verifyStoredEvaluation(input);
 }
 
@@ -424,6 +542,7 @@ export async function listEvaluationsForRun(
         evaluation,
         referenceText: subject.referenceText,
         hypothesisText: subject.hypothesisText,
+        normalized: normalizedTextsFor(evaluation, subject),
       });
     } catch (caught) {
       entries.push(rejectionOf(evaluationId, resultId, caught));
@@ -433,10 +552,34 @@ export async function listEvaluationsForRun(
   return entries.sort((a, b) => a.evaluationId.localeCompare(b.evaluationId));
 }
 
+export interface NormalizedTexts {
+  reference: string;
+  hypothesis: string;
+}
+
+/**
+ * The normalized pair, for an evaluation that normalized before comparing.
+ *
+ * Derived at read time from the same bytes readback just verified, rather than
+ * stored: the artifact keeps the hashes, and anything shown next to them has to
+ * be reproducible from the source rather than carried alongside it.
+ */
+function normalizedTextsFor(
+  evaluation: StoredEvaluation,
+  subject: EvaluationSubject,
+): NormalizedTexts | undefined {
+  if (evaluation.schema_version !== SURFACE_EVALUATION_SCHEMA_VERSION) return undefined;
+  return {
+    reference: surfaceNormalize(subject.referenceText),
+    hypothesis: surfaceNormalize(subject.hypothesisText),
+  };
+}
+
 export interface VerifiedEvaluation {
   evaluation: StoredEvaluation;
   referenceText: string;
   hypothesisText: string;
+  normalized?: NormalizedTexts;
 }
 
 /**
@@ -470,5 +613,6 @@ export async function loadVerifiedEvaluation(
     evaluation,
     referenceText: subject.referenceText,
     hypothesisText: subject.hypothesisText,
+    normalized: normalizedTextsFor(evaluation, subject),
   };
 }

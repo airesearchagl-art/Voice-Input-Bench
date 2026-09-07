@@ -446,3 +446,92 @@ describe('a critical-info evaluation POST that finishes after the operator moved
     expect(state.value?.evaluations).toHaveLength(2);
   });
 });
+
+/**
+ * P3-C adds a third evaluator behind its own button.
+ *
+ * Which evaluator ran changes nothing about the guard. A surface CER shown
+ * under the wrong Run's canonical text is not a weaker number — it is a claim
+ * about a normalization of a text nobody measured.
+ */
+describe('a surface-normalized evaluation POST that finishes after the operator moved on', () => {
+  it('does not reload the evaluated Run over the Run now on screen', () => {
+    let state = idlePanel();
+    const a = issuePanel(state, RUN_A);
+    state = applyLoaded(a.state, { requestId: a.requestId, selected: a.selected, value: PANEL_A });
+
+    // "Surface評価を作成" pressed on a Result of Run A.
+    const evaluatedRunId = RUN_A;
+
+    const b = issuePanel(state, RUN_B);
+    state = applyLoaded(b.state, { requestId: b.requestId, selected: b.selected, value: PANEL_B });
+
+    expect(isStillSelected(state, evaluatedRunId)).toBe(false);
+    expect(state.selected).toBe(RUN_B);
+    expect(state.value).toEqual(PANEL_B);
+  });
+
+  it('ignores a late panel load carrying the evaluated Run’s surface evaluation', () => {
+    let state = idlePanel();
+    const a = issuePanel(state, RUN_A);
+    const b = issuePanel(a.state, RUN_B);
+
+    state = applyLoaded(b.state, { requestId: b.requestId, selected: b.selected, value: PANEL_B });
+    state = applyLoaded(state, {
+      requestId: a.requestId,
+      selected: a.selected,
+      value: {
+        results: PANEL_A.results,
+        evaluations: [
+          ...PANEL_A.evaluations,
+          { evaluationId: 'eval-a-surface', resultId: 'result-a' },
+        ],
+      },
+    });
+
+    expect(state.value).toEqual(PANEL_B);
+  });
+
+  it('ignores a late surface failure from the Run the operator left', () => {
+    let state = idlePanel();
+    const a = issuePanel(state, RUN_A);
+    const b = issuePanel(a.state, RUN_B);
+
+    state = applyLoaded(b.state, { requestId: b.requestId, selected: b.selected, value: PANEL_B });
+    state = applyFailed(state, {
+      requestId: a.requestId,
+      selected: a.selected,
+      error: {
+        kind: 'EVALUATION_NORMALIZATION_MISMATCH',
+        message: 'Run A の正規化が再現しません。',
+      },
+    });
+
+    expect(state.status).toBe('loaded');
+    expect(state.value).toEqual(PANEL_B);
+    expect(state.error).toBeNull();
+  });
+
+  it('does reload when the operator never left the evaluated Run', () => {
+    let state = idlePanel();
+    const a = issuePanel(state, RUN_A);
+    state = applyLoaded(a.state, { requestId: a.requestId, selected: a.selected, value: PANEL_A });
+
+    expect(isStillSelected(state, RUN_A)).toBe(true);
+
+    const reload = issuePanel(state, RUN_A);
+    state = applyLoaded(reload.state, {
+      requestId: reload.requestId,
+      selected: reload.selected,
+      value: {
+        results: PANEL_A.results,
+        evaluations: [
+          ...PANEL_A.evaluations,
+          { evaluationId: 'eval-a-surface', resultId: 'result-a' },
+        ],
+      },
+    });
+
+    expect(state.value?.evaluations).toHaveLength(2);
+  });
+});

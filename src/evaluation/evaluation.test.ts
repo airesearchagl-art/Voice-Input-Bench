@@ -14,6 +14,7 @@ import {
   createCriticalInfoEvaluation,
   createEvaluation,
   createRawCharEvaluation,
+  createSurfaceCharEvaluation,
   isEvaluatorId,
   listEvaluationsForRun,
   loadVerifiedEvaluation,
@@ -24,6 +25,11 @@ import {
   type CriticalEvaluationPayloadV2,
 } from './criticalEvaluationSchema';
 import { CriticalInfoError, analyzeCriticalInfo } from './criticalInfo';
+import {
+  computeSurfaceEvaluationSemanticSha256,
+  type SurfaceEvaluationPayloadV3,
+} from './surfaceEvaluationSchema';
+import { surfaceNormalize } from './surfaceNormalize';
 import { computeEvaluationSemanticSha256, type EvaluationPayloadV1 } from './evaluationSchema';
 import { EvaluationSubjectError } from './evaluationSubject';
 import { evaluateRawChar } from './rawChar';
@@ -52,6 +58,10 @@ const AQUA_TRANSCRIPT =
 const WRONG_VALUE_TRANSCRIPT =
   '基準階の会議室はノースサイドに寄せて、天井高は2600ミリを確保してください。';
 const NO_ENTITY_SOURCE = '基準階の会議室は north side に寄せてください。';
+
+/** Differs from the source only in width, case and spacing. */
+const SURFACE_ONLY_TRANSCRIPT =
+  '基準階の会議室は　ＮＯＲＴＨ  ＳＩＤＥ に寄せて、天井高は二千七百ミリを確保してください。';
 
 const AUDIO = new Uint8Array([0x52, 0x49, 0x46, 0x46, 1, 2, 3, 4, 0x57, 0x41, 0x56, 0x45, 9, 9]);
 const PROVIDER_QUERY = Buffer.from('{"schema_version":1,"segments":[]}\n', 'utf8');
@@ -513,12 +523,25 @@ describe('stored Evaluations are re-derived on read', () => {
   it('rejects an unsupported schema version', async () => {
     await seed();
     await patchEvaluation(EVALUATION_ID, (evaluation) => {
-      evaluation.schema_version = 3;
+      evaluation.schema_version = 4;
     });
 
     const entry = await listOne();
     expect(entry.status).toBe('rejected');
     if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_SCHEMA_UNSUPPORTED');
+  });
+
+  it('rejects a raw-char Evaluation relabelled as the surface schema', async () => {
+    await seed();
+    // `schema_version` picks the verifier, so this asks the surface reader to
+    // make sense of a raw-char artifact. It cannot, and says so.
+    await patchEvaluation(EVALUATION_ID, (evaluation) => {
+      evaluation.schema_version = 3;
+    });
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_MALFORMED');
   });
 
   it('rejects a raw-char Evaluation relabelled as the critical schema', async () => {
@@ -1381,5 +1404,457 @@ describe('P3-A and P3-B Evaluations share a root without disturbing each other',
     const critical = await loadVerifiedEvaluation(deps(), EVALUATION_ID_2);
     expect(rawChar.evaluation.schema_version).toBe(1);
     expect(critical.evaluation.schema_version).toBe(2);
+  });
+});
+
+/**
+ * P3-C — surface-normalized Evaluations, in the same root as P3-A's and P3-B's.
+ *
+ * Three evaluators now answer three questions about the same pair of texts, and
+ * all three artifacts live in `data/evaluations/`. What has to hold is that none
+ * disturbs the others: neither v1 nor v2 is rewritten or migrated to make room
+ * for v3, and each is read back by the verifier its own schema calls for.
+ */
+describe('creating a surface-normalized Evaluation', () => {
+  it('measures the normalized pair, at schema v3', async () => {
+    await writeRun();
+    await saveSealedResult();
+
+    const outcome = await createSurfaceCharEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationId: EVALUATION_ID }),
+    );
+
+    const expected = evaluateRawChar(
+      surfaceNormalize(SOURCE_TEXT),
+      surfaceNormalize(WINDOWS_TRANSCRIPT),
+    );
+    expect(outcome.evaluation).toMatchObject({
+      schema_version: 3,
+      evaluation_id: EVALUATION_ID,
+      evaluator: {
+        id: 'surface-normalized-char-v1',
+        unit: 'unicode-code-point',
+        normalization: 'surface-normalize-v1',
+      },
+      run_id: RUN_ID,
+      result_id: RESULT_ID,
+      metrics: expected,
+    });
+    expect(outcome.evaluation.integrity.semantic_sha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('records what the two texts became, not just what they were', async () => {
+    await writeRun();
+    await saveSealedResult();
+
+    const outcome = await createSurfaceCharEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationId: EVALUATION_ID }),
+    );
+
+    const normalizedReference = surfaceNormalize(SOURCE_TEXT);
+    const normalizedHypothesis = surfaceNormalize(WINDOWS_TRANSCRIPT);
+
+    expect(outcome.evaluation.normalized).toEqual({
+      profile: 'surface-normalize-v1',
+      reference: {
+        sha256: sha(normalizedReference),
+        chars: Array.from(normalizedReference).length,
+      },
+      hypothesis: {
+        sha256: sha(normalizedHypothesis),
+        chars: Array.from(normalizedHypothesis).length,
+      },
+    });
+
+    // The raw hashes are kept alongside, so the artifact says which bytes were
+    // read as well as what they became.
+    expect(outcome.evaluation.reference.sha256).toBe(sha(SOURCE_TEXT));
+    expect(outcome.evaluation.hypothesis.sha256).toBe(sha(WINDOWS_TRANSCRIPT));
+  });
+
+  it('forgives a formatting-only difference the raw evaluator counts', async () => {
+    await writeRun();
+    await saveSealedResult(RESULT_ID, 'aqua-voice', SURFACE_ONLY_TRANSCRIPT);
+
+    const rawChar = await createRawCharEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationId: EVALUATION_ID }),
+    );
+    const surface = await createSurfaceCharEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationId: EVALUATION_ID_2 }),
+    );
+
+    expect(rawChar.evaluation.metrics.exact_match).toBe(false);
+    expect(rawChar.evaluation.metrics.edit_distance).toBeGreaterThan(0);
+
+    expect(surface.evaluation.metrics.exact_match).toBe(true);
+    expect(surface.evaluation.metrics.edit_distance).toBe(0);
+    expect(surface.evaluation.metrics.cer).toBe(0);
+  });
+
+  it('keeps a numeral difference that critical-info-v1 would call preserved', async () => {
+    // 二千七百ミリ against 2700ミリ: one fact under critical-info-v1, two
+    // different texts here. Both readings are right about different questions.
+    await writeRun();
+    await saveSealedResult();
+
+    const surface = await createSurfaceCharEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationId: EVALUATION_ID }),
+    );
+    const critical = await createCriticalInfoEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationId: EVALUATION_ID_2 }),
+    );
+
+    expect(surface.evaluation.metrics.edit_distance).toBeGreaterThan(0);
+    expect(critical.evaluation.metrics).toMatchObject({ matched: 1, missing: 0, extra: 0 });
+  });
+
+  it('refuses a legacy v1 Result and writes nothing', async () => {
+    await writeRun();
+    await saveLegacyV1Result(RESULT_ID);
+
+    const error = await createSurfaceCharEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationId: EVALUATION_ID }),
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(EvaluationSubjectError);
+    expect((error as EvaluationSubjectError).kind).toBe('EVALUATION_RESULT_NOT_SEALED');
+    expect(await evaluationStore.listEvaluationIds()).toEqual([]);
+    expect(await tempResidue(evaluationsRoot)).toEqual([]);
+  });
+
+  it('leaves the Run, Result and Session trees exactly as they were', async () => {
+    await writeRun();
+    await saveSealedResult();
+
+    const before = {
+      runs: await treeFingerprint(runsRoot),
+      results: await treeFingerprint(resultsRoot),
+      sessions: await treeFingerprint(sessionsRoot),
+    };
+
+    await createSurfaceCharEvaluation({ resultId: RESULT_ID }, deps({ evaluationId: EVALUATION_ID }));
+    await listEvaluationsForRun(deps(), RUN_ID);
+    await loadVerifiedEvaluation(deps(), EVALUATION_ID);
+
+    expect(await treeFingerprint(runsRoot)).toEqual(before.runs);
+    expect(await treeFingerprint(resultsRoot)).toEqual(before.results);
+    expect(await treeFingerprint(sessionsRoot)).toEqual(before.sessions);
+  });
+});
+
+describe('stored surface Evaluations are re-derived on read', () => {
+  async function seedSurface() {
+    await writeRun();
+    await saveSealedResult();
+    return createSurfaceCharEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationId: EVALUATION_ID }),
+    );
+  }
+
+  async function listOne() {
+    const entries = await listEvaluationsForRun(deps(), RUN_ID);
+    expect(entries).toHaveLength(1);
+    return entries[0]!;
+  }
+
+  /** Edit a v3 Evaluation, optionally re-sealing it the way its author would. */
+  async function patchSurface(
+    mutate: (evaluation: Record<string, unknown>) => void,
+    reseal = false,
+  ) {
+    const file = evaluationStore.resolveEvaluationFile(EVALUATION_ID);
+    const evaluation = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    mutate(evaluation);
+    if (reseal) {
+      delete evaluation.integrity;
+      evaluation.integrity = {
+        algorithm: 'sha256',
+        semantic_sha256: computeSurfaceEvaluationSemanticSha256(
+          evaluation as unknown as SurfaceEvaluationPayloadV3,
+        ),
+      };
+    }
+    await writeFile(file, `${JSON.stringify(evaluation, null, 2)}\n`);
+  }
+
+  it('returns a verified entry with both normalized texts', async () => {
+    await seedSurface();
+    const entry = await listOne();
+    expect(entry.status).toBe('verified');
+    if (entry.status === 'verified') {
+      expect(entry.evaluation.schema_version).toBe(3);
+      expect(entry.referenceText).toBe(SOURCE_TEXT);
+      expect(entry.hypothesisText).toBe(WINDOWS_TRANSCRIPT);
+      expect(entry.normalized).toEqual({
+        reference: surfaceNormalize(SOURCE_TEXT),
+        hypothesis: surfaceNormalize(WINDOWS_TRANSCRIPT),
+      });
+    }
+  });
+
+  it('accepts a reformatted evaluation.json with reordered keys', async () => {
+    await seedSurface();
+    const file = evaluationStore.resolveEvaluationFile(EVALUATION_ID);
+    const original = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+
+    const reverseKeys = (value: Record<string, unknown>): Record<string, unknown> => {
+      const out: Record<string, unknown> = {};
+      for (const key of Object.keys(value).reverse()) out[key] = value[key];
+      return out;
+    };
+
+    const reordered = reverseKeys(original);
+    reordered.evaluator = reverseKeys(original.evaluator as Record<string, unknown>);
+    reordered.normalized = reverseKeys(original.normalized as Record<string, unknown>);
+    reordered.metrics = reverseKeys(original.metrics as Record<string, unknown>);
+    await writeFile(file, JSON.stringify(reordered, null, 4));
+
+    expect((await listOne()).status).toBe('verified');
+  });
+
+  it('rejects an edited surface CER', async () => {
+    await seedSurface();
+    await patchSurface((evaluation) => {
+      (evaluation.metrics as Record<string, unknown>).cer = 0;
+    });
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_INTEGRITY_MISMATCH');
+  });
+
+  it('rejects an edited surface CER even when re-sealed', async () => {
+    await seedSurface();
+    await patchSurface((evaluation) => {
+      const metrics = evaluation.metrics as Record<string, unknown>;
+      metrics.cer = 0;
+      metrics.edit_distance = 0;
+      metrics.substitutions = 0;
+      metrics.deletions = 0;
+      metrics.insertions = 0;
+      metrics.exact_match = true;
+    }, true);
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_METRICS_MISMATCH');
+  });
+
+  it('rejects an edited normalized hash even when re-sealed', async () => {
+    await seedSurface();
+    // The hash no longer describes what the profile produces from these bytes.
+    await patchSurface((evaluation) => {
+      const normalized = evaluation.normalized as {
+        reference: Record<string, unknown>;
+      };
+      normalized.reference.sha256 = 'f'.repeat(64);
+    }, true);
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') {
+      expect(entry.reason).toBe('EVALUATION_NORMALIZATION_MISMATCH');
+    }
+  });
+
+  it('rejects an edited normalized length even when re-sealed', async () => {
+    await seedSurface();
+    await patchSurface((evaluation) => {
+      const normalized = evaluation.normalized as {
+        hypothesis: Record<string, unknown>;
+      };
+      normalized.hypothesis.chars = 1;
+    }, true);
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') {
+      expect(entry.reason).toBe('EVALUATION_NORMALIZATION_MISMATCH');
+    }
+  });
+
+  it('rejects an artifact claiming a different normalization profile', async () => {
+    await seedSurface();
+    await patchSurface((evaluation) => {
+      (evaluation.normalized as Record<string, unknown>).profile = 'surface-normalize-v2';
+    }, true);
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') {
+      expect(entry.reason).toBe('EVALUATION_NORMALIZATION_MISMATCH');
+    }
+  });
+
+  const SURFACE_EVALUATOR_EDITS: Array<[string, string]> = [
+    ['id', 'normalized-char-v1'],
+    ['unit', 'utf-16-code-unit'],
+    ['normalization', 'surface-normalize-v2'],
+  ];
+
+  for (const [field, value] of SURFACE_EVALUATOR_EDITS) {
+    it(`rejects an edited evaluator.${field} even when re-sealed`, async () => {
+      await seedSurface();
+      await patchSurface((evaluation) => {
+        (evaluation.evaluator as Record<string, unknown>)[field] = value;
+      }, true);
+
+      const entry = await listOne();
+      expect(entry.status).toBe('rejected');
+      if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_EVALUATOR_MISMATCH');
+    });
+  }
+
+  it('rejects an evaluator carrying a field this build has never heard of', async () => {
+    await seedSurface();
+    await patchSurface((evaluation) => {
+      (evaluation.evaluator as Record<string, unknown>).case_policy = 'ascii-only-v1';
+    }, true);
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_EVALUATOR_MISMATCH');
+  });
+
+  it('rejects an Evaluation whose transcript changed underneath it', async () => {
+    await seedSurface();
+    await writeFile(
+      resultStore.resolveResultFile(RESULT_ID, 'transcript.txt'),
+      '書き換えられた書き起こし',
+    );
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('RESULT_TRANSCRIPT_HASH_MISMATCH');
+  });
+
+  it('loadVerifiedEvaluation returns the normalized pair', async () => {
+    await seedSurface();
+    const verified = await loadVerifiedEvaluation(deps(), EVALUATION_ID);
+    expect(verified.evaluation.schema_version).toBe(3);
+    expect(verified.normalized).toEqual({
+      reference: surfaceNormalize(SOURCE_TEXT),
+      hypothesis: surfaceNormalize(WINDOWS_TRANSCRIPT),
+    });
+  });
+});
+
+describe('three evaluators share a root without disturbing each other', () => {
+  const EVALUATION_ID_3 = '20260907T050002000Z-99998888';
+
+  async function seedAllThree() {
+    await writeRun();
+    await saveSealedResult();
+    await createRawCharEvaluation({ resultId: RESULT_ID }, deps({ evaluationId: EVALUATION_ID }));
+    await createSurfaceCharEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationId: EVALUATION_ID_2 }),
+    );
+    await createCriticalInfoEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationId: EVALUATION_ID_3 }),
+    );
+  }
+
+  it('lists one of each, all verified', async () => {
+    await seedAllThree();
+
+    const entries = await listEvaluationsForRun(deps(), RUN_ID);
+    expect(entries.map((entry) => entry.status)).toEqual(['verified', 'verified', 'verified']);
+    expect(
+      entries.map((entry) => (entry.status === 'verified' ? entry.evaluation.evaluator.id : null)),
+    ).toEqual(['raw-char-v1', 'surface-normalized-char-v1', 'critical-info-v1']);
+  });
+
+  it('reads each back with the verifier its own schema calls for', async () => {
+    await seedAllThree();
+
+    expect((await loadVerifiedEvaluation(deps(), EVALUATION_ID)).evaluation.schema_version).toBe(1);
+    expect((await loadVerifiedEvaluation(deps(), EVALUATION_ID_2)).evaluation.schema_version).toBe(
+      3,
+    );
+    expect((await loadVerifiedEvaluation(deps(), EVALUATION_ID_3)).evaluation.schema_version).toBe(
+      2,
+    );
+  });
+
+  it('never rewrites an existing P3-A or P3-B Evaluation', async () => {
+    await writeRun();
+    await saveSealedResult();
+    await createRawCharEvaluation({ resultId: RESULT_ID }, deps({ evaluationId: EVALUATION_ID }));
+    await createCriticalInfoEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationId: EVALUATION_ID_2 }),
+    );
+
+    const v1File = evaluationStore.resolveEvaluationFile(EVALUATION_ID);
+    const v2File = evaluationStore.resolveEvaluationFile(EVALUATION_ID_2);
+    const before = {
+      v1: sha(new Uint8Array(await readFile(v1File))),
+      v2: sha(new Uint8Array(await readFile(v2File))),
+    };
+
+    await createSurfaceCharEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationId: EVALUATION_ID_3 }),
+    );
+    await listEvaluationsForRun(deps(), RUN_ID);
+
+    expect(sha(new Uint8Array(await readFile(v1File)))).toBe(before.v1);
+    expect(sha(new Uint8Array(await readFile(v2File)))).toBe(before.v2);
+
+    const storedV1 = JSON.parse(await readFile(v1File, 'utf8')) as Record<string, unknown>;
+    const storedV2 = JSON.parse(await readFile(v2File, 'utf8')) as Record<string, unknown>;
+    expect(storedV1.schema_version).toBe(1);
+    expect(storedV1.normalized).toBeUndefined();
+    expect(storedV2.schema_version).toBe(2);
+    expect(storedV2.normalized).toBeUndefined();
+  });
+
+  it('does not fold the three artifacts into one envelope', async () => {
+    // P3-C keeps three schemas rather than a generic wrapper. Merging them is a
+    // question for the semantic architecture spike, not something to slip in.
+    await seedAllThree();
+    const shapes = await Promise.all(
+      [EVALUATION_ID, EVALUATION_ID_2, EVALUATION_ID_3].map(async (id) =>
+        JSON.parse(
+          await readFile(evaluationStore.resolveEvaluationFile(id), 'utf8'),
+        ) as Record<string, unknown>,
+      ),
+    );
+    expect(shapes.map((shape) => shape.schema_version)).toEqual([1, 3, 2]);
+    for (const shape of shapes) {
+      expect(shape.envelope).toBeUndefined();
+      expect(shape.payload).toBeUndefined();
+    }
+  });
+});
+
+describe('choosing the surface evaluator by name', () => {
+  it('runs surface-normalized-char-v1 when asked for it', async () => {
+    await writeRun();
+    await saveSealedResult();
+    const outcome = await createEvaluation(
+      { resultId: RESULT_ID, evaluatorId: 'surface-normalized-char-v1' },
+      deps({ evaluationId: EVALUATION_ID }),
+    );
+    expect(outcome.evaluation.schema_version).toBe(3);
+    expect(outcome.evaluation.evaluator.id).toBe('surface-normalized-char-v1');
+  });
+
+  it('accepts exactly the three evaluators this build implements', () => {
+    expect(isEvaluatorId('raw-char-v1')).toBe(true);
+    expect(isEvaluatorId('surface-normalized-char-v1')).toBe(true);
+    expect(isEvaluatorId('critical-info-v1')).toBe(true);
+    expect(isEvaluatorId('normalized-char-v1')).toBe(false);
+    expect(isEvaluatorId('surface-normalize-v1')).toBe(false);
   });
 });

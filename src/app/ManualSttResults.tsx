@@ -9,6 +9,7 @@ import type {
   StoredCriticalEntity,
 } from '@/evaluation/criticalEvaluationSchema';
 import type { EvaluationV1 } from '@/evaluation/evaluationSchema';
+import type { SurfaceEvaluationV3 } from '@/evaluation/surfaceEvaluationSchema';
 import { DELIVERY_PATHS, STT_TOOL_IDS, type DeliveryPath, type SttToolId } from '@/results/tools';
 import {
   applyFailed,
@@ -58,6 +59,8 @@ type EvaluationEntry =
       evaluation: StoredEvaluation;
       referenceText: string;
       hypothesisText: string;
+      /** Present only for an evaluator that normalized before comparing. */
+      normalized?: { reference: string; hypothesis: string };
     }
   | {
       status: 'rejected';
@@ -137,12 +140,24 @@ interface CriticalEntry extends VerifiedEvaluationEntry {
   evaluation: CriticalEvaluationV2;
 }
 
+interface SurfaceEntry extends VerifiedEvaluationEntry {
+  evaluation: SurfaceEvaluationV3;
+}
+
 function isVerified(entry: EvaluationEntry): entry is VerifiedEvaluationEntry {
   return entry.status === 'verified';
 }
 
 function isCritical(entry: VerifiedEvaluationEntry): entry is CriticalEntry {
   return entry.evaluation.schema_version === 2;
+}
+
+function isSurface(entry: VerifiedEvaluationEntry): entry is SurfaceEntry {
+  return entry.evaluation.schema_version === 3;
+}
+
+function isRawChar(entry: VerifiedEvaluationEntry): entry is RawCharEntry {
+  return entry.evaluation.schema_version === 1;
 }
 
 /**
@@ -246,6 +261,86 @@ function RawEvaluationSection({
             <div>
               <span className="hint">raw transcript（hypothesis）</span>
               <pre className="transcript">{entry.hypothesisText}</pre>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * surface-normalized-char-v1 for one Result.
+ *
+ * The same Levenshtein reading as raw-char-v1, over text with the typography
+ * folded away. Both normalized texts are shown, because a CER measured on text
+ * the reader cannot see is a number they have to take on faith.
+ *
+ * Deliberately **not** shown: the difference between the raw CER and this one.
+ * Subtracting them would produce something that looks like a "formatting error
+ * score", and it is not one — the two readings use different denominators and
+ * different alignments, and their difference is not a quantity of anything.
+ */
+function SurfaceEvaluationSection({
+  entries,
+  busy,
+  disabled,
+  onCreate,
+}: {
+  entries: SurfaceEntry[];
+  busy: boolean;
+  disabled: boolean;
+  onCreate: () => void;
+}) {
+  return (
+    <div className="raw-eval">
+      <h4>Surface-Normalized Character Evaluation</h4>
+      <button type="button" className="secondary" onClick={onCreate} disabled={disabled}>
+        {busy ? '評価中…' : 'Surface評価を作成'}
+      </button>
+
+      {entries.length === 0 && (
+        <p className="fixed-note">
+          この Result にはまだ surface-normalized-char-v1 の評価がありません。
+        </p>
+      )}
+
+      {entries.map((entry) => (
+        <div key={entry.evaluationId} className="raw-eval-card">
+          <dl className="kv compact">
+            <EvaluatorRows evaluation={entry.evaluation} />
+            <dt>Exact Match</dt>
+            <dd>{entry.evaluation.metrics.exact_match ? 'true' : 'false'}</dd>
+            <dt>Surface CER</dt>
+            <dd>{formatCer(entry.evaluation.metrics.cer)}</dd>
+            <dt>Edit Distance</dt>
+            <dd>{entry.evaluation.metrics.edit_distance}</dd>
+            <dt>S / D / I</dt>
+            <dd>
+              {entry.evaluation.metrics.substitutions} / {entry.evaluation.metrics.deletions} /{' '}
+              {entry.evaluation.metrics.insertions}
+            </dd>
+            <dt>Normalized reference chars</dt>
+            <dd>{entry.evaluation.normalized.reference.chars}</dd>
+            <dt>Normalized hypothesis chars</dt>
+            <dd>{entry.evaluation.normalized.hypothesis.chars}</dd>
+            <dt>Created At</dt>
+            <dd>{entry.evaluation.created_at}</dd>
+          </dl>
+
+          <p className="fixed-note">
+            Raw CER との差は <strong>Formatting Error 等の score ではありません</strong>。
+            2 つは別の分母と別の alignment による別の読みで、その差は何かの量ではありません。
+          </p>
+
+          <div className="raw-eval-texts">
+            <div>
+              <span className="hint">normalized source（reference）</span>
+              <pre className="transcript">{entry.normalized?.reference ?? ''}</pre>
+            </div>
+            <div>
+              <span className="hint">normalized transcript（hypothesis）</span>
+              <pre className="transcript">{entry.normalized?.hypothesis ?? ''}</pre>
             </div>
           </div>
         </div>
@@ -385,6 +480,7 @@ function EvaluationSections({
   disabled,
   error,
   onCreateRawChar,
+  onCreateSurface,
   onCreateCritical,
 }: {
   resultId: string;
@@ -394,6 +490,7 @@ function EvaluationSections({
   disabled: boolean;
   error: ApiErrorShape | null;
   onCreateRawChar: () => void;
+  onCreateSurface: () => void;
   onCreateCritical: () => void;
 }) {
   if (!sealed) {
@@ -402,7 +499,8 @@ function EvaluationSections({
         <h4>Evaluation</h4>
         <p className="fixed-note">
           この Result は integrity 署名を持たない legacy (schema v1) のため、
-          <strong>raw-char-v1 / critical-info-v1 いずれの strict evaluation も対象外</strong>
+          <strong>raw-char-v1 / surface-normalized-char-v1 / critical-info-v1 いずれの strict
+          evaluation も対象外</strong>
           です。観測としては読めますが、tool identity が保存後に編集されていないことを
           証明できません。
         </p>
@@ -418,10 +516,17 @@ function EvaluationSections({
       {error && <ErrorBox title={`Evaluation（${resultId}）`} error={error} />}
 
       <RawEvaluationSection
-        entries={verified.filter((entry): entry is RawCharEntry => !isCritical(entry))}
+        entries={verified.filter(isRawChar)}
         busy={busyEvaluator === 'raw-char-v1'}
         disabled={disabled}
         onCreate={onCreateRawChar}
+      />
+
+      <SurfaceEvaluationSection
+        entries={verified.filter(isSurface)}
+        busy={busyEvaluator === 'surface-normalized-char-v1'}
+        disabled={disabled}
+        onCreate={onCreateSurface}
       />
 
       <CriticalEvaluationSection
@@ -920,6 +1025,13 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
                   }
                   onCreateRawChar={() =>
                     void createEvaluation(entry.resultId, selectedRunId, 'raw-char-v1')
+                  }
+                  onCreateSurface={() =>
+                    void createEvaluation(
+                      entry.resultId,
+                      selectedRunId,
+                      'surface-normalized-char-v1',
+                    )
                   }
                   onCreateCritical={() =>
                     void createEvaluation(entry.resultId, selectedRunId, 'critical-info-v1')

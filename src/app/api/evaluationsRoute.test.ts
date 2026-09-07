@@ -471,3 +471,115 @@ describe('POST /api/evaluations with an evaluator', () => {
     expect(body.hypothesisText).toBe(TRANSCRIPT);
   });
 });
+
+describe('POST /api/evaluations with the surface evaluator', () => {
+  it('runs surface-normalized-char-v1 when asked for it', async () => {
+    await writeRun();
+    await saveSealedResult();
+
+    const response = await postEvaluation(
+      postRequest({ resultId: RESULT_ID, evaluatorId: 'surface-normalized-char-v1' }),
+    );
+    expect(response.status).toBe(201);
+
+    const body = (await response.json()) as {
+      evaluation: {
+        schema_version: number;
+        evaluator: { id: string; unit: string; normalization: string };
+        normalized: {
+          profile: string;
+          reference: { sha256: string; chars: number };
+          hypothesis: { sha256: string; chars: number };
+        };
+        metrics: { cer: number; edit_distance: number; exact_match: boolean };
+      };
+    };
+
+    expect(body.evaluation.schema_version).toBe(3);
+    expect(body.evaluation.evaluator).toEqual({
+      id: 'surface-normalized-char-v1',
+      unit: 'unicode-code-point',
+      normalization: 'surface-normalize-v1',
+    });
+    expect(body.evaluation.normalized.profile).toBe('surface-normalize-v1');
+    expect(body.evaluation.normalized.reference.chars).toBeGreaterThan(0);
+    // 二千七百ミリ against 2700ミリ is a real difference, not typography.
+    expect(body.evaluation.metrics.exact_match).toBe(false);
+    expect(body.evaluation.metrics.edit_distance).toBeGreaterThan(0);
+  });
+
+  it('refuses a legacy v1 Result for the surface evaluator as well', async () => {
+    await writeRun();
+    await saveLegacyResult();
+
+    const response = await postEvaluation(
+      postRequest({ resultId: LEGACY_RESULT_ID, evaluatorId: 'surface-normalized-char-v1' }),
+    );
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as { error: { kind: string } };
+    expect(body.error.kind).toBe('EVALUATION_RESULT_NOT_SEALED');
+  });
+
+  it('names all three evaluators when refusing an unknown one', async () => {
+    await writeRun();
+    await saveSealedResult();
+
+    const response = await postEvaluation(
+      postRequest({ resultId: RESULT_ID, evaluatorId: 'semantic-similarity-v1' }),
+    );
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: { kind: string; message: string } };
+    expect(body.error.kind).toBe('BAD_REQUEST');
+    expect(body.error.message).toContain('raw-char-v1');
+    expect(body.error.message).toContain('surface-normalized-char-v1');
+    expect(body.error.message).toContain('critical-info-v1');
+  });
+
+  it('lists all three Evaluations for the same Run', async () => {
+    await writeRun();
+    await saveSealedResult();
+    await postEvaluation(postRequest({ resultId: RESULT_ID }));
+    await postEvaluation(
+      postRequest({ resultId: RESULT_ID, evaluatorId: 'surface-normalized-char-v1' }),
+    );
+    await postEvaluation(postRequest({ resultId: RESULT_ID, evaluatorId: 'critical-info-v1' }));
+
+    const body = (await (await getEvaluations(getRequest(`?runId=${RUN_ID}`))).json()) as {
+      evaluations: Array<{ status: string; evaluation?: { evaluator: { id: string } } }>;
+    };
+    expect(body.evaluations).toHaveLength(3);
+    expect(body.evaluations.every((entry) => entry.status === 'verified')).toBe(true);
+    expect(body.evaluations.map((entry) => entry.evaluation?.evaluator.id).sort()).toEqual([
+      'critical-info-v1',
+      'raw-char-v1',
+      'surface-normalized-char-v1',
+    ]);
+  });
+
+  it('returns the normalized pair alongside the raw texts', async () => {
+    await writeRun();
+    await saveSealedResult();
+    const created = (await (
+      await postEvaluation(
+        postRequest({ resultId: RESULT_ID, evaluatorId: 'surface-normalized-char-v1' }),
+      )
+    ).json()) as { evaluationId: string };
+
+    const response = await getEvaluation(
+      new Request(`http://localhost/api/evaluations/${created.evaluationId}`),
+      detailContext(created.evaluationId),
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      evaluation: { schema_version: number };
+      referenceText: string;
+      hypothesisText: string;
+      normalized: { reference: string; hypothesis: string };
+    };
+    expect(body.evaluation.schema_version).toBe(3);
+    expect(body.referenceText).toBe(SOURCE_TEXT);
+    expect(body.hypothesisText).toBe(TRANSCRIPT);
+    expect(body.normalized.reference).toBe(SOURCE_TEXT.replace('。', '.'));
+    expect(body.normalized.hypothesis).toBe(TRANSCRIPT.replace('。', '.'));
+  });
+});
