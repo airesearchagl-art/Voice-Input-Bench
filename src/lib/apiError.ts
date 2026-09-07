@@ -16,6 +16,18 @@ import {
   StorageBoundaryError,
   type StorageBoundaryErrorKind,
 } from '@/storage/rootIsolation';
+import {
+  SessionStoreError,
+  type SessionStoreErrorKind,
+} from '@/storage/LocalSessionStore';
+import {
+  SessionCreationError,
+  type SessionCreationErrorKind,
+} from '@/sessions/createSession';
+import {
+  SessionVerificationError,
+  type SessionVerificationErrorKind,
+} from '@/sessions/verifyStoredSession';
 
 /**
  * HTTP status per error cause.
@@ -59,6 +71,15 @@ const STATUS_BY_RUN_EVIDENCE_KIND: Record<RunEvidenceErrorKind, number> = {
   RUN_MANIFEST_FILE_MISMATCH: 409,
   RUN_FILE_MISSING: 409,
   RUN_HASH_MISMATCH: 409,
+};
+
+const STATUS_BY_SESSION_STORE_KIND: Record<SessionStoreErrorKind, number> = {
+  SESSION_ALREADY_EXISTS: 409,
+  INVALID_SESSION_ID: 400,
+  SESSION_PATH_ESCAPES_ROOT: 400,
+  SESSION_NOT_FOUND: 404,
+  SESSION_WRITE_FAILED: 500,
+  SESSION_UNREADABLE: 500,
 };
 
 const STATUS_BY_RESULT_STORE_KIND: Record<ResultStoreErrorKind, number> = {
@@ -109,6 +130,9 @@ export interface ApiErrorBody {
       | ResultVerificationErrorKind
       | StorageBoundaryErrorKind
       | ResultStoreErrorKind
+      | SessionStoreErrorKind
+      | SessionCreationErrorKind
+      | SessionVerificationErrorKind
       | ToolResolutionErrorKind
       | SaveResultErrorKind
       | 'BAD_REQUEST'
@@ -157,6 +181,35 @@ export function toErrorResponse(caught: unknown): NextResponse<ApiErrorBody> {
         error: { kind: caught.kind, message: caught.message, detail: caught.detail },
       } as const,
       { status: 500 },
+    );
+  }
+
+  if (caught instanceof SessionVerificationError) {
+    // The stored Session no longer describes what it claims to. Not a server
+    // fault, and not something to render as a comparison.
+    return NextResponse.json(
+      {
+        ok: false,
+        error: { kind: caught.kind, message: caught.message, detail: caught.detail },
+      } as const,
+      { status: 409 },
+    );
+  }
+
+  if (caught instanceof SessionCreationError) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: { kind: caught.kind, message: caught.message, detail: caught.detail },
+      } as const,
+      { status: 400 },
+    );
+  }
+
+  if (caught instanceof SessionStoreError) {
+    return NextResponse.json(
+      { ok: false, error: { kind: caught.kind, message: caught.message } } as const,
+      { status: STATUS_BY_SESSION_STORE_KIND[caught.kind] },
     );
   }
 

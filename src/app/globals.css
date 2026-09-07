@@ -300,3 +300,81 @@ pre.transcript {
   word-break: break-word;
   overflow-x: auto;
 }
+
+/* Benchmark Sessions */
+
+.subhead {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.run-picker {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.run-picker label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.run-picker input[type='checkbox'] {
+  accent-color: var(--accent);
+}
+
+.matrix-wrap {
+  overflow-x: auto;
+}
+
+table.matrix {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+table.matrix th,
+table.matrix td {
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+table.matrix th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+table.matrix td.mono {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+td.coverage.covered {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
+
+td.coverage.missing {
+  color: var(--muted);
+}
+
+td.coverage.rejected-only {
+  color: var(--err);
+  background: var(--err-bg);
+}
+
+.case-block {
+  margin-bottom: 18px;
+}

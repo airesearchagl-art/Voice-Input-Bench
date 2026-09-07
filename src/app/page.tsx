@@ -5,6 +5,7 @@ import type { TTSCapabilities, TTSVoice } from '@/tts/TTSProvider';
 import type { AivmModelsProbe } from '@/tts/AivisSpeechProvider';
 import type { RunManifest } from '@/benchmark/manifest';
 import ManualSttResults from './ManualSttResults';
+import BenchmarkSessions from './BenchmarkSessions';
 import {
   MANUAL_TEST_ID,
   beginCasesLoad,
@@ -509,6 +510,8 @@ export default function Page() {
       </section>
 
       <ManualSttResults latestRunId={run?.runId ?? null} />
+
+      <BenchmarkSessions />
     </main>
   );
 }
