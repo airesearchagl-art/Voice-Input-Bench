@@ -1,7 +1,12 @@
 {
   "corpus_id": "probes-v1",
-  "authored_by": "human",
-  "note": "Gold labels are human-authored and frozen. They are never sent to any model: the loader strips the `gold` field before a probe reaches an embedding or a rubric request. See scripts/lib/probes.mjs and its test.",
+  "gold_provenance": {
+    "authoring": "research-agent",
+    "human_review_status": "pending",
+    "human_review_artifact": "HUMAN_GOLD_REVIEW.md",
+    "note": "These labels were proposed by the research agent that built this spike. No human has independently confirmed them yet, so every number scored against them is provisional. Do not describe them as human-authored or human-reviewed until HUMAN_GOLD_REVIEW.md records an approval, and Claude Code must not record that approval itself."
+  },
+  "handling": "Labels are frozen and are never sent to any model: the loader builds model input from the two texts alone. See scripts/lib/probes.mjs and its test.",
   "label_definitions": {
     "preserved": "A reader acting on the hypothesis would do the same thing as a reader acting on the reference. Spelling, script, width, case, numeral form and unit form may differ.",
     "changed": "A reader acting on the hypothesis would do something different, or would be missing something they needed. Includes reversed direction, reversed polarity, a different value or unit, a dropped fact and an added fact."

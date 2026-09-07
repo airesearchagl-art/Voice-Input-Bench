@@ -1,15 +1,31 @@
 {
-  "analysed_at": "2026-09-07T16:58:49.246Z",
-  "probes_sha256": "9e76b35a10c399161f07ad3602842a376d056292cc8c36624a6ad4bc6ea025de",
+  "analysed_at": "2026-09-07T18:06:16.462Z",
+  "probes_sha256": "5a14302d80732959b5ae249de1daaf731f8e9596fd86042d526b7fafc4475b0a",
   "probe_count": 28,
-  "ranking_metric": "false_preserved (lower is better); accuracy is reported but is not the ranking metric",
+  "gold_provenance": {
+    "authoring": "research-agent",
+    "human_review_status": "pending",
+    "human_review_artifact": "HUMAN_GOLD_REVIEW.md",
+    "note": "These labels were proposed by the research agent that built this spike. No human has independently confirmed them yet, so every number scored against them is provisional. Do not describe them as human-authored or human-reviewed until HUMAN_GOLD_REVIEW.md records an approval, and Claude Code must not record that approval itself."
+  },
+  "scoring_caveat": "All accuracy figures below are provisional accuracy against proposed labels. No human has confirmed the labels; see HUMAN_GOLD_REVIEW.md.",
+  "ranking_metric": "false_preserved (lower is better). Accuracy is reported and is not the basis of any recommendation.",
+  "metric_definitions": {
+    "hard_negative_auto_changed_recall": "hard negatives the method decided were changed, without a human",
+    "hard_negative_non_preserved_coverage": "hard negatives the method did not call preserved — changed plus review. Not detection."
+  },
   "embedding": {
     "status": "OK",
     "model": "text-embedding-nomic-embed-text-v1.5",
+    "runtime": {
+      "name": "LM Studio",
+      "version": null,
+      "version_status": "unavailable_from_runtime: the local HTTP API exposes no version endpoint (/v1 and /api/v0 have no version route)"
+    },
     "endpoint": "http://127.0.0.1:1234",
     "latency_ms": {
-      "per_pair_mean": 87,
-      "per_pair_median": 20
+      "per_pair_mean": 88,
+      "per_pair_median": 23
     },
     "variants": {
       "raw": {
@@ -188,47 +204,116 @@
     "verdict": "no threshold separates preserved from changed on this corpus"
   },
   "llm_rubric": {
-    "status": "OK",
-    "model": "llama3.1:8b",
-    "endpoint": "http://127.0.0.1:11434",
-    "api": "ollama",
-    "temperature": 0,
-    "repeats": 3,
-    "prompt_sha256": "ede8c57b4c05c6f17a25473f959d3e305109b8feecb901323059121ccab70d18",
-    "latency_ms": {
-      "per_request_mean": 589,
-      "per_request_median": 571
+    "raw": {
+      "status": "OK",
+      "input_variant": "raw",
+      "model": "llama3.1:8b",
+      "runtime": {
+        "name": "Ollama",
+        "version": "0.33.3",
+        "version_status": "reported"
+      },
+      "request_contract": {
+        "api": "ollama",
+        "temperature": 0,
+        "num_predict": 600,
+        "max_tokens": null,
+        "top_p": "unset (runtime default)",
+        "seed": "unset (uncontrolled)",
+        "response_format": "unconstrained text; the prompt asks for one JSON object",
+        "stream": false,
+        "repeats": 3,
+        "input_variant": "raw"
+      },
+      "prompt_sha256": "9677764f367cfbf44048ec60ac76f111e0c2487356598405cca91b27790f3558",
+      "latency_ms": {
+        "per_request_mean": 1386,
+        "per_request_median": 587
+      },
+      "total_runs": 84,
+      "parseable_schema_valid_rate": "96.4%",
+      "exact_output_contract_rate": "92.9%",
+      "invalid_runs": 3,
+      "unscored_pairs": 0,
+      "unanimous_pairs": 28,
+      "unanimous_rate": "100.0%",
+      "disagreement_pairs": 0,
+      "disagreement_rate": "0.0%",
+      "byte_identical_pairs": 23,
+      "byte_identical_rate": "82.1%",
+      "decided": 28,
+      "correct": 20,
+      "provisional_accuracy": "71.4%",
+      "false_preserved": 1,
+      "false_preserved_ids": [
+        "p21"
+      ],
+      "false_changed": 7,
+      "false_changed_ids": [
+        "p04",
+        "p06",
+        "p08",
+        "p09",
+        "p10",
+        "p12",
+        "p28"
+      ],
+      "hard_negative_auto_changed_recall": "92.3%"
     },
-    "total_runs": 84,
-    "invalid_json_runs": 0,
-    "invalid_json_rate": "0.0%",
-    "unscored_pairs": 0,
-    "unanimous_pairs": 28,
-    "unanimous_rate": "100.0%",
-    "disagreement_pairs": 0,
-    "disagreement_rate": "0.0%",
-    "total": 28,
-    "correct": 21,
-    "accuracy": "75.0%",
-    "false_preserved": 1,
-    "false_preserved_rate": "6.7%",
-    "false_preserved_ids": [
-      "p21"
-    ],
-    "false_changed": 6,
-    "false_changed_rate": "46.2%",
-    "false_changed_ids": [
-      "p06",
-      "p08",
-      "p09",
-      "p10",
-      "p12",
-      "p28"
-    ],
-    "hard_negative_recall": "92.3%",
-    "hard_negative_missed_ids": [
-      "p21"
-    ]
+    "surface": {
+      "status": "OK",
+      "input_variant": "surface",
+      "model": "llama3.1:8b",
+      "runtime": {
+        "name": "Ollama",
+        "version": "0.33.3",
+        "version_status": "reported"
+      },
+      "request_contract": {
+        "api": "ollama",
+        "temperature": 0,
+        "num_predict": 600,
+        "max_tokens": null,
+        "top_p": "unset (runtime default)",
+        "seed": "unset (uncontrolled)",
+        "response_format": "unconstrained text; the prompt asks for one JSON object",
+        "stream": false,
+        "repeats": 3,
+        "input_variant": "surface"
+      },
+      "prompt_sha256": "9677764f367cfbf44048ec60ac76f111e0c2487356598405cca91b27790f3558",
+      "latency_ms": {
+        "per_request_mean": 654,
+        "per_request_median": 602
+      },
+      "total_runs": 84,
+      "parseable_schema_valid_rate": "100.0%",
+      "exact_output_contract_rate": "86.9%",
+      "invalid_runs": 0,
+      "unscored_pairs": 0,
+      "unanimous_pairs": 28,
+      "unanimous_rate": "100.0%",
+      "disagreement_pairs": 0,
+      "disagreement_rate": "0.0%",
+      "byte_identical_pairs": 18,
+      "byte_identical_rate": "64.3%",
+      "decided": 28,
+      "correct": 21,
+      "provisional_accuracy": "75.0%",
+      "false_preserved": 0,
+      "false_preserved_ids": [],
+      "false_changed": 7,
+      "false_changed_ids": [
+        "p04",
+        "p06",
+        "p08",
+        "p09",
+        "p10",
+        "p12",
+        "p28"
+      ],
+      "hard_negative_auto_changed_recall": "100.0%"
+    }
   },
   "critical_info_signal": {
     "applicable_pairs": 12,
@@ -266,14 +351,20 @@
   },
   "hybrid": {
     "status": "OK",
-    "rule": "critical mismatch vetoes to changed; otherwise embedding and LLM must agree; otherwise review",
+    "rules": {
+      "H0_agreement_gated": "critical veto; else embedding and rubric must agree; else review",
+      "H1_canonical_baseline": "critical veto; else rubric changed wins; else rubric uncertain -> review; else embedding conflict -> review; else preserved",
+      "H2_critical_review_trigger": "as H1 but a critical mismatch routes to review instead of vetoing",
+      "H3_no_auto_preserved": "critical veto or unanimous rubric changed -> changed; everything else -> review"
+    },
     "variants": {
-      "embedding_threshold_0.85": {
-        "automatic_coverage": "53.6%",
-        "review_rate": "46.4%",
+      "H0_agreement_gated__raw__t0.85": {
+        "auto_changed": 12,
+        "auto_preserved": 4,
+        "review_count": 12,
+        "review_rate": "42.9%",
         "review_ids": [
           "p02",
-          "p04",
           "p05",
           "p07",
           "p08",
@@ -286,38 +377,39 @@
           "p26",
           "p28"
         ],
+        "automatic_coverage": "57.1%",
         "decided_by": {
-          "critical_veto": 8,
-          "agreement": 7,
-          "review": 13
+          "agreement": 8,
+          "disagreement": 12,
+          "critical-veto": 8
         },
-        "total": 15,
+        "decided": 16,
         "correct": 11,
-        "accuracy": "73.3%",
+        "provisional_accuracy": "68.8%",
         "false_preserved": 1,
-        "false_preserved_rate": "11.1%",
         "false_preserved_ids": [
           "p21"
         ],
-        "false_changed": 3,
-        "false_changed_rate": "50.0%",
+        "false_changed": 4,
         "false_changed_ids": [
+          "p04",
           "p06",
           "p09",
           "p12"
         ],
-        "hard_negative_recall": "87.5%",
-        "hard_negative_missed_ids": [
+        "hard_negative_auto_changed_recall": "87.5%",
+        "hard_negative_non_preserved_coverage": "92.3%",
+        "hard_negative_called_preserved_ids": [
           "p21"
-        ],
-        "hard_negative_recall_incl_review": "92.3%"
+        ]
       },
-      "embedding_threshold_0.9": {
-        "automatic_coverage": "67.9%",
-        "review_rate": "32.1%",
+      "H0_agreement_gated__raw__t0.9": {
+        "auto_changed": 16,
+        "auto_preserved": 4,
+        "review_count": 8,
+        "review_rate": "28.6%",
         "review_ids": [
           "p02",
-          "p04",
           "p05",
           "p07",
           "p14",
@@ -326,63 +418,64 @@
           "p26",
           "p28"
         ],
+        "automatic_coverage": "71.4%",
         "decided_by": {
-          "critical_veto": 8,
-          "agreement": 11,
-          "review": 9
+          "agreement": 12,
+          "disagreement": 8,
+          "critical-veto": 8
         },
-        "total": 19,
+        "decided": 20,
         "correct": 13,
-        "accuracy": "68.4%",
+        "provisional_accuracy": "65.0%",
         "false_preserved": 1,
-        "false_preserved_rate": "9.1%",
         "false_preserved_ids": [
           "p21"
         ],
-        "false_changed": 5,
-        "false_changed_rate": "62.5%",
+        "false_changed": 6,
         "false_changed_ids": [
+          "p04",
           "p06",
           "p08",
           "p09",
           "p10",
           "p12"
         ],
-        "hard_negative_recall": "88.9%",
-        "hard_negative_missed_ids": [
+        "hard_negative_auto_changed_recall": "88.9%",
+        "hard_negative_non_preserved_coverage": "92.3%",
+        "hard_negative_called_preserved_ids": [
           "p21"
-        ],
-        "hard_negative_recall_incl_review": "92.3%"
+        ]
       },
-      "embedding_threshold_0.95": {
-        "automatic_coverage": "71.4%",
-        "review_rate": "28.6%",
+      "H0_agreement_gated__raw__t0.95": {
+        "auto_changed": 19,
+        "auto_preserved": 2,
+        "review_count": 7,
+        "review_rate": "25.0%",
         "review_ids": [
           "p02",
           "p03",
-          "p04",
           "p05",
           "p07",
           "p11",
           "p14",
           "p26"
         ],
+        "automatic_coverage": "75.0%",
         "decided_by": {
-          "critical_veto": 8,
-          "agreement": 12,
-          "review": 8
+          "agreement": 13,
+          "disagreement": 7,
+          "critical-veto": 8
         },
-        "total": 20,
+        "decided": 21,
         "correct": 13,
-        "accuracy": "65.0%",
+        "provisional_accuracy": "61.9%",
         "false_preserved": 1,
-        "false_preserved_rate": "7.7%",
         "false_preserved_ids": [
           "p21"
         ],
-        "false_changed": 6,
-        "false_changed_rate": "85.7%",
+        "false_changed": 7,
         "false_changed_ids": [
+          "p04",
           "p06",
           "p08",
           "p09",
@@ -390,11 +483,862 @@
           "p12",
           "p28"
         ],
-        "hard_negative_recall": "90.9%",
-        "hard_negative_missed_ids": [
+        "hard_negative_auto_changed_recall": "90.9%",
+        "hard_negative_non_preserved_coverage": "92.3%",
+        "hard_negative_called_preserved_ids": [
+          "p21"
+        ]
+      },
+      "H1_canonical_baseline__raw__t0.85": {
+        "auto_changed": 21,
+        "auto_preserved": 4,
+        "review_count": 3,
+        "review_rate": "10.7%",
+        "review_ids": [
+          "p02",
+          "p05",
+          "p07"
+        ],
+        "automatic_coverage": "89.3%",
+        "decided_by": {
+          "agreement": 4,
+          "embedding-conflict": 3,
+          "llm-changed": 13,
+          "critical-veto": 8
+        },
+        "decided": 25,
+        "correct": 17,
+        "provisional_accuracy": "68.0%",
+        "false_preserved": 1,
+        "false_preserved_ids": [
           "p21"
         ],
-        "hard_negative_recall_incl_review": "92.3%"
+        "false_changed": 7,
+        "false_changed_ids": [
+          "p04",
+          "p06",
+          "p08",
+          "p09",
+          "p10",
+          "p12",
+          "p28"
+        ],
+        "hard_negative_auto_changed_recall": "92.3%",
+        "hard_negative_non_preserved_coverage": "92.3%",
+        "hard_negative_called_preserved_ids": [
+          "p21"
+        ]
+      },
+      "H1_canonical_baseline__raw__t0.9": {
+        "auto_changed": 21,
+        "auto_preserved": 4,
+        "review_count": 3,
+        "review_rate": "10.7%",
+        "review_ids": [
+          "p02",
+          "p05",
+          "p07"
+        ],
+        "automatic_coverage": "89.3%",
+        "decided_by": {
+          "agreement": 4,
+          "embedding-conflict": 3,
+          "llm-changed": 13,
+          "critical-veto": 8
+        },
+        "decided": 25,
+        "correct": 17,
+        "provisional_accuracy": "68.0%",
+        "false_preserved": 1,
+        "false_preserved_ids": [
+          "p21"
+        ],
+        "false_changed": 7,
+        "false_changed_ids": [
+          "p04",
+          "p06",
+          "p08",
+          "p09",
+          "p10",
+          "p12",
+          "p28"
+        ],
+        "hard_negative_auto_changed_recall": "92.3%",
+        "hard_negative_non_preserved_coverage": "92.3%",
+        "hard_negative_called_preserved_ids": [
+          "p21"
+        ]
+      },
+      "H1_canonical_baseline__raw__t0.95": {
+        "auto_changed": 21,
+        "auto_preserved": 2,
+        "review_count": 5,
+        "review_rate": "17.9%",
+        "review_ids": [
+          "p02",
+          "p03",
+          "p05",
+          "p07",
+          "p11"
+        ],
+        "automatic_coverage": "82.1%",
+        "decided_by": {
+          "agreement": 2,
+          "embedding-conflict": 5,
+          "llm-changed": 13,
+          "critical-veto": 8
+        },
+        "decided": 23,
+        "correct": 15,
+        "provisional_accuracy": "65.2%",
+        "false_preserved": 1,
+        "false_preserved_ids": [
+          "p21"
+        ],
+        "false_changed": 7,
+        "false_changed_ids": [
+          "p04",
+          "p06",
+          "p08",
+          "p09",
+          "p10",
+          "p12",
+          "p28"
+        ],
+        "hard_negative_auto_changed_recall": "92.3%",
+        "hard_negative_non_preserved_coverage": "92.3%",
+        "hard_negative_called_preserved_ids": [
+          "p21"
+        ]
+      },
+      "H2_critical_review_trigger__raw__t0.85": {
+        "auto_changed": 13,
+        "auto_preserved": 4,
+        "review_count": 11,
+        "review_rate": "39.3%",
+        "review_ids": [
+          "p02",
+          "p05",
+          "p07",
+          "p12",
+          "p15",
+          "p16",
+          "p17",
+          "p18",
+          "p22",
+          "p23",
+          "p25"
+        ],
+        "automatic_coverage": "60.7%",
+        "decided_by": {
+          "agreement": 4,
+          "embedding-conflict": 3,
+          "llm-changed": 13,
+          "critical-review": 8
+        },
+        "decided": 17,
+        "correct": 10,
+        "provisional_accuracy": "58.8%",
+        "false_preserved": 1,
+        "false_preserved_ids": [
+          "p21"
+        ],
+        "false_changed": 6,
+        "false_changed_ids": [
+          "p04",
+          "p06",
+          "p08",
+          "p09",
+          "p10",
+          "p28"
+        ],
+        "hard_negative_auto_changed_recall": "85.7%",
+        "hard_negative_non_preserved_coverage": "92.3%",
+        "hard_negative_called_preserved_ids": [
+          "p21"
+        ]
+      },
+      "H2_critical_review_trigger__raw__t0.9": {
+        "auto_changed": 13,
+        "auto_preserved": 4,
+        "review_count": 11,
+        "review_rate": "39.3%",
+        "review_ids": [
+          "p02",
+          "p05",
+          "p07",
+          "p12",
+          "p15",
+          "p16",
+          "p17",
+          "p18",
+          "p22",
+          "p23",
+          "p25"
+        ],
+        "automatic_coverage": "60.7%",
+        "decided_by": {
+          "agreement": 4,
+          "embedding-conflict": 3,
+          "llm-changed": 13,
+          "critical-review": 8
+        },
+        "decided": 17,
+        "correct": 10,
+        "provisional_accuracy": "58.8%",
+        "false_preserved": 1,
+        "false_preserved_ids": [
+          "p21"
+        ],
+        "false_changed": 6,
+        "false_changed_ids": [
+          "p04",
+          "p06",
+          "p08",
+          "p09",
+          "p10",
+          "p28"
+        ],
+        "hard_negative_auto_changed_recall": "85.7%",
+        "hard_negative_non_preserved_coverage": "92.3%",
+        "hard_negative_called_preserved_ids": [
+          "p21"
+        ]
+      },
+      "H2_critical_review_trigger__raw__t0.95": {
+        "auto_changed": 13,
+        "auto_preserved": 2,
+        "review_count": 13,
+        "review_rate": "46.4%",
+        "review_ids": [
+          "p02",
+          "p03",
+          "p05",
+          "p07",
+          "p11",
+          "p12",
+          "p15",
+          "p16",
+          "p17",
+          "p18",
+          "p22",
+          "p23",
+          "p25"
+        ],
+        "automatic_coverage": "53.6%",
+        "decided_by": {
+          "agreement": 2,
+          "embedding-conflict": 5,
+          "llm-changed": 13,
+          "critical-review": 8
+        },
+        "decided": 15,
+        "correct": 8,
+        "provisional_accuracy": "53.3%",
+        "false_preserved": 1,
+        "false_preserved_ids": [
+          "p21"
+        ],
+        "false_changed": 6,
+        "false_changed_ids": [
+          "p04",
+          "p06",
+          "p08",
+          "p09",
+          "p10",
+          "p28"
+        ],
+        "hard_negative_auto_changed_recall": "85.7%",
+        "hard_negative_non_preserved_coverage": "92.3%",
+        "hard_negative_called_preserved_ids": [
+          "p21"
+        ]
+      },
+      "H3_no_auto_preserved__raw__t0.85": {
+        "auto_changed": 21,
+        "auto_preserved": 0,
+        "review_count": 7,
+        "review_rate": "25.0%",
+        "review_ids": [
+          "p01",
+          "p02",
+          "p03",
+          "p05",
+          "p07",
+          "p11",
+          "p21"
+        ],
+        "automatic_coverage": "75.0%",
+        "decided_by": {
+          "no-auto-preserved": 7,
+          "llm-changed": 13,
+          "critical-veto": 8
+        },
+        "decided": 21,
+        "correct": 14,
+        "provisional_accuracy": "66.7%",
+        "false_preserved": 0,
+        "false_preserved_ids": [],
+        "false_changed": 7,
+        "false_changed_ids": [
+          "p04",
+          "p06",
+          "p08",
+          "p09",
+          "p10",
+          "p12",
+          "p28"
+        ],
+        "hard_negative_auto_changed_recall": "100.0%",
+        "hard_negative_non_preserved_coverage": "100.0%",
+        "hard_negative_called_preserved_ids": []
+      },
+      "H3_no_auto_preserved__raw__t0.9": {
+        "auto_changed": 21,
+        "auto_preserved": 0,
+        "review_count": 7,
+        "review_rate": "25.0%",
+        "review_ids": [
+          "p01",
+          "p02",
+          "p03",
+          "p05",
+          "p07",
+          "p11",
+          "p21"
+        ],
+        "automatic_coverage": "75.0%",
+        "decided_by": {
+          "no-auto-preserved": 7,
+          "llm-changed": 13,
+          "critical-veto": 8
+        },
+        "decided": 21,
+        "correct": 14,
+        "provisional_accuracy": "66.7%",
+        "false_preserved": 0,
+        "false_preserved_ids": [],
+        "false_changed": 7,
+        "false_changed_ids": [
+          "p04",
+          "p06",
+          "p08",
+          "p09",
+          "p10",
+          "p12",
+          "p28"
+        ],
+        "hard_negative_auto_changed_recall": "100.0%",
+        "hard_negative_non_preserved_coverage": "100.0%",
+        "hard_negative_called_preserved_ids": []
+      },
+      "H3_no_auto_preserved__raw__t0.95": {
+        "auto_changed": 21,
+        "auto_preserved": 0,
+        "review_count": 7,
+        "review_rate": "25.0%",
+        "review_ids": [
+          "p01",
+          "p02",
+          "p03",
+          "p05",
+          "p07",
+          "p11",
+          "p21"
+        ],
+        "automatic_coverage": "75.0%",
+        "decided_by": {
+          "no-auto-preserved": 7,
+          "llm-changed": 13,
+          "critical-veto": 8
+        },
+        "decided": 21,
+        "correct": 14,
+        "provisional_accuracy": "66.7%",
+        "false_preserved": 0,
+        "false_preserved_ids": [],
+        "false_changed": 7,
+        "false_changed_ids": [
+          "p04",
+          "p06",
+          "p08",
+          "p09",
+          "p10",
+          "p12",
+          "p28"
+        ],
+        "hard_negative_auto_changed_recall": "100.0%",
+        "hard_negative_non_preserved_coverage": "100.0%",
+        "hard_negative_called_preserved_ids": []
+      },
+      "H0_agreement_gated__surface__t0.85": {
+        "auto_changed": 12,
+        "auto_preserved": 4,
+        "review_count": 12,
+        "review_rate": "42.9%",
+        "review_ids": [
+          "p05",
+          "p07",
+          "p08",
+          "p10",
+          "p13",
+          "p14",
+          "p19",
+          "p20",
+          "p21",
+          "p24",
+          "p26",
+          "p28"
+        ],
+        "automatic_coverage": "57.1%",
+        "decided_by": {
+          "agreement": 8,
+          "disagreement": 12,
+          "critical-veto": 8
+        },
+        "decided": 16,
+        "correct": 12,
+        "provisional_accuracy": "75.0%",
+        "false_preserved": 0,
+        "false_preserved_ids": [],
+        "false_changed": 4,
+        "false_changed_ids": [
+          "p04",
+          "p06",
+          "p09",
+          "p12"
+        ],
+        "hard_negative_auto_changed_recall": "100.0%",
+        "hard_negative_non_preserved_coverage": "100.0%",
+        "hard_negative_called_preserved_ids": []
+      },
+      "H0_agreement_gated__surface__t0.9": {
+        "auto_changed": 16,
+        "auto_preserved": 4,
+        "review_count": 8,
+        "review_rate": "28.6%",
+        "review_ids": [
+          "p05",
+          "p07",
+          "p14",
+          "p19",
+          "p20",
+          "p21",
+          "p26",
+          "p28"
+        ],
+        "automatic_coverage": "71.4%",
+        "decided_by": {
+          "agreement": 12,
+          "disagreement": 8,
+          "critical-veto": 8
+        },
+        "decided": 20,
+        "correct": 14,
+        "provisional_accuracy": "70.0%",
+        "false_preserved": 0,
+        "false_preserved_ids": [],
+        "false_changed": 6,
+        "false_changed_ids": [
+          "p04",
+          "p06",
+          "p08",
+          "p09",
+          "p10",
+          "p12"
+        ],
+        "hard_negative_auto_changed_recall": "100.0%",
+        "hard_negative_non_preserved_coverage": "100.0%",
+        "hard_negative_called_preserved_ids": []
+      },
+      "H0_agreement_gated__surface__t0.95": {
+        "auto_changed": 18,
+        "auto_preserved": 2,
+        "review_count": 8,
+        "review_rate": "28.6%",
+        "review_ids": [
+          "p03",
+          "p05",
+          "p07",
+          "p11",
+          "p14",
+          "p19",
+          "p21",
+          "p26"
+        ],
+        "automatic_coverage": "71.4%",
+        "decided_by": {
+          "agreement": 12,
+          "disagreement": 8,
+          "critical-veto": 8
+        },
+        "decided": 20,
+        "correct": 13,
+        "provisional_accuracy": "65.0%",
+        "false_preserved": 0,
+        "false_preserved_ids": [],
+        "false_changed": 7,
+        "false_changed_ids": [
+          "p04",
+          "p06",
+          "p08",
+          "p09",
+          "p10",
+          "p12",
+          "p28"
+        ],
+        "hard_negative_auto_changed_recall": "100.0%",
+        "hard_negative_non_preserved_coverage": "100.0%",
+        "hard_negative_called_preserved_ids": []
+      },
+      "H1_canonical_baseline__surface__t0.85": {
+        "auto_changed": 22,
+        "auto_preserved": 4,
+        "review_count": 2,
+        "review_rate": "7.1%",
+        "review_ids": [
+          "p05",
+          "p07"
+        ],
+        "automatic_coverage": "92.9%",
+        "decided_by": {
+          "agreement": 4,
+          "llm-changed": 14,
+          "embedding-conflict": 2,
+          "critical-veto": 8
+        },
+        "decided": 26,
+        "correct": 19,
+        "provisional_accuracy": "73.1%",
+        "false_preserved": 0,
+        "false_preserved_ids": [],
+        "false_changed": 7,
+        "false_changed_ids": [
+          "p04",
+          "p06",
+          "p08",
+          "p09",
+          "p10",
+          "p12",
+          "p28"
+        ],
+        "hard_negative_auto_changed_recall": "100.0%",
+        "hard_negative_non_preserved_coverage": "100.0%",
+        "hard_negative_called_preserved_ids": []
+      },
+      "H1_canonical_baseline__surface__t0.9": {
+        "auto_changed": 22,
+        "auto_preserved": 4,
+        "review_count": 2,
+        "review_rate": "7.1%",
+        "review_ids": [
+          "p05",
+          "p07"
+        ],
+        "automatic_coverage": "92.9%",
+        "decided_by": {
+          "agreement": 4,
+          "llm-changed": 14,
+          "embedding-conflict": 2,
+          "critical-veto": 8
+        },
+        "decided": 26,
+        "correct": 19,
+        "provisional_accuracy": "73.1%",
+        "false_preserved": 0,
+        "false_preserved_ids": [],
+        "false_changed": 7,
+        "false_changed_ids": [
+          "p04",
+          "p06",
+          "p08",
+          "p09",
+          "p10",
+          "p12",
+          "p28"
+        ],
+        "hard_negative_auto_changed_recall": "100.0%",
+        "hard_negative_non_preserved_coverage": "100.0%",
+        "hard_negative_called_preserved_ids": []
+      },
+      "H1_canonical_baseline__surface__t0.95": {
+        "auto_changed": 22,
+        "auto_preserved": 2,
+        "review_count": 4,
+        "review_rate": "14.3%",
+        "review_ids": [
+          "p03",
+          "p05",
+          "p07",
+          "p11"
+        ],
+        "automatic_coverage": "85.7%",
+        "decided_by": {
+          "agreement": 2,
+          "embedding-conflict": 4,
+          "llm-changed": 14,
+          "critical-veto": 8
+        },
+        "decided": 24,
+        "correct": 17,
+        "provisional_accuracy": "70.8%",
+        "false_preserved": 0,
+        "false_preserved_ids": [],
+        "false_changed": 7,
+        "false_changed_ids": [
+          "p04",
+          "p06",
+          "p08",
+          "p09",
+          "p10",
+          "p12",
+          "p28"
+        ],
+        "hard_negative_auto_changed_recall": "100.0%",
+        "hard_negative_non_preserved_coverage": "100.0%",
+        "hard_negative_called_preserved_ids": []
+      },
+      "H2_critical_review_trigger__surface__t0.85": {
+        "auto_changed": 14,
+        "auto_preserved": 4,
+        "review_count": 10,
+        "review_rate": "35.7%",
+        "review_ids": [
+          "p05",
+          "p07",
+          "p12",
+          "p15",
+          "p16",
+          "p17",
+          "p18",
+          "p22",
+          "p23",
+          "p25"
+        ],
+        "automatic_coverage": "64.3%",
+        "decided_by": {
+          "agreement": 4,
+          "llm-changed": 14,
+          "embedding-conflict": 2,
+          "critical-review": 8
+        },
+        "decided": 18,
+        "correct": 12,
+        "provisional_accuracy": "66.7%",
+        "false_preserved": 0,
+        "false_preserved_ids": [],
+        "false_changed": 6,
+        "false_changed_ids": [
+          "p04",
+          "p06",
+          "p08",
+          "p09",
+          "p10",
+          "p28"
+        ],
+        "hard_negative_auto_changed_recall": "100.0%",
+        "hard_negative_non_preserved_coverage": "100.0%",
+        "hard_negative_called_preserved_ids": []
+      },
+      "H2_critical_review_trigger__surface__t0.9": {
+        "auto_changed": 14,
+        "auto_preserved": 4,
+        "review_count": 10,
+        "review_rate": "35.7%",
+        "review_ids": [
+          "p05",
+          "p07",
+          "p12",
+          "p15",
+          "p16",
+          "p17",
+          "p18",
+          "p22",
+          "p23",
+          "p25"
+        ],
+        "automatic_coverage": "64.3%",
+        "decided_by": {
+          "agreement": 4,
+          "llm-changed": 14,
+          "embedding-conflict": 2,
+          "critical-review": 8
+        },
+        "decided": 18,
+        "correct": 12,
+        "provisional_accuracy": "66.7%",
+        "false_preserved": 0,
+        "false_preserved_ids": [],
+        "false_changed": 6,
+        "false_changed_ids": [
+          "p04",
+          "p06",
+          "p08",
+          "p09",
+          "p10",
+          "p28"
+        ],
+        "hard_negative_auto_changed_recall": "100.0%",
+        "hard_negative_non_preserved_coverage": "100.0%",
+        "hard_negative_called_preserved_ids": []
+      },
+      "H2_critical_review_trigger__surface__t0.95": {
+        "auto_changed": 14,
+        "auto_preserved": 2,
+        "review_count": 12,
+        "review_rate": "42.9%",
+        "review_ids": [
+          "p03",
+          "p05",
+          "p07",
+          "p11",
+          "p12",
+          "p15",
+          "p16",
+          "p17",
+          "p18",
+          "p22",
+          "p23",
+          "p25"
+        ],
+        "automatic_coverage": "57.1%",
+        "decided_by": {
+          "agreement": 2,
+          "embedding-conflict": 4,
+          "llm-changed": 14,
+          "critical-review": 8
+        },
+        "decided": 16,
+        "correct": 10,
+        "provisional_accuracy": "62.5%",
+        "false_preserved": 0,
+        "false_preserved_ids": [],
+        "false_changed": 6,
+        "false_changed_ids": [
+          "p04",
+          "p06",
+          "p08",
+          "p09",
+          "p10",
+          "p28"
+        ],
+        "hard_negative_auto_changed_recall": "100.0%",
+        "hard_negative_non_preserved_coverage": "100.0%",
+        "hard_negative_called_preserved_ids": []
+      },
+      "H3_no_auto_preserved__surface__t0.85": {
+        "auto_changed": 22,
+        "auto_preserved": 0,
+        "review_count": 6,
+        "review_rate": "21.4%",
+        "review_ids": [
+          "p01",
+          "p02",
+          "p03",
+          "p05",
+          "p07",
+          "p11"
+        ],
+        "automatic_coverage": "78.6%",
+        "decided_by": {
+          "no-auto-preserved": 6,
+          "llm-changed": 14,
+          "critical-veto": 8
+        },
+        "decided": 22,
+        "correct": 15,
+        "provisional_accuracy": "68.2%",
+        "false_preserved": 0,
+        "false_preserved_ids": [],
+        "false_changed": 7,
+        "false_changed_ids": [
+          "p04",
+          "p06",
+          "p08",
+          "p09",
+          "p10",
+          "p12",
+          "p28"
+        ],
+        "hard_negative_auto_changed_recall": "100.0%",
+        "hard_negative_non_preserved_coverage": "100.0%",
+        "hard_negative_called_preserved_ids": []
+      },
+      "H3_no_auto_preserved__surface__t0.9": {
+        "auto_changed": 22,
+        "auto_preserved": 0,
+        "review_count": 6,
+        "review_rate": "21.4%",
+        "review_ids": [
+          "p01",
+          "p02",
+          "p03",
+          "p05",
+          "p07",
+          "p11"
+        ],
+        "automatic_coverage": "78.6%",
+        "decided_by": {
+          "no-auto-preserved": 6,
+          "llm-changed": 14,
+          "critical-veto": 8
+        },
+        "decided": 22,
+        "correct": 15,
+        "provisional_accuracy": "68.2%",
+        "false_preserved": 0,
+        "false_preserved_ids": [],
+        "false_changed": 7,
+        "false_changed_ids": [
+          "p04",
+          "p06",
+          "p08",
+          "p09",
+          "p10",
+          "p12",
+          "p28"
+        ],
+        "hard_negative_auto_changed_recall": "100.0%",
+        "hard_negative_non_preserved_coverage": "100.0%",
+        "hard_negative_called_preserved_ids": []
+      },
+      "H3_no_auto_preserved__surface__t0.95": {
+        "auto_changed": 22,
+        "auto_preserved": 0,
+        "review_count": 6,
+        "review_rate": "21.4%",
+        "review_ids": [
+          "p01",
+          "p02",
+          "p03",
+          "p05",
+          "p07",
+          "p11"
+        ],
+        "automatic_coverage": "78.6%",
+        "decided_by": {
+          "no-auto-preserved": 6,
+          "llm-changed": 14,
+          "critical-veto": 8
+        },
+        "decided": 22,
+        "correct": 15,
+        "provisional_accuracy": "68.2%",
+        "false_preserved": 0,
+        "false_preserved_ids": [],
+        "false_changed": 7,
+        "false_changed_ids": [
+          "p04",
+          "p06",
+          "p08",
+          "p09",
+          "p10",
+          "p12",
+          "p28"
+        ],
+        "hard_negative_auto_changed_recall": "100.0%",
+        "hard_negative_non_preserved_coverage": "100.0%",
+        "hard_negative_called_preserved_ids": []
       }
     }
   }

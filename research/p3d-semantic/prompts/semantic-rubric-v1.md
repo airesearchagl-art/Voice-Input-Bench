@@ -10,22 +10,45 @@ assume one exists in the input.
 Would a reader acting on the HYPOTHESIS do the same thing as a reader acting on
 the REFERENCE?
 
-- `preserved` — yes. Spelling, script, character width, case, numeral form and
-  unit form may differ freely. 「2700mm」 and 「二千七百ミリ」 are the same
-  quantity. 「water closet」 and 「ウォータークローゼット」 are the same fixture.
-  A self-correction that keeps the corrected value and drops the retracted one
-  is preserved.
-- `changed` — no. A direction or location differs, a polarity is reversed, a
-  value or unit differs, an instruction became a report, a required fact is
-  missing, or a fact nobody stated has been added.
+- `preserved` — yes.
+- `changed` — no.
 
 Judge meaning only. Never judge spelling, punctuation, politeness, fluency or
 formatting.
 
+## Rules
+
+These are general rules. They are not worked examples, and no pair you are asked
+to grade is answered here.
+
+1. **Writing is not meaning.** Character width, letter case, script, punctuation
+   shape and spacing may all differ freely without changing the answer.
+2. **The same quantity written differently is the same quantity.** A number
+   spelled in digits and the same number spelled in words are one fact, and so
+   are two spellings of the same unit.
+3. **The same term written differently is the same term.** A domain term
+   transliterated into another script, or written in a common colloquial form,
+   is not a domain term change.
+4. **A different value or unit is `changed`**, however small the edit that
+   produced it.
+5. **A reversed polarity is `changed`.** A negation added or removed reverses
+   the instruction.
+6. **A reversed direction, side, level or placement is `changed`.**
+7. **A change of instruction state is `changed`** — a request that became a
+   report of completed work, or work still to be done that became work already
+   done, is not the same instruction.
+8. **A required fact that is missing is `changed`, and a fact nobody stated that
+   has appeared is `changed`.**
+9. **A self-correction is judged by its final intent.** Keeping the corrected
+   value and dropping the retracted one is `preserved`; keeping the retracted
+   value instead is `changed`.
+10. **A change of who must act is `changed`**, and so is a change to the order
+    in which things must happen.
+
 ## Output
 
-Reply with one JSON object and nothing else. No prose before or after, no code
-fence.
+Reply with one JSON object and nothing else. No prose before it, no prose after
+it, no code fence.
 
 ```
 {
@@ -54,7 +77,7 @@ Field meanings:
 - `critical_fact` — true when a number, unit or clock time differs in value, or
   a required fact is missing or invented.
 - `domain_term` — true when a domain term differs in a way that changes what is
-  meant. A transliteration of the same term is **not** a domain term change.
+  meant.
 - `reason_codes` — zero or more of: `SURFACE_ONLY`, `NUMERAL_OR_UNIT_FORM`,
   `DOMAIN_TERM_FORM`, `PARAPHRASE`, `SELF_CORRECTION`, `VALUE`, `UNIT`,
   `DIRECTION_LOCATION`, `NEGATION`, `INSTRUCTION_ACTION`, `OMISSION`,
@@ -63,7 +86,7 @@ Field meanings:
   difference or stating that there is none.
 
 When the two texts differ only in how they are written, answer `preserved` with
-`severity: "none"` and an empty or `SURFACE_ONLY` reason code list.
+`severity: "none"`.
 
 When you are unsure, answer `changed`. A missed change costs more than a false
 alarm.

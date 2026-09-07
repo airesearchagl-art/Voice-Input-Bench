@@ -1,4 +1,4 @@
-# Evaluation Envelope Architecture — P3-D-A
+# Evaluation Envelope Architecture — P3-D-A (R1)
 
 **Design study. No schema v4 is implemented here, and nothing in `src/` changes.**
 
@@ -63,7 +63,13 @@ created_at     : ISO-8601
 evaluator      : { id, ...versioned sub-contracts }     ← evaluator-defined, sealed
 subject        : { result_schema_version, tool, capture, result_semantic_sha256 }
 evidence       : { reference, hypothesis, derived[] }   ← hashes and lengths only
-execution      : { runtime, model, prompt_sha256, params, repeats, latency_ms }
+execution      : { provider_protocol, endpoint_class,
+                     runtime { name, version, version_status },
+                     model { id, digest, digest_status, quantization, revision },
+                     prompt_sha256, params, repeats,
+                     runs[ { request_sha256, response_sha256,
+                             parseable_schema_valid,
+                             exact_output_contract_valid, latency_ms } ] }
 output         : { verdict, metrics, working }          ← evaluator-defined, sealed
 integrity      : { algorithm, semantic_sha256 }
 ```
@@ -76,6 +82,13 @@ integrity      : { algorithm, semantic_sha256 }
   which runtime, which model digest, which prompt digest, which temperature, how
   many repeats. A semantic verdict without that is not reproducible, and bolting
   it onto a per-evaluator schema means inventing it per evaluator.
+- R1 showed what such a block has to tolerate: **some of its fields will be
+  `null`**. Ollama reports a version and a manifest digest; LM Studio reports
+  neither. An envelope that *requires* a digest would either lock out a runtime
+  that cannot supply one or invite a placeholder — and a placeholder digest is
+  worse than an absent one, because it looks checked. Every such field needs a
+  companion status string saying why it is missing. That is a shape decision an
+  envelope is better placed to make once than four schemas are to make four times.
 - `evidence.derived[]` generalises what v3 does with `normalized`: any evaluator
   that transforms its input before comparing records what it produced, by hash.
 - Adding an evaluator becomes registering one, rather than editing a union and a
@@ -97,7 +110,7 @@ integrity      : { algorithm, semantic_sha256 }
 
 ## What this spike learned that bears on the choice
 
-Two findings from the method comparison change the shape of the problem:
+R1 sharpened the problem rather than changing its shape. Four findings bear on it:
 
 1. **A semantic evaluator's output is not one label.** The hybrid needs
    `preserved | changed | review`, and `review` is not a metric — it is a state
@@ -110,8 +123,17 @@ Two findings from the method comparison change the shape of the problem:
    The strongest guarantee available is *"this verdict was produced by this model
    with this prompt, and here is the vote record"* — which is an `execution`
    block plus a stored `working`, not a recomputation.
+3. **The input variant is part of the measurement.** The same model, the same
+   prompt and the same parameters produced one false preserved on raw input and
+   none on surface-normalized input. An artifact that does not record which text
+   the model was shown records a number nobody can interpret —
+   `evidence.derived[]` is exactly where that belongs.
+4. **Two compliance levels, not one.** R1 separated `parseable_schema_valid`
+   (96.4–100%) from `exact_output_contract_valid` (86.9–92.9%). A single "valid"
+   flag hid the fact that roughly one reply in eight did not follow the format it
+   was asked for. Whatever schema arrives needs both, recorded per run.
 
-That second point is the real architectural break. Every schema so far has been
+The second point is the real architectural break. Every schema so far has been
 verifiable by re-deriving it. A semantic schema cannot be, and pretending
 otherwise by giving it the same shape as v1–v3 would misrepresent what it
 guarantees.
@@ -136,3 +158,22 @@ guarantees.
 The one thing this spike would change today if it changed anything: the next
 schema needs a field for *"this verdict is not automatic"*. Every method measured
 here needs somewhere to say that, and none of v1–v3 has one.
+
+## R1 re-evaluation of the earlier recommendation
+
+Both standing recommendations survive the new evidence, and one of them is now
+better supported than it was.
+
+- **v1/v2/v3 stay unmigrated and read-only.** Unchanged. R1 strengthens the
+  reason: a semantic artifact needs an `execution` block whose fields are
+  sometimes `null` with a status string, and two separate validity flags per
+  run. None of that has any meaning for a character distance, and housing them
+  together would put unfillable fields on three schemas that are currently
+  complete.
+- **Freezing the envelope stays deferred.** Also unchanged, and now for a
+  measured reason rather than a suspected one. R1 showed the method is still
+  moving in ways that change the artifact: the input variant turned out to
+  decide whether the rubric produces a false preserved at all, and the choice
+  between H1 and H3 changes whether `preserved` is a value the schema can even
+  carry automatically. An envelope designed before that choice would be
+  designed for the wrong output.

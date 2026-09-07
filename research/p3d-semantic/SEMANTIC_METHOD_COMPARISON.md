@@ -1,47 +1,77 @@
-# Semantic Method Comparison — P3-D-A
+# Semantic Method Comparison — P3-D-A (R1)
 
 **This is a research spike. Nothing here is production code, and nothing here
 picks a production threshold.**
 
-Three candidate methods were run against one frozen 28-pair probe corpus on this
-machine. Every number below comes from a file in `evidence/`, and every result
-file records the corpus digest, the endpoint, the model and — for the rubric —
-the prompt digest.
+> **Every accuracy figure below is provisional accuracy against proposed labels.**
+> The labels in `probes-v1.json` were proposed by the research agent that built
+> this spike; no person has confirmed them. See
+> [`HUMAN_GOLD_REVIEW.md`](./HUMAN_GOLD_REVIEW.md), where all 28 rows are
+> `pending`. Read every number as "against these proposals", not "against ground
+> truth".
 
 | | |
 | --- | --- |
-| Corpus | `probes-v1.json`, digest `9e76b35a10c399161f07ad3602842a376d056292cc8c36624a6ad4bc6ea025de` |
-| Probes | 28 (13 `preserved`, 15 `changed`, 13 hard negatives) |
-| Embedding | `text-embedding-nomic-embed-text-v1.5` via LM Studio, `http://127.0.0.1:1234` |
-| LLM | `llama3.1:8b` (Q4_K_M, digest `46e0c10c039e…`) via Ollama, `http://127.0.0.1:11434` |
-| Rubric | `prompts/semantic-rubric-v1.md`, digest `ede8c57b4c05c6f17a25473f959d3e305109b8feecb901323059121ccab70d18`, temperature 0, 3 runs per pair |
-| Downloads performed | **0** — both models were already installed |
+| Corpus | `probes-v1.json`, digest `5a14302d80732959b5ae249de1daaf731f8e9596fd86042d526b7fafc4475b0a` |
+| Probes | 28 (13 proposed `preserved`, 15 proposed `changed`, 13 hard negatives) |
+| Embedding | `text-embedding-nomic-embed-text-v1.5`, LM Studio, `http://127.0.0.1:1234` |
+| LLM | `llama3.1:8b` Q4_K_M, digest `46e0c10c039e…`, Ollama 0.33.3, `http://127.0.0.1:11434` |
+| Rubric | `semantic-rubric-v1.md`, digest `9677764f367cfbf44048ec60ac76f111e0c2487356598405cca91b27790f3558` |
+| Parameters | temperature 0, `num_predict` 600, top_p unset, **seed uncontrolled**, 3 runs per pair |
+| Input variants | raw and surface-normalized, measured separately |
+| Downloads performed | **0** |
 
 ## The metric that ranks these methods
 
 **False preserved**, not accuracy.
 
 A *false preserved* is a transcript that changed the meaning and was reported as
-fine. Someone reads 「梁貫通で逃がす」 believing it says 「逃がさない」 and builds
-it. A *false changed* costs a person a minute of checking. Averaging the two into
-an accuracy figure hides the only failure that can reach a building, so accuracy
-is reported below and is never the basis of a recommendation.
+fine — someone reads 「梁貫通で逃がす」 believing it says 「逃がさない」 and builds
+it. A *false changed* costs a person a minute of checking. Averaging them into an
+accuracy figure hides the only failure that can reach a building.
+
+Two further measures are kept apart throughout, because collapsing them flatters
+every tri-state:
+
+- **auto-changed recall** — the method decided by itself that a hard negative had
+  changed.
+- **non-preserved routing** — the method did not tell anyone it was fine.
+  `review` counts here and only here. **Sending something to a human is not
+  detection.**
+
+## What changed since the first round, and what it cost
+
+The first round's rubric spelled out two corpus pairs as worked examples —
+`2700mm` ↔ `二千七百ミリ` and `water closet` ↔ `ウォータークローゼット`. Those are
+holdout pairs, and the rubric was answering them before the model was asked.
+
+They are gone, a test now asserts the static template contains no probe text, and
+the effect is measurable:
+
+| pair | R0 (leaked prompt) | R1 raw | R1 surface |
+| --- | --- | --- | --- |
+| p04 `2700mm` ↔ `二千七百ミリ` | preserved ✓ | **changed ✗** | **changed ✗** |
+| p05 `water closet` ↔ transliteration | preserved ✓ | preserved ✓ | preserved ✓ |
+
+p04 flipped. The first round's 75.0% included one pair the prompt had answered in
+advance, and the honest raw figure is **71.4%**. This is the clearest single
+result of R1: a few-shot example drawn from the evaluation set does not measure a
+method, it measures the example.
 
 ## A. Local embedding — cosine similarity
 
 `evidence/embedding-results.json`
 
-The corpus is **not separable by any threshold**, in either input variant.
+Unchanged from the first round, and still decisive: **the corpus is not separable
+by any threshold**, in either input variant.
 
 | variant | lowest `preserved` | highest `changed` | separable |
 | --- | --- | --- | --- |
-| raw | **0.7356** (p05 `water closet` ↔ `ウォータークローゼット`) | **0.9867** (p21 instruction → report) | **no** |
-| surface-normalized | 0.7262 (p05) | 0.9866 (p21) | **no** |
+| raw | **0.7356** (p05, transliterated fixture name) | **0.9867** (p21, instruction → report) | **no** |
+| surface | 0.7262 (p05) | 0.9866 (p21) | **no** |
 
-The two distributions are not merely overlapping, they are *inverted*: the pairs
-that mean the same thing score lower than the pairs that mean the opposite.
-
-Hard negatives, raw cosine, highest first:
+The distributions are not merely overlapping, they are *inverted*. Hard negatives,
+raw cosine, highest first:
 
 | probe | difference | cosine |
 | --- | --- | --- |
@@ -50,152 +80,186 @@ Hard negatives, raw cosine, highest first:
 | p14 | 逃がさない → 逃がす | **0.9749** |
 | p16 | 午前10時 → 午後10時 | **0.9723** |
 | p22 | 三百ミリ → 三千ミリ | **0.9683** |
-| p19 | west side → east side | 0.9481 |
-| p20 | 屋上 → 地下機械室 | 0.9477 |
-| p15 | 2700mm → 2600mm | 0.9409 |
 
-Every one of those is a sentence that would change what gets built, and every one
-of them is scored as *more* similar than 「water closet」 and its transliteration.
+The lowest threshold with zero false preserved is **0.99**, where the method flags
+**12 of 13** correct transcripts as changed. That is not a strict setting; it is a
+method that has stopped discriminating. This embedding measures topical
+similarity, and negation, direction and quantity are one or two tokens in a long
+sentence about the same subject.
 
-The threshold sweep confirms there is nothing to tune. The lowest threshold with
-zero false preserved is **0.99**, and at 0.99 the method flags **12 of 13**
-correct transcripts as changed. That is not a strict setting; it is a method that
-has stopped discriminating.
+## B. Local LLM rubric — raw vs surface
 
-The reason is visible in the data: this embedding measures *topical* similarity.
-Two sentences about ceiling heights in the same building are near-identical
-vectors whether the height is 2700 or 2600. Negation, direction and quantity are
-one or two tokens in a long sentence, and they move the vector less than a change
-of vocabulary does.
+`evidence/llm-rubric-results.raw.json`, `evidence/llm-rubric-results.surface.json`
 
-## B. Local LLM rubric — semantic-rubric-v1
+Same model, same prompt, same parameters, 3 runs per pair, 84 runs each.
 
-`evidence/llm-rubric-results.json`
+| measure | **raw** | **surface** |
+| --- | --- | --- |
+| provisional accuracy | 71.4% (20/28) | **75.0%** (21/28) |
+| **false preserved** | **1** (p21) | **0** |
+| false changed | 7 | 7 |
+| hard-negative auto-changed recall | 92.3% (12/13) | **100.0%** (13/13) |
+| unanimous pairs | 100.0% | 100.0% |
+| disagreement pairs | 0 | 0 |
+| byte-identical replies across runs | 82.1% | 64.3% |
+| `parseable_schema_valid` | 96.4% | **100.0%** |
+| `exact_output_contract_valid` | **92.9%** | 86.9% |
+| latency per request (median) | 587 ms | 602 ms |
 
-| measure | value |
-| --- | --- |
-| accuracy | 75.0% (21/28) |
-| **false preserved** | **1** — p21 |
-| false changed | 6 — p06, p08, p09, p10, p12, p28 |
-| hard-negative recall | **92.3%** (12/13; missed p21) |
-| invalid JSON | **0.0%** (0 of 84 runs) |
-| unanimous pairs | **100.0%** (28/28) |
-| disagreement pairs | 0 |
-| latency | 589 ms mean per request, 571 ms median (≈1.8 s per pair at 3 runs) |
+### Surface input removes the only dangerous error
 
-The rubric caught every reversed direction, every reversed polarity, every
-changed value and unit, the dropped fact, the added fact and the self-correction
-that kept the retracted number. It did so unanimously across three runs at
-temperature 0, and never once produced a reply the parser had to reject.
+p21 — 「整理しておいてください」 → 「整理しておきました」 — is the one pair the raw
+run called `preserved` three times out of three. On surface-normalized input the
+same model, same prompt and same parameters calls it `changed` three times out of
+three.
 
-### The one that got through
+This is a real result and it is a fragile one. Nothing in surface-normalize-v1
+touches Japanese verb morphology; the profile folds width, case, two punctuation
+marks and runs of ASCII spaces. What actually changed for p21 is the surrounding
+punctuation and spacing, and that was enough to move an 8B model across a decision
+boundary it was already sitting on. **Treat this as evidence that the raw/surface
+choice matters, not as evidence that surface normalization solves instruction
+detection.**
 
-p21 is 「電気室の位置も…一度整理しておいてください」 against 「…整理しておきました」
-— an instruction turned into a report of completed work. The model answered
-`preserved` three times out of three, with `instruction_action: false`, and
-rationalised it as:
+### The two compliance rates are not the same number
 
-> "Only surface-level differences in verb tense."
+The first round reported "0.0% invalid JSON". That figure conflated two things,
+and they are now separated:
 
-It saw the tense change and classified it as typography. On the other two runs the
-rationale was *"Only a self-correction was added"*, which describes something that
-is not in either text. **The label was perfectly repeatable and the reasoning
-behind it was not** — a distinction that a `unanimous_rate` of 100% conceals, and
-a reason to treat rationale text as a debugging aid rather than as evidence.
+- **`parseable_schema_valid`** — a complete, correctly typed verdict could be
+  recovered from the reply: raw 96.4%, surface 100.0%.
+- **`exact_output_contract_valid`** — the reply was one JSON object and nothing
+  else, which is what the prompt asked for: raw 92.9%, surface **86.9%**.
+
+Roughly one reply in eight wraps the object in a code fence or a sentence. The
+parser tolerates that; a production evaluator would have to decide whether it
+should.
 
 ### Where it over-flags
 
-All six false changed are the same shape: the transcript said the same thing in
-different words or a different script, and the model treated the difference as
-meaning. p05 (`water closet` → transliteration) passed, but p08 (`Revit` →
-レビット), p09 (`north side` → ノースサイド) and p28 (打ち放し → 打ちっぱなし) did
-not. p12 — the self-correction whose final intent was correctly kept — was also
-called changed.
+Seven proposed-`preserved` pairs are called `changed` in both variants: p04, p06,
+p08, p09, p10, p12, p28. Six are the same shape — the transcript said the same
+thing in a different script or a different word — and p12 is the self-correction
+whose final intent was correctly kept. This is the safe direction to fail in, and
+it is expensive: over half the correct transcripts in the corpus would reach a
+human.
 
-This is the safe direction to fail in, and it is expensive: nearly half the
-correct transcripts in the corpus would arrive at a human for checking.
+Note that p04 is on that list, and p04 is also on the
+[list of labels most worth a second opinion](./HUMAN_GOLD_REVIEW.md). If the human
+review moves p04 to `changed`, both variants gain a point and the false-changed
+count drops to 6.
 
-## C. Hybrid tri-state — preserved / changed / review
+## C. Hybrid variants
 
 `evidence/analysis-summary.json`
 
-Rule under test:
+Four rules, each measured at three embedding thresholds, each measured raw/raw
+and surface/surface so a variant is compared against itself.
 
-1. A **critical-info-v1 mismatch vetoes** to `changed`.
-2. Otherwise embedding and rubric must **agree**.
-3. Otherwise **review**.
+| rule | |
+| --- | --- |
+| **H0** | critical veto; else embedding and rubric must agree; else review |
+| **H1** | critical veto; else rubric `changed` wins; else rubric uncertain → review; else embedding conflict → review; else `preserved` |
+| **H2** | as H1, but a critical mismatch **routes to review** instead of vetoing |
+| **H3** | critical veto or unanimous rubric `changed` → `changed`; **everything else → review** |
 
-| embedding threshold | false preserved | false changed | review rate | automatic coverage | hard-negative recall (review counts as caught) |
-| --- | --- | --- | --- | --- | --- |
-| 0.85 | **1** (p21) | 3 | 46.4% | 53.6% | 92.3% |
-| 0.90 | **1** (p21) | 5 | 32.1% | 67.9% | 92.3% |
-| 0.95 | **1** (p21) | 6 | 28.6% | 71.4% | 92.3% |
+### raw input
 
-**The hybrid does not reach zero false preserved.** p21 escapes every variant,
-and it escapes for a structural reason rather than a tuning one:
+| rule @ t | FP | FC | auto changed | auto preserved | review | coverage | hn auto-changed | hn non-preserved |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| H0 @ 0.90 | 1 | 6 | 16 | 4 | 28.6% | 71.4% | 88.9% | 92.3% |
+| H1 @ 0.90 | 1 | 7 | 21 | 4 | 10.7% | 89.3% | 92.3% | 92.3% |
+| H2 @ 0.90 | 1 | 6 | 13 | 4 | 39.3% | 60.7% | 85.7% | 92.3% |
+| **H3 @ any** | **0** | 7 | 21 | **0** | 25.0% | 75.0% | **100.0%** | **100.0%** |
 
-- critical-info-v1 **has no opinion** — the sentence contains no number, unit or
-  clock time, so the veto never fires;
-- the embedding scores it **0.9867**, the highest similarity in the corpus;
-- the rubric says `preserved` unanimously.
+### surface input
 
-All three signals agree, and all three are wrong. Adding a fourth model would not
-obviously help: the failure is that an instruction becoming a report is a small
-lexical change with a large consequence, which is precisely the shape every one
-of these methods is weakest against.
+| rule @ t | FP | FC | auto changed | auto preserved | review | coverage | hn auto-changed | hn non-preserved |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| H0 @ 0.90 | **0** | 6 | 16 | 4 | 28.6% | 71.4% | 100.0% | 100.0% |
+| **H1 @ 0.90** | **0** | 7 | 22 | 4 | **7.1%** | **92.9%** | 100.0% | 100.0% |
+| H2 @ 0.90 | **0** | 6 | 14 | 4 | 35.7% | 64.3% | 100.0% | 100.0% |
+| H3 @ any | **0** | 7 | 22 | **0** | 21.4% | 78.6% | 100.0% | 100.0% |
 
-### The veto is not free either
+Three things this table says that the first round could not:
 
-critical-info-v1 applies to 12 of 28 pairs and reports a mismatch on 8. Seven of
-those are correct. The eighth is **p12** — the self-correction 「二千六百ミリで、
-あ、すみません、二千七百ミリでした」 → 「二千七百ミリです」. The reference contains
-both numbers and the hypothesis contains one, so the entity multiset does not
-match and the veto fires on a transcript that preserved the meaning perfectly.
+1. **On surface input every rule reaches zero false preserved.** The first round
+   reported one that no variant could remove; the input variant was the missing
+   lever, not the rule.
+2. **H1 is the best-covered zero-FP rule** — 92.9% automatic, 7.1% review. It gets
+   there by letting the rubric's `changed` decide alone and using the embedding
+   only to send disagreements to review, which is the opposite of the
+   agreement-gated H0 and is why it covers more.
+3. **H3 buys its guarantee structurally, not statistically.** Its zero is true on
+   raw input too, because it never says `preserved` at all. It is the only rule
+   whose false-preserved count does not depend on the model being right.
 
-Used as a hard veto, critical-info-v1 turns every correctly-handled self-correction
-into a `changed`. Used as a *review trigger* it costs a person a look. That
-distinction matters more than the accuracy difference between the two.
+### The critical guard: veto or review trigger?
+
+critical-info-v1 applies to 12 of 28 pairs and reports a mismatch on 8. Seven are
+correct. The eighth is **p12** — the self-correction 「二千六百ミリで、あ、すみません、
+二千七百ミリでした」 → 「二千七百ミリです」. The reference names both the retracted
+and the corrected value, the hypothesis names one, and the entity multiset does not
+match.
+
+Measured, on surface input at t=0.90:
+
+| | H1 (veto) | H2 (review trigger) |
+| --- | --- | --- |
+| false preserved | 0 | 0 |
+| false changed | **7** | **6** |
+| auto changed | 22 | 14 |
+| review rate | **7.1%** | 35.7% |
+| automatic coverage | **92.9%** | 64.3% |
+
+Demoting the veto buys back exactly one false changed — p12 — and costs 28.6
+points of automatic coverage. **On this evidence the review-trigger recommendation
+from the first round does not hold up.** Keep the veto, and record p12's shape as
+a known limitation: a correctly handled self-correction will be auto-flagged
+`changed` because the retracted value is a real entity in the reference.
 
 ## Side by side
 
-| | Embedding | LLM rubric | Hybrid (0.90) |
+| | Embedding | LLM rubric (surface) | Hybrid H1 (surface, 0.90) |
 | --- | --- | --- | --- |
-| false preserved | **not controllable** — 0 only at a threshold that rejects 12/13 correct transcripts | 1 | 1 |
-| false changed | 12 at that threshold | 6 | 5 |
-| hard-negative recall | 0% at any usable threshold | 92.3% | 92.3% |
-| repeatability | deterministic | 100% unanimous (labels), rationale not stable | inherits |
-| invalid output | n/a | 0.0% | 0.0% |
-| latency per pair | ≈87 ms | ≈1.8 s | ≈1.9 s |
-| review load | n/a | n/a | 28.6–46.4% |
-
-## What this says about raw vs surface input
-
-Feeding surface-normalized text to the embedding changed nothing that matters:
-`separable` is false either way, the ordering of the hard negatives is unchanged,
-and the best accuracy moves by one pair. The formatting-only probes (p01–p03)
-were already near 1.0 in raw form.
-
-The one asymmetry worth recording is that **surface normalization is free and
-occasionally clarifying** — p02 goes from 0.8037 raw to 1.0000 normalized — while
-raw input keeps information the semantic layer never uses. Nothing in this corpus
-argues for raw.
+| false preserved | **not controllable** — 0 only at a threshold rejecting 12/13 correct | **0** | **0** |
+| false changed | 12 at that threshold | 7 | 7 |
+| hard-negative auto-changed | 0% at any usable threshold | 100.0% | 100.0% |
+| repeatability | deterministic | 100% unanimous labels | inherits |
+| exact output contract | n/a | 86.9% | 86.9% |
+| latency per pair (median, 3 runs) | ≈23 ms | ≈1.8 s | ≈1.8 s |
+| review load | n/a | n/a | 7.1% |
 
 ## Recommendation
 
-Not "which method is best" — none of the three is deployable as an automatic
-`preserved` verdict on this evidence.
+- **Embedding-only: no.** Inverted on this corpus; the failure is structural, not
+  an unfound threshold. Useful only as a second opinion that can send a
+  disagreement to review.
+- **Input variant: surface.** Measured, not assumed — it is the difference between
+  one false preserved and none, in both the rubric alone and every hybrid rule.
+  The mechanism is not understood and should not be relied on beyond this corpus.
+- **Critical guard: keep it as a veto.** The review-trigger alternative buys one
+  false changed for 28.6 points of coverage. Record the self-correction limitation.
+- **Rule: H1 for coverage, H3 if `preserved` must never be automatic.** H1 reaches
+  zero false preserved with 92.9% coverage *on this corpus and this proposal set*.
+  H3 reaches zero by construction and costs 21.4% review.
 
-- **Embedding-only: no.** It is inverted on this corpus and the failure is
-  structural, not a threshold that has not been found yet.
-- **LLM rubric: usable as a detector, not as a clearance.** 92.3% hard-negative
-  recall with zero malformed output and perfect label repeatability is a genuinely
-  useful signal. One false preserved in 15 changed pairs is not a rate that
-  should be allowed to close a case unattended.
-- **Hybrid: the right shape, insufficient as specified.** The tri-state is the
-  only one of the three that has anywhere to put "I do not know", and it still
-  lets p21 through. Before P3-D-B, the rule needs either a fourth signal aimed at
-  instruction/action changes, or an explicit decision that `preserved` is never
-  automatic — only `changed` and `review` are.
+**The choice between H1 and H3 is not a research question.** H1's zero depends on
+an 8B model being right about 15 changed pairs; H3's does not depend on the model
+at all. That is a decision about how much model behaviour a bench is willing to
+put behind the word "preserved", and it belongs to a person.
 
-The corpus is 28 pairs on one machine with one 8B model. Every number here is an
-indication, not a measurement of production behaviour.
+## Evidence limitations
+
+- **The labels are unconfirmed.** 28 proposals, zero human approvals.
+- **28 pairs, one machine, one 8B model, one quantization.** No claim about
+  another model, another quantization, or another Ollama build.
+- **The seed is uncontrolled.** Repeatability was measured at temperature 0 across
+  three runs and was total for labels; it is not a guarantee that a fourth run
+  agrees.
+- **Rationale text is not stable even when labels are.** Two of p21's three raw
+  rationales described a self-correction that appears in neither text. Rationales
+  are a debugging aid, not evidence.
+- **No embedding-model digest exists.** LM Studio reports quantization and
+  architecture but no artifact checksum, so the embedding numbers cannot be pinned
+  to a specific file.

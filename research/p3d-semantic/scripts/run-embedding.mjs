@@ -24,6 +24,7 @@ import { NotLoopbackError, assertLoopbackEndpoint, loopbackFetch } from './lib/l
 import { loadProbes, modelInputFor } from './lib/probes.mjs';
 import { environmentSnapshot, mean, median, writeEvidence } from './lib/evidence.mjs';
 import { surfaceNormalizeMirror } from './lib/surfaceNormalizeMirror.mjs';
+import { lmStudioRuntimeInfo } from './lib/runtimeInfo.mjs';
 
 const DEFAULT_ENDPOINT = 'http://127.0.0.1:1234';
 const DEFAULT_MODEL = 'text-embedding-nomic-embed-text-v1.5';
@@ -96,7 +97,7 @@ async function main() {
     throw error;
   }
 
-  const { probes, sha256 } = loadProbes();
+  const { probes, sha256, corpus } = loadProbes();
 
   let available;
   try {
@@ -158,13 +159,13 @@ async function main() {
       similarity[variant] = cosine(a, b);
     }
 
-    // The gold label is attached only now, after every request has been made.
+    // The proposed label is attached only now, after every request has been made.
     results.push({
       id: probe.id,
       category: probe.category,
       hard_negative: probe.hard_negative,
-      gold_label: probe.gold.label,
-      gold_reason_code: probe.gold.reason_code,
+      proposed_label: probe.gold.label,
+      proposed_reason_code: probe.gold.reason_code,
       cosine_raw: similarity.raw,
       cosine_surface: similarity.surface,
       dimensions,
@@ -175,11 +176,15 @@ async function main() {
     );
   }
 
+  const runtime = await lmStudioRuntimeInfo(base, model);
+
   const evidence = {
     method: 'embedding',
     status: 'OK',
-    endpoint: base,
-    model,
+    gold_provenance: corpus.gold_provenance,
+    scoring_caveat:
+      'Any accuracy computed from this file is provisional accuracy against proposed labels. The labels have not been confirmed by a human.',
+    ...runtime,
     // The vectors themselves are not written anywhere. They are large, they are
     // derived from customer text, and nothing downstream needs them: the
     // similarity is the measurement.

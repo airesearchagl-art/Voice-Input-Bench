@@ -1,6 +1,7 @@
 {
-  "captured_at": "2026-09-07T17:01:23.465Z",
-  "note": "Recorded so a rerun can be compared to this one. Nothing here was downloaded by the spike: both runtimes and both models were already installed on this machine.",
+  "captured_at": "2026-09-07T18:15:57.315Z",
+  "captured_by": "scripts/capture-environment.mjs",
+  "note": "Recorded so a rerun can be compared to this one. Nothing here was downloaded by the spike: both runtimes and every model listed were already installed on this machine. Fields the runtime does not expose are null next to the reason, never omitted and never filled with a placeholder.",
   "machine": {
     "node": "v24.15.0",
     "platform": "win32 10.0.26200",
@@ -12,55 +13,163 @@
     "llm": {
       "name": "Ollama",
       "endpoint": "http://127.0.0.1:11434",
-      "api": "ollama (/api/chat)",
+      "provider_protocol": "ollama-native (/api/chat)",
+      "endpoint_class": "loopback",
+      "version": "0.33.3",
+      "version_status": "reported",
       "models_present": [
         {
-          "name": "Gemma4:latest",
-          "family": "gemma4",
-          "parameter_size": "8.0B",
-          "quantization": "Q4_K_M",
+          "id": "Gemma4:latest",
           "digest": "c6eb396dbd5992bbe3f5cdb947e8bbc0ee413d7c17e2beaae69f5d569cf982eb",
-          "size_bytes": 9608350718,
-          "modified_at": "2026-04-26T21:05:59.4896774+09:00"
-        },
-        {
-          "name": "deepseek-coder-v2:16b",
-          "family": "deepseek2",
-          "parameter_size": "15.7B",
-          "quantization": "Q4_0",
-          "digest": "63fb193b3a9b4322a18e8c6b250ca2e70a5ff531e962dbf95ba089b2566f2fa5",
-          "size_bytes": 8905126121,
-          "modified_at": "2026-04-26T20:32:57.4114213+09:00"
-        },
-        {
-          "name": "llama3.1:8b",
-          "family": "llama",
-          "parameter_size": "8.0B",
+          "digest_status": "reported",
           "quantization": "Q4_K_M",
+          "parameter_size": "8.0B",
+          "family": "gemma4",
+          "size_bytes": 9608350718,
+          "modified_at": "2026-04-26T21:05:59.4896774+09:00",
+          "revision": null,
+          "revision_status": "unavailable_from_runtime: Ollama exposes no upstream model revision, only the local manifest digest"
+        },
+        {
+          "id": "deepseek-coder-v2:16b",
+          "digest": "63fb193b3a9b4322a18e8c6b250ca2e70a5ff531e962dbf95ba089b2566f2fa5",
+          "digest_status": "reported",
+          "quantization": "Q4_0",
+          "parameter_size": "15.7B",
+          "family": "deepseek2",
+          "size_bytes": 8905126121,
+          "modified_at": "2026-04-26T20:32:57.4114213+09:00",
+          "revision": null,
+          "revision_status": "unavailable_from_runtime: Ollama exposes no upstream model revision, only the local manifest digest"
+        },
+        {
+          "id": "llama3.1:8b",
           "digest": "46e0c10c039e019119339687c3c1757cc81b9da49709a3b3924863ba87ca666e",
+          "digest_status": "reported",
+          "quantization": "Q4_K_M",
+          "parameter_size": "8.0B",
+          "family": "llama",
           "size_bytes": 4920753328,
-          "modified_at": "2026-04-26T20:28:51.0975898+09:00"
+          "modified_at": "2026-04-26T20:28:51.0975898+09:00",
+          "revision": null,
+          "revision_status": "unavailable_from_runtime: Ollama exposes no upstream model revision, only the local manifest digest"
         }
-      ]
+      ],
+      "models_status": "reported",
+      "digest_availability": "reported: /api/tags returns a manifest digest per model"
     },
     "embedding": {
       "name": "LM Studio",
       "endpoint": "http://127.0.0.1:1234",
-      "api": "openai-compatible (/v1/embeddings)",
+      "provider_protocol": "openai-compatible (/v1/embeddings)",
+      "endpoint_class": "loopback",
+      "version": null,
+      "version_status": "unavailable_from_runtime: the local HTTP API exposes no version endpoint (/v1 and /api/v0 have no version route)",
       "models_present": [
-        "qwen/qwen3.5-9b",
-        "ministral-3-14b-instruct-2512",
-        "google/gemma-4-12b-qat",
-        "gemma-4-12b-coder-fable5-composer2.5-v1",
-        "qwen3-coder-30b-a3b-instruct",
-        "qwen/qwen3.6-27b",
-        "text-embedding-nomic-embed-text-v1.5"
-      ]
+        {
+          "id": "text-embedding-nomic-embed-text-v1.5",
+          "digest": null,
+          "digest_status": "unavailable_from_runtime: LM Studio reports no artifact digest or checksum for a model",
+          "quantization": "Q4_K_M",
+          "arch": "nomic-bert",
+          "publisher": "nomic-ai",
+          "compatibility_type": "gguf",
+          "max_context_length": 2048,
+          "state": "loaded",
+          "revision": null,
+          "revision_status": "unavailable_from_runtime: LM Studio reports no upstream model revision"
+        },
+        {
+          "id": "qwen/qwen3.5-9b",
+          "digest": null,
+          "digest_status": "unavailable_from_runtime: LM Studio reports no artifact digest or checksum for a model",
+          "quantization": "Q4_K_M",
+          "arch": "qwen35",
+          "publisher": "qwen",
+          "compatibility_type": "gguf",
+          "max_context_length": 262144,
+          "state": "not-loaded",
+          "revision": null,
+          "revision_status": "unavailable_from_runtime: LM Studio reports no upstream model revision"
+        },
+        {
+          "id": "ministral-3-14b-instruct-2512",
+          "digest": null,
+          "digest_status": "unavailable_from_runtime: LM Studio reports no artifact digest or checksum for a model",
+          "quantization": "Q4_K_M",
+          "arch": "mistral3",
+          "publisher": "mistralai",
+          "compatibility_type": "gguf",
+          "max_context_length": 262144,
+          "state": "not-loaded",
+          "revision": null,
+          "revision_status": "unavailable_from_runtime: LM Studio reports no upstream model revision"
+        },
+        {
+          "id": "google/gemma-4-12b-qat",
+          "digest": null,
+          "digest_status": "unavailable_from_runtime: LM Studio reports no artifact digest or checksum for a model",
+          "quantization": "Q4_0",
+          "arch": "gemma4",
+          "publisher": "google",
+          "compatibility_type": "gguf",
+          "max_context_length": 262144,
+          "state": "not-loaded",
+          "revision": null,
+          "revision_status": "unavailable_from_runtime: LM Studio reports no upstream model revision"
+        },
+        {
+          "id": "gemma-4-12b-coder-fable5-composer2.5-v1",
+          "digest": null,
+          "digest_status": "unavailable_from_runtime: LM Studio reports no artifact digest or checksum for a model",
+          "quantization": "Q8_0",
+          "arch": "gemma4",
+          "publisher": "yuxinlu1",
+          "compatibility_type": "gguf",
+          "max_context_length": 262144,
+          "state": "not-loaded",
+          "revision": null,
+          "revision_status": "unavailable_from_runtime: LM Studio reports no upstream model revision"
+        },
+        {
+          "id": "qwen3-coder-30b-a3b-instruct",
+          "digest": null,
+          "digest_status": "unavailable_from_runtime: LM Studio reports no artifact digest or checksum for a model",
+          "quantization": "Q4_K_M",
+          "arch": "qwen3moe",
+          "publisher": "unsloth",
+          "compatibility_type": "gguf",
+          "max_context_length": 262144,
+          "state": "not-loaded",
+          "revision": null,
+          "revision_status": "unavailable_from_runtime: LM Studio reports no upstream model revision"
+        },
+        {
+          "id": "qwen/qwen3.6-27b",
+          "digest": null,
+          "digest_status": "unavailable_from_runtime: LM Studio reports no artifact digest or checksum for a model",
+          "quantization": "Q4_K_M",
+          "arch": "qwen35",
+          "publisher": "qwen",
+          "compatibility_type": "gguf",
+          "max_context_length": 262144,
+          "state": "not-loaded",
+          "revision": null,
+          "revision_status": "unavailable_from_runtime: LM Studio reports no upstream model revision"
+        }
+      ],
+      "models_status": "reported",
+      "digest_availability": "unavailable_from_runtime: LM Studio reports no artifact digest or checksum for any model, loaded or listed"
     }
   },
   "models_used": {
     "llm": "llama3.1:8b",
     "embedding": "text-embedding-nomic-embed-text-v1.5"
+  },
+  "digest_coverage": {
+    "llm": "complete",
+    "embedding": "absent",
+    "caveat": "Only the Ollama side has a digest. A rerun can prove it used the same rubric model artifact; it cannot prove the same embedding artifact, because LM Studio offers nothing to compare."
   },
   "downloads_performed": 0
 }

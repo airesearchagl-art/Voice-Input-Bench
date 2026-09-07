@@ -124,10 +124,45 @@ describe('loopback-only guard', () => {
   });
 });
 
+describe('gold provenance is stated honestly', () => {
+  const { corpus } = loadProbes();
+
+  it('does not claim a human wrote or reviewed the labels', () => {
+    // The spike proposed these labels. Calling them human-authored before a
+    // person has confirmed them would make every accuracy figure look like a
+    // measurement against ground truth.
+    expect(corpus.gold_provenance.authoring).toBe('research-agent');
+    expect(corpus.gold_provenance.authoring).not.toMatch(/human/);
+    // The field that used to make the claim is gone, not merely contradicted.
+    expect(corpus.authored_by).toBeUndefined();
+  });
+
+  it('records the review as pending until a human says otherwise', () => {
+    expect(corpus.gold_provenance.human_review_status).toBe('pending');
+    expect(corpus.gold_provenance.human_review_artifact).toBe('HUMAN_GOLD_REVIEW.md');
+  });
+
+  it('the review artifact has a row per probe and no approvals', () => {
+    const review = readFileSync(path.join(RESEARCH_ROOT, 'HUMAN_GOLD_REVIEW.md'), 'utf8');
+    for (const probe of corpus.probes) {
+      expect(review).toContain(`| ${probe.id} |`);
+    }
+    // Count table rows only; the header sentence mentions the marker too.
+    const pendingRows = review.split('\n').filter((line) => /^\| p\d+ \|/.test(line));
+    expect(pendingRows).toHaveLength(corpus.probes.length);
+    expect(pendingRows.every((line) => line.includes('☐ pending'))).toBe(true);
+    // An agent must not approve its own labels, so no row may be ticked. The
+    // instructions above the table name the marker; a row using it is the thing
+    // being guarded against.
+    expect(pendingRows.some((line) => line.includes('☑'))).toBe(false);
+    expect(pendingRows.some((line) => /approved/i.test(line))).toBe(false);
+  });
+});
+
 describe('gold labels never reach a model', () => {
   const { probes } = loadProbes();
 
-  it('every probe carries a gold label to be withheld', () => {
+  it('every probe carries a proposed label to be withheld', () => {
     for (const probe of probes) {
       expect(probe.gold.label).toMatch(/^(preserved|changed)$/);
     }
@@ -170,6 +205,20 @@ describe('gold labels never reach a model', () => {
       expect(prompt).not.toContain(`"label": "${probe.gold.label}"`);
       expect(prompt).not.toContain(`gold`);
       expect(prompt).not.toContain(probe.id);
+    }
+  });
+
+  it('the static template contains no holdout probe text', () => {
+    // The first round's rubric spelled out two of the corpus pairs as worked
+    // examples. That is a few-shot answer to a question the model is about to be
+    // asked, and the measured effect of removing it was large.
+    const template = readFileSync(
+      path.join(RESEARCH_ROOT, 'prompts', 'semantic-rubric-v1.md'),
+      'utf8',
+    );
+    for (const probe of probes) {
+      expect(template).not.toContain(probe.reference);
+      expect(template).not.toContain(probe.hypothesis);
     }
   });
 

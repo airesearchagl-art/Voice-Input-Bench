@@ -1,4 +1,4 @@
-# P3-D-A — Semantic Evaluation Architecture Spike
+# P3-D-A — Semantic Evaluation Architecture Spike (R1)
 
 **Research only.** Nothing in this directory is production code. No evaluator was
 added to `src/evaluation/`, no schema v4 was implemented, no existing artifact
@@ -13,21 +13,27 @@ Two questions:
 
 The answers are in [`SEMANTIC_METHOD_COMPARISON.md`](./SEMANTIC_METHOD_COMPARISON.md)
 and [`EVALUATION_ENVELOPE_ARCHITECTURE.md`](./EVALUATION_ENVELOPE_ARCHITECTURE.md).
-The short version: **no method measured here can be trusted to say "preserved"
-unattended**, and the schema question should not be settled until the method is.
+
+> **The labels these methods are scored against are proposals, not ground truth.**
+> They were written by the research agent that built this spike and no person has
+> confirmed them — see [`HUMAN_GOLD_REVIEW.md`](./HUMAN_GOLD_REVIEW.md), where all
+> 28 rows are `pending`. Every accuracy figure in this directory is *provisional
+> accuracy against proposed labels*.
 
 ## Layout
 
 ```
-probes-v1.json                    28 frozen probe pairs with human-authored gold labels
+probes-v1.json                    28 frozen probe pairs with proposed labels
 probes-v1.sha256                  the digest every run records
-prompts/semantic-rubric-v1.md     the frozen rubric prompt
+HUMAN_GOLD_REVIEW.md              the per-probe sheet a human fills in; all rows pending
+prompts/semantic-rubric-v1.md     the frozen rubric prompt (R1: no worked examples)
 prompts/semantic-rubric-v1.sha256 its digest
 scripts/verify-probes.mjs         check the corpus before trusting any result
+scripts/capture-environment.mjs   ask both runtimes what they are, nulls included
 scripts/run-embedding.mjs         method A — local embedding cosine
 scripts/run-llm-rubric.mjs        method B — local LLM rubric, 3 runs per pair
-scripts/analyze-results.mjs       score all three methods, including the hybrid
-scripts/lib/                      loopback guard, corpus loader, production mirrors
+scripts/analyze-results.mjs       score both methods and four hybrid rules
+scripts/lib/                      loopback guard, corpus loader, runtime probe, mirrors
 evidence/                         every result file, with the conditions that produced it
 ```
 
@@ -35,14 +41,23 @@ evidence/                         every result file, with the conditions that pr
 
 ```
 node research/p3d-semantic/scripts/verify-probes.mjs
+node research/p3d-semantic/scripts/capture-environment.mjs
 node research/p3d-semantic/scripts/run-embedding.mjs
-node research/p3d-semantic/scripts/run-llm-rubric.mjs
+node research/p3d-semantic/scripts/run-llm-rubric.mjs --input raw
+node research/p3d-semantic/scripts/run-llm-rubric.mjs --input surface
 node research/p3d-semantic/scripts/analyze-results.mjs
 ```
 
 Defaults are the two runtimes that were present on the machine this spike ran on:
 Ollama at `127.0.0.1:11434` for the rubric and LM Studio at `127.0.0.1:1234` for
 embeddings. Both are overridable with `--endpoint`, `--model` and `--api`.
+
+`--input` selects which text the model is shown: `raw` is the transcript as
+captured, `surface` is the same text after production `surface-normalize-v1`.
+The two runs write separate files (`evidence/llm-rubric-results.raw.json` and
+`…surface.json`) and `analyze-results.mjs` scores both, because R1 found the
+choice changes the result. Neither file overwrites the other, so a comparison
+is always between two runs that both still exist.
 
 **No model is downloaded.** If the named embedding model is not already installed,
 `run-embedding.mjs` writes `evidence/embedding-unavailable.json` with status
@@ -69,12 +84,18 @@ conversation; the whole reason this bench is local-first is that such text does
 not travel. The guard returns a URL only when it is allowed, so no caller can
 reach a remote host by forgetting a check.
 
-**3. No model sees the answer.** `probes-v1.json` carries a human-authored gold
-label for every pair, and those labels are what all three methods are being scored
-against. `modelInputFor()` builds a fresh object containing only the two texts and
-the id — by construction, not by deletion, so a field added to a probe later
-cannot leak by being forgotten. A test renders the actual rubric prompt for every
-probe and asserts it contains neither the gold label nor the authoring note.
+**3. No model sees the answer.** `probes-v1.json` carries a proposed label for
+every pair, and those labels are what both methods are scored against.
+`modelInputFor()` builds a fresh object containing only the two texts and the id
+— by construction, not by deletion, so a field added to a probe later cannot leak
+by being forgotten. A test renders the actual rubric prompt for every probe and
+asserts it contains neither the label nor the note.
+
+R1 found a second leak that the per-probe check could not see: the prompt itself
+spelled out two corpus pairs as worked examples, which is a few-shot answer to a
+question the model was about to be asked. The rubric now states general rules and
+no pairs, and a test asserts the static template contains no probe text at all.
+The effect was measurable — see `SEMANTIC_METHOD_COMPARISON.md`.
 
 **4. A malformed reply is not a data point.** `parseVerdict()` is tolerant about
 packaging — a code fence or a leading sentence is a formatting habit — and strict
@@ -83,14 +104,27 @@ response is recorded as `invalid` and counted. It is never coerced: `"true"` is
 not `true`, because coercing it would turn a model that could not follow the
 format into a model that said the transcript was fine.
 
+Those are two different questions and R1 records them separately per run:
+
+- `parseable_schema_valid` — a valid verdict object was recoverable from the
+  reply, whatever it was wrapped in. This is the one that decides whether the
+  run counts as data.
+- `exact_output_contract_valid` — the reply *was* the object: no fence, no
+  preamble, no trailing remark. This is the one that says whether the model
+  followed the format it was given.
+
+A single "valid" flag would have reported the first number and implied the
+second. They differ by about ten points.
+
 ## The corpus
 
 28 pairs: 13 `preserved`, 15 `changed`, 13 of them hard negatives — pairs that are
 nearly identical as text and opposite in meaning.
 
-All eight required hard cases are present and checked by `verify-probes.mjs`:
+All eight required hard cases are present and checked by `verify-probes.mjs`.
+The labels below are proposals awaiting review, not confirmed ground truth:
 
-| probe | pair | gold |
+| probe | pair | proposed label |
 | --- | --- | --- |
 | p13 | north side ↔ south side | changed |
 | p14 | 梁貫通で逃がさない ↔ 梁貫通で逃がす | changed |
@@ -104,6 +138,19 @@ All eight required hard cases are present and checked by `verify-probes.mjs`:
 `preserved` means a reader acting on the hypothesis would do the same thing.
 `changed` means they would do something different, or would be missing something
 they needed.
+
+### Who wrote these labels
+
+The research agent that built this spike did. `probes-v1.json` records that in
+`gold_provenance`: `authoring: "research-agent"`,
+`human_review_status: "pending"`. [`HUMAN_GOLD_REVIEW.md`](./HUMAN_GOLD_REVIEW.md)
+holds one row per probe for a person to confirm or overturn, and every row is
+currently `☐ pending`.
+
+Claude Code must not tick those boxes. An agent approving the labels it wrote
+would turn a proposal into ground truth by assertion, and every accuracy figure
+downstream would inherit that. A test asserts no row is ticked and that
+`gold_provenance.authoring` does not say `human`.
 
 ## The production mirrors
 
@@ -131,12 +178,34 @@ no dependency.
 
 ## Reproducibility, honestly
 
-`evidence/environment.json` records the machine, both runtimes and the digest of
-every model present. `evidence/llm-rubric-results.json` records the model, the
-prompt digest, the temperature, the repeat count and every individual run.
+`evidence/environment.json` is written by `capture-environment.mjs`, which asks
+both runtimes and records every model present — with its digest where one exists
+and `null` plus a reason where none does. Every result file additionally carries
+an `execution` block built by `scripts/lib/runtimeInfo.mjs`, which asks the
+runtime what it is rather than assuming. **What the two runtimes can actually tell us differs, and the evidence
+says so rather than smoothing it over:**
+
+| field | Ollama (rubric) | LM Studio (embeddings) |
+| --- | --- | --- |
+| `provider_protocol` | `ollama-native (/api/chat)` | `openai-compatible (/v1/embeddings)` |
+| `endpoint_class` | `loopback` | `loopback` |
+| `runtime.version` | reported by `/api/version` | `null`, `unavailable_from_runtime` |
+| `model.digest` | manifest digest from `/api/tags` | `null`, `unavailable_from_runtime` |
+| `model.quantization` | from `POST /api/show` | reported by `/api/v0/models` |
+| `model.revision` | `null`, `unavailable_from_runtime` | `null`, `unavailable_from_runtime` |
+
+So: **there is no digest for the embedding model.** LM Studio's API does not
+expose one, and no field in this repository invents a substitute — a placeholder
+digest would be worse than an absent one, because it looks checked. Every
+`null` sits next to a status string naming the reason.
+
+Per run, `evidence/llm-rubric-results.{raw,surface}.json` records the prompt
+digest, the temperature, the repeat count, the input variant, and for each
+individual call a `request_sha256`, a `raw_response_sha256`, a `latency_ms` and
+the two validity flags.
 
 That is enough to say *what produced these numbers*. It is not enough to say
-another machine would produce the same ones: a different quantization, a different
-Ollama build or a different model would all be reasons for the same prompt to
-answer differently, and none of them are pinned by anything in this repository.
-See question 8 in the final report.
+another machine would produce the same ones: a different quantization, a
+different Ollama build or a different model would all be reasons for the same
+prompt to answer differently, and on the embedding side there is not even a
+digest to compare. See question 8 in the final report.

@@ -1,0 +1,2440 @@
+{
+  "method": "llm-rubric",
+  "status": "OK",
+  "input_variant": "surface",
+  "gold_provenance": {
+    "authoring": "research-agent",
+    "human_review_status": "pending",
+    "human_review_artifact": "HUMAN_GOLD_REVIEW.md",
+    "note": "These labels were proposed by the research agent that built this spike. No human has independently confirmed them yet, so every number scored against them is provisional. Do not describe them as human-authored or human-reviewed until HUMAN_GOLD_REVIEW.md records an approval, and Claude Code must not record that approval itself."
+  },
+  "scoring_caveat": "Any accuracy computed from this file is provisional accuracy against proposed labels. The labels have not been confirmed by a human.",
+  "provider_protocol": "ollama-native (/api/chat)",
+  "endpoint_class": "loopback",
+  "endpoint": "http://127.0.0.1:11434",
+  "runtime": {
+    "name": "Ollama",
+    "version": "0.33.3",
+    "version_status": "reported"
+  },
+  "model": {
+    "id": "llama3.1:8b",
+    "digest": "46e0c10c039e019119339687c3c1757cc81b9da49709a3b3924863ba87ca666e",
+    "digest_status": "reported",
+    "quantization": "Q4_K_M",
+    "parameter_size": "8.0B",
+    "family": "llama",
+    "format": "gguf",
+    "revision": null,
+    "revision_status": "unavailable_from_runtime: Ollama exposes no upstream model revision, only the local manifest digest",
+    "size_bytes": 4920753328,
+    "modified_at": "2026-04-26T20:28:51.0975898+09:00"
+  },
+  "request_contract": {
+    "api": "ollama",
+    "temperature": 0,
+    "num_predict": 600,
+    "max_tokens": null,
+    "top_p": "unset (runtime default)",
+    "seed": "unset (uncontrolled)",
+    "response_format": "unconstrained text; the prompt asks for one JSON object",
+    "stream": false,
+    "repeats": 3,
+    "input_variant": "surface"
+  },
+  "prompt_file": "prompts/semantic-rubric-v1.md",
+  "prompt_sha256": "9677764f367cfbf44048ec60ac76f111e0c2487356598405cca91b27790f3558",
+  "probes_sha256": "5a14302d80732959b5ae249de1daaf731f8e9596fd86042d526b7fafc4475b0a",
+  "started_at": "2026-09-07T18:05:12.683Z",
+  "finished_at": "2026-09-07T18:06:07.665Z",
+  "environment": {
+    "node": "v24.15.0",
+    "platform": "win32 10.0.26200",
+    "arch": "x64",
+    "cpus": 24,
+    "total_memory_gb": 63.4
+  },
+  "latency_ms": {
+    "per_request_mean": 654,
+    "per_request_median": 602
+  },
+  "results": [
+    {
+      "id": "p01",
+      "category": "surface",
+      "hard_negative": false,
+      "proposed_label": "preserved",
+      "proposed_reason_code": "SURFACE_ONLY",
+      "valid_runs": 3,
+      "invalid_runs": 0,
+      "exact_contract_runs": 3,
+      "preserved_votes": 3,
+      "unanimous": true,
+      "byte_identical_responses": true,
+      "majority_label": "preserved",
+      "runs": [
+        {
+          "attempt": 1,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 819,
+          "request_sha256": "1538c44af89f4623be080b70505fb8c97696e48f7e36ab82a948c2aee81d5ce5",
+          "raw_response_sha256": "a8abf5d7c9abde6ddb539712e96edcf9b945cf6519243daa9b3f65cdcea6526f",
+          "raw_response_chars": 276,
+          "verdict": {
+            "meaning_preserved": true,
+            "severity": "none",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [],
+            "short_rationale": "No differences found between the two texts."
+          },
+          "error": null
+        },
+        {
+          "attempt": 2,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 526,
+          "request_sha256": "1538c44af89f4623be080b70505fb8c97696e48f7e36ab82a948c2aee81d5ce5",
+          "raw_response_sha256": "a8abf5d7c9abde6ddb539712e96edcf9b945cf6519243daa9b3f65cdcea6526f",
+          "raw_response_chars": 276,
+          "verdict": {
+            "meaning_preserved": true,
+            "severity": "none",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [],
+            "short_rationale": "No differences found between the two texts."
+          },
+          "error": null
+        },
+        {
+          "attempt": 3,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 524,
+          "request_sha256": "1538c44af89f4623be080b70505fb8c97696e48f7e36ab82a948c2aee81d5ce5",
+          "raw_response_sha256": "a8abf5d7c9abde6ddb539712e96edcf9b945cf6519243daa9b3f65cdcea6526f",
+          "raw_response_chars": 276,
+          "verdict": {
+            "meaning_preserved": true,
+            "severity": "none",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [],
+            "short_rationale": "No differences found between the two texts."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "p02",
+      "category": "surface",
+      "hard_negative": false,
+      "proposed_label": "preserved",
+      "proposed_reason_code": "SURFACE_ONLY",
+      "valid_runs": 3,
+      "invalid_runs": 0,
+      "exact_contract_runs": 3,
+      "preserved_votes": 3,
+      "unanimous": true,
+      "byte_identical_responses": true,
+      "majority_label": "preserved",
+      "runs": [
+        {
+          "attempt": 1,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 506,
+          "request_sha256": "0b6f3bdffc15bdf143d0077893b1272fef4beb8746838f5c96c41e8f5ca4cc8c",
+          "raw_response_sha256": "fcff9ff182219c5868497b70e8a85f11c25b5a765fd8dd598adf152ad9629a68",
+          "raw_response_chars": 254,
+          "verdict": {
+            "meaning_preserved": true,
+            "severity": "none",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [],
+            "short_rationale": "No differences found."
+          },
+          "error": null
+        },
+        {
+          "attempt": 2,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 499,
+          "request_sha256": "0b6f3bdffc15bdf143d0077893b1272fef4beb8746838f5c96c41e8f5ca4cc8c",
+          "raw_response_sha256": "fcff9ff182219c5868497b70e8a85f11c25b5a765fd8dd598adf152ad9629a68",
+          "raw_response_chars": 254,
+          "verdict": {
+            "meaning_preserved": true,
+            "severity": "none",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [],
+            "short_rationale": "No differences found."
+          },
+          "error": null
+        },
+        {
+          "attempt": 3,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 501,
+          "request_sha256": "0b6f3bdffc15bdf143d0077893b1272fef4beb8746838f5c96c41e8f5ca4cc8c",
+          "raw_response_sha256": "fcff9ff182219c5868497b70e8a85f11c25b5a765fd8dd598adf152ad9629a68",
+          "raw_response_chars": 254,
+          "verdict": {
+            "meaning_preserved": true,
+            "severity": "none",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [],
+            "short_rationale": "No differences found."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "p03",
+      "category": "surface",
+      "hard_negative": false,
+      "proposed_label": "preserved",
+      "proposed_reason_code": "SURFACE_ONLY",
+      "valid_runs": 3,
+      "invalid_runs": 0,
+      "exact_contract_runs": 3,
+      "preserved_votes": 3,
+      "unanimous": true,
+      "byte_identical_responses": true,
+      "majority_label": "preserved",
+      "runs": [
+        {
+          "attempt": 1,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 508,
+          "request_sha256": "2dcc0d2b6ee6c6b6e486cfc3594184b18869aa9c7b2f26e6124befeb484abf73",
+          "raw_response_sha256": "fcff9ff182219c5868497b70e8a85f11c25b5a765fd8dd598adf152ad9629a68",
+          "raw_response_chars": 254,
+          "verdict": {
+            "meaning_preserved": true,
+            "severity": "none",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [],
+            "short_rationale": "No differences found."
+          },
+          "error": null
+        },
+        {
+          "attempt": 2,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 500,
+          "request_sha256": "2dcc0d2b6ee6c6b6e486cfc3594184b18869aa9c7b2f26e6124befeb484abf73",
+          "raw_response_sha256": "fcff9ff182219c5868497b70e8a85f11c25b5a765fd8dd598adf152ad9629a68",
+          "raw_response_chars": 254,
+          "verdict": {
+            "meaning_preserved": true,
+            "severity": "none",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [],
+            "short_rationale": "No differences found."
+          },
+          "error": null
+        },
+        {
+          "attempt": 3,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 500,
+          "request_sha256": "2dcc0d2b6ee6c6b6e486cfc3594184b18869aa9c7b2f26e6124befeb484abf73",
+          "raw_response_sha256": "fcff9ff182219c5868497b70e8a85f11c25b5a765fd8dd598adf152ad9629a68",
+          "raw_response_chars": 254,
+          "verdict": {
+            "meaning_preserved": true,
+            "severity": "none",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [],
+            "short_rationale": "No differences found."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "p04",
+      "category": "numeral-unit-form",
+      "hard_negative": false,
+      "proposed_label": "preserved",
+      "proposed_reason_code": "NUMERAL_OR_UNIT_FORM",
+      "valid_runs": 3,
+      "invalid_runs": 0,
+      "exact_contract_runs": 3,
+      "preserved_votes": 0,
+      "unanimous": true,
+      "byte_identical_responses": false,
+      "majority_label": "changed",
+      "runs": [
+        {
+          "attempt": 1,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 600,
+          "request_sha256": "22e1df8c5c017b35409341428efc327ae24021e6ba5fac5759ee7e17ced5c0b8",
+          "raw_response_sha256": "dfbbde275753dd3c8538ea040aa855afc758346bf0714e758ba548e6f2d9449a",
+          "raw_response_chars": 307,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "minor",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": true,
+            "domain_term": false,
+            "reason_codes": [
+              "NUMERAL_OR_UNIT_FORM"
+            ],
+            "short_rationale": "HYPOTHESIS uses millimeters instead of millimeters."
+          },
+          "error": null
+        },
+        {
+          "attempt": 2,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 635,
+          "request_sha256": "22e1df8c5c017b35409341428efc327ae24021e6ba5fac5759ee7e17ced5c0b8",
+          "raw_response_sha256": "6f05b472cc40a91a6648d686802fa1f601990e5d3d0c2e318dddb71c2fdd8144",
+          "raw_response_chars": 309,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "minor",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": true,
+            "domain_term": false,
+            "reason_codes": [
+              "NUMERAL_OR_UNIT_FORM"
+            ],
+            "short_rationale": "HYPOTHESIS uses 'ミリ' instead of 'mm' for millimeters."
+          },
+          "error": null
+        },
+        {
+          "attempt": 3,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 637,
+          "request_sha256": "22e1df8c5c017b35409341428efc327ae24021e6ba5fac5759ee7e17ced5c0b8",
+          "raw_response_sha256": "6f05b472cc40a91a6648d686802fa1f601990e5d3d0c2e318dddb71c2fdd8144",
+          "raw_response_chars": 309,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "minor",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": true,
+            "domain_term": false,
+            "reason_codes": [
+              "NUMERAL_OR_UNIT_FORM"
+            ],
+            "short_rationale": "HYPOTHESIS uses 'ミリ' instead of 'mm' for millimeters."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "p05",
+      "category": "domain-term-form",
+      "hard_negative": false,
+      "proposed_label": "preserved",
+      "proposed_reason_code": "DOMAIN_TERM_FORM",
+      "valid_runs": 3,
+      "invalid_runs": 0,
+      "exact_contract_runs": 3,
+      "preserved_votes": 3,
+      "unanimous": true,
+      "byte_identical_responses": true,
+      "majority_label": "preserved",
+      "runs": [
+        {
+          "attempt": 1,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 509,
+          "request_sha256": "8fda580bb181b8f48ade84be15e0ca1980c38e5028ec8a01c365a2b5428f0463",
+          "raw_response_sha256": "fcff9ff182219c5868497b70e8a85f11c25b5a765fd8dd598adf152ad9629a68",
+          "raw_response_chars": 254,
+          "verdict": {
+            "meaning_preserved": true,
+            "severity": "none",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [],
+            "short_rationale": "No differences found."
+          },
+          "error": null
+        },
+        {
+          "attempt": 2,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 501,
+          "request_sha256": "8fda580bb181b8f48ade84be15e0ca1980c38e5028ec8a01c365a2b5428f0463",
+          "raw_response_sha256": "fcff9ff182219c5868497b70e8a85f11c25b5a765fd8dd598adf152ad9629a68",
+          "raw_response_chars": 254,
+          "verdict": {
+            "meaning_preserved": true,
+            "severity": "none",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [],
+            "short_rationale": "No differences found."
+          },
+          "error": null
+        },
+        {
+          "attempt": 3,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 501,
+          "request_sha256": "8fda580bb181b8f48ade84be15e0ca1980c38e5028ec8a01c365a2b5428f0463",
+          "raw_response_sha256": "fcff9ff182219c5868497b70e8a85f11c25b5a765fd8dd598adf152ad9629a68",
+          "raw_response_chars": 254,
+          "verdict": {
+            "meaning_preserved": true,
+            "severity": "none",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [],
+            "short_rationale": "No differences found."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "p06",
+      "category": "numeral-unit-form",
+      "hard_negative": false,
+      "proposed_label": "preserved",
+      "proposed_reason_code": "NUMERAL_OR_UNIT_FORM",
+      "valid_runs": 3,
+      "invalid_runs": 0,
+      "exact_contract_runs": 3,
+      "preserved_votes": 0,
+      "unanimous": true,
+      "byte_identical_responses": true,
+      "majority_label": "changed",
+      "runs": [
+        {
+          "attempt": 1,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 646,
+          "request_sha256": "2e34f14eabb2e277682fe78cfdd71f5796d5196788c13a23a7ea7856bebe73e5",
+          "raw_response_sha256": "682aa3d335f46f72299084696b0f359991ed5b3af284cfad51a3f69600ab0d57",
+          "raw_response_chars": 310,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "minor",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": true,
+            "domain_term": false,
+            "reason_codes": [
+              "NUMERAL_OR_UNIT_FORM"
+            ],
+            "short_rationale": "HYPOTHESIS uses '平米' instead of '㎡' for square meters."
+          },
+          "error": null
+        },
+        {
+          "attempt": 2,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 633,
+          "request_sha256": "2e34f14eabb2e277682fe78cfdd71f5796d5196788c13a23a7ea7856bebe73e5",
+          "raw_response_sha256": "682aa3d335f46f72299084696b0f359991ed5b3af284cfad51a3f69600ab0d57",
+          "raw_response_chars": 310,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "minor",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": true,
+            "domain_term": false,
+            "reason_codes": [
+              "NUMERAL_OR_UNIT_FORM"
+            ],
+            "short_rationale": "HYPOTHESIS uses '平米' instead of '㎡' for square meters."
+          },
+          "error": null
+        },
+        {
+          "attempt": 3,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 640,
+          "request_sha256": "2e34f14eabb2e277682fe78cfdd71f5796d5196788c13a23a7ea7856bebe73e5",
+          "raw_response_sha256": "682aa3d335f46f72299084696b0f359991ed5b3af284cfad51a3f69600ab0d57",
+          "raw_response_chars": 310,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "minor",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": true,
+            "domain_term": false,
+            "reason_codes": [
+              "NUMERAL_OR_UNIT_FORM"
+            ],
+            "short_rationale": "HYPOTHESIS uses '平米' instead of '㎡' for square meters."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "p07",
+      "category": "numeral-unit-form",
+      "hard_negative": false,
+      "proposed_label": "preserved",
+      "proposed_reason_code": "NUMERAL_OR_UNIT_FORM",
+      "valid_runs": 3,
+      "invalid_runs": 0,
+      "exact_contract_runs": 3,
+      "preserved_votes": 3,
+      "unanimous": true,
+      "byte_identical_responses": true,
+      "majority_label": "preserved",
+      "runs": [
+        {
+          "attempt": 1,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 506,
+          "request_sha256": "a1b966485d17fef4f207b5da9ac976676ba89fcf9d33176e26fdeab40ae6ed50",
+          "raw_response_sha256": "fcff9ff182219c5868497b70e8a85f11c25b5a765fd8dd598adf152ad9629a68",
+          "raw_response_chars": 254,
+          "verdict": {
+            "meaning_preserved": true,
+            "severity": "none",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [],
+            "short_rationale": "No differences found."
+          },
+          "error": null
+        },
+        {
+          "attempt": 2,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 497,
+          "request_sha256": "a1b966485d17fef4f207b5da9ac976676ba89fcf9d33176e26fdeab40ae6ed50",
+          "raw_response_sha256": "fcff9ff182219c5868497b70e8a85f11c25b5a765fd8dd598adf152ad9629a68",
+          "raw_response_chars": 254,
+          "verdict": {
+            "meaning_preserved": true,
+            "severity": "none",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [],
+            "short_rationale": "No differences found."
+          },
+          "error": null
+        },
+        {
+          "attempt": 3,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 500,
+          "request_sha256": "a1b966485d17fef4f207b5da9ac976676ba89fcf9d33176e26fdeab40ae6ed50",
+          "raw_response_sha256": "fcff9ff182219c5868497b70e8a85f11c25b5a765fd8dd598adf152ad9629a68",
+          "raw_response_chars": 254,
+          "verdict": {
+            "meaning_preserved": true,
+            "severity": "none",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [],
+            "short_rationale": "No differences found."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "p08",
+      "category": "domain-term-form",
+      "hard_negative": false,
+      "proposed_label": "preserved",
+      "proposed_reason_code": "DOMAIN_TERM_FORM",
+      "valid_runs": 3,
+      "invalid_runs": 0,
+      "exact_contract_runs": 3,
+      "preserved_votes": 0,
+      "unanimous": true,
+      "byte_identical_responses": true,
+      "majority_label": "changed",
+      "runs": [
+        {
+          "attempt": 1,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 595,
+          "request_sha256": "d8a02e7d59a1e4f802e1e2a93c18b51cea41574156e91bb4b3e85c528d138261",
+          "raw_response_sha256": "ce631d2dda5a1775d40f13557f5057a900983960e371c1d5d1c6d90557dbc69b",
+          "raw_response_chars": 313,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "minor",
+            "negation": false,
+            "direction_location": true,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": true,
+            "reason_codes": [
+              "DIRECTION_LOCATION",
+              "DOMAIN_TERM_FORM"
+            ],
+            "short_rationale": "Different direction and domain term form."
+          },
+          "error": null
+        },
+        {
+          "attempt": 2,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 584,
+          "request_sha256": "d8a02e7d59a1e4f802e1e2a93c18b51cea41574156e91bb4b3e85c528d138261",
+          "raw_response_sha256": "ce631d2dda5a1775d40f13557f5057a900983960e371c1d5d1c6d90557dbc69b",
+          "raw_response_chars": 313,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "minor",
+            "negation": false,
+            "direction_location": true,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": true,
+            "reason_codes": [
+              "DIRECTION_LOCATION",
+              "DOMAIN_TERM_FORM"
+            ],
+            "short_rationale": "Different direction and domain term form."
+          },
+          "error": null
+        },
+        {
+          "attempt": 3,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 585,
+          "request_sha256": "d8a02e7d59a1e4f802e1e2a93c18b51cea41574156e91bb4b3e85c528d138261",
+          "raw_response_sha256": "ce631d2dda5a1775d40f13557f5057a900983960e371c1d5d1c6d90557dbc69b",
+          "raw_response_chars": 313,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "minor",
+            "negation": false,
+            "direction_location": true,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": true,
+            "reason_codes": [
+              "DIRECTION_LOCATION",
+              "DOMAIN_TERM_FORM"
+            ],
+            "short_rationale": "Different direction and domain term form."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "p09",
+      "category": "domain-term-form",
+      "hard_negative": false,
+      "proposed_label": "preserved",
+      "proposed_reason_code": "DOMAIN_TERM_FORM",
+      "valid_runs": 3,
+      "invalid_runs": 0,
+      "exact_contract_runs": 3,
+      "preserved_votes": 0,
+      "unanimous": true,
+      "byte_identical_responses": false,
+      "majority_label": "changed",
+      "runs": [
+        {
+          "attempt": 1,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 541,
+          "request_sha256": "09ae4b84b6e8f0997a90fb2a2340b47eb078de08d0c6023c395c6648ddae5b34",
+          "raw_response_sha256": "20bdbf68a3a2f2f6924e72aeddb337aa9c3e943a617b5c36bcaf803f391c7689",
+          "raw_response_chars": 284,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "minor",
+            "negation": false,
+            "direction_location": true,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [
+              "DIRECTION_LOCATION"
+            ],
+            "short_rationale": "Direction of placement differs."
+          },
+          "error": null
+        },
+        {
+          "attempt": 2,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 530,
+          "request_sha256": "09ae4b84b6e8f0997a90fb2a2340b47eb078de08d0c6023c395c6648ddae5b34",
+          "raw_response_sha256": "888f8e2028447d543b0d39a53f35c4fa9b80407a02f95a04ec65094aff6cf427",
+          "raw_response_chars": 283,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "minor",
+            "negation": false,
+            "direction_location": true,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [
+              "DIRECTION_LOCATION"
+            ],
+            "short_rationale": "Direction of placement differs"
+          },
+          "error": null
+        },
+        {
+          "attempt": 3,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 533,
+          "request_sha256": "09ae4b84b6e8f0997a90fb2a2340b47eb078de08d0c6023c395c6648ddae5b34",
+          "raw_response_sha256": "888f8e2028447d543b0d39a53f35c4fa9b80407a02f95a04ec65094aff6cf427",
+          "raw_response_chars": 283,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "minor",
+            "negation": false,
+            "direction_location": true,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [
+              "DIRECTION_LOCATION"
+            ],
+            "short_rationale": "Direction of placement differs"
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "p10",
+      "category": "paraphrase",
+      "hard_negative": false,
+      "proposed_label": "preserved",
+      "proposed_reason_code": "PARAPHRASE",
+      "valid_runs": 3,
+      "invalid_runs": 0,
+      "exact_contract_runs": 3,
+      "preserved_votes": 0,
+      "unanimous": true,
+      "byte_identical_responses": false,
+      "majority_label": "changed",
+      "runs": [
+        {
+          "attempt": 1,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 614,
+          "request_sha256": "d2f0fcd21eddd6fb81fdf648fc01e26cb92d855a28017b12ebbe28495b3c4a76",
+          "raw_response_sha256": "0da05a45b5dd766904f1f67e09d9c660dfbb7d2ed0046612a2ec7ab0fc324753",
+          "raw_response_chars": 311,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "minor",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [
+              "PARAPHRASE"
+            ],
+            "short_rationale": "HYPOTHESIS uses more formal language and rephrases the sentence."
+          },
+          "error": null
+        },
+        {
+          "attempt": 2,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 599,
+          "request_sha256": "d2f0fcd21eddd6fb81fdf648fc01e26cb92d855a28017b12ebbe28495b3c4a76",
+          "raw_response_sha256": "ff0745add85d6a2ce83b480fe6a5b67f2e5532894e214685b9fe1a102e93c3d0",
+          "raw_response_chars": 296,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "minor",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [
+              "PARAPHRASE"
+            ],
+            "short_rationale": "HYPOTHESIS is a paraphrased version of REFERENCE."
+          },
+          "error": null
+        },
+        {
+          "attempt": 3,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 609,
+          "request_sha256": "d2f0fcd21eddd6fb81fdf648fc01e26cb92d855a28017b12ebbe28495b3c4a76",
+          "raw_response_sha256": "ff0745add85d6a2ce83b480fe6a5b67f2e5532894e214685b9fe1a102e93c3d0",
+          "raw_response_chars": 296,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "minor",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [
+              "PARAPHRASE"
+            ],
+            "short_rationale": "HYPOTHESIS is a paraphrased version of REFERENCE."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "p11",
+      "category": "paraphrase",
+      "hard_negative": false,
+      "proposed_label": "preserved",
+      "proposed_reason_code": "PARAPHRASE",
+      "valid_runs": 3,
+      "invalid_runs": 0,
+      "exact_contract_runs": 0,
+      "preserved_votes": 3,
+      "unanimous": true,
+      "byte_identical_responses": false,
+      "majority_label": "preserved",
+      "runs": [
+        {
+          "attempt": 1,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": false,
+          "latency_ms": 938,
+          "request_sha256": "a8f7d914c301d0b21f70c8fa4f61e8d41025af8aaa8eb5a2965af0e571c5aab7",
+          "raw_response_sha256": "45244c3d004f5cba0e9fe4f8f479711b21e145db904deef3b53fef511fa99bc5",
+          "raw_response_chars": 552,
+          "verdict": {
+            "meaning_preserved": true,
+            "severity": "none",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [],
+            "short_rationale": "No differences in meaning."
+          },
+          "error": null
+        },
+        {
+          "attempt": 2,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": false,
+          "latency_ms": 912,
+          "request_sha256": "a8f7d914c301d0b21f70c8fa4f61e8d41025af8aaa8eb5a2965af0e571c5aab7",
+          "raw_response_sha256": "0df11fd06432c55f98e2503302bcbda44fc61c43ba0f6a3cc84336aa415a20bc",
+          "raw_response_chars": 537,
+          "verdict": {
+            "meaning_preserved": true,
+            "severity": "none",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [],
+            "short_rationale": "No differences in meaning."
+          },
+          "error": null
+        },
+        {
+          "attempt": 3,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": false,
+          "latency_ms": 909,
+          "request_sha256": "a8f7d914c301d0b21f70c8fa4f61e8d41025af8aaa8eb5a2965af0e571c5aab7",
+          "raw_response_sha256": "0df11fd06432c55f98e2503302bcbda44fc61c43ba0f6a3cc84336aa415a20bc",
+          "raw_response_chars": 537,
+          "verdict": {
+            "meaning_preserved": true,
+            "severity": "none",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [],
+            "short_rationale": "No differences in meaning."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "p12",
+      "category": "self-correction",
+      "hard_negative": false,
+      "proposed_label": "preserved",
+      "proposed_reason_code": "SELF_CORRECTION",
+      "valid_runs": 3,
+      "invalid_runs": 0,
+      "exact_contract_runs": 3,
+      "preserved_votes": 0,
+      "unanimous": true,
+      "byte_identical_responses": false,
+      "majority_label": "changed",
+      "runs": [
+        {
+          "attempt": 1,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 585,
+          "request_sha256": "1b11651ba27f3174260f196d9ea4f89a4b8de9aef77010092d03d9015888a883",
+          "raw_response_sha256": "85f1c659ed791ec605b7f03a543ef059409c92d5af74d9353c3afaa74c58324b",
+          "raw_response_chars": 280,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": true,
+            "domain_term": true,
+            "reason_codes": [
+              "VALUE"
+            ],
+            "short_rationale": "HYPOTHESIS has a different value for 天井高"
+          },
+          "error": null
+        },
+        {
+          "attempt": 2,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 662,
+          "request_sha256": "1b11651ba27f3174260f196d9ea4f89a4b8de9aef77010092d03d9015888a883",
+          "raw_response_sha256": "87017e8dae896438f4c74f1ff9e6285fd1894899cdeb6148d4d35bf83fc6ec25",
+          "raw_response_chars": 356,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": true,
+            "domain_term": true,
+            "reason_codes": [
+              "VALUE",
+              "DOMAIN_TERM_FORM"
+            ],
+            "short_rationale": "HYPOTHESIS has a different value for the ceiling height and a different form of the domain term."
+          },
+          "error": null
+        },
+        {
+          "attempt": 3,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 664,
+          "request_sha256": "1b11651ba27f3174260f196d9ea4f89a4b8de9aef77010092d03d9015888a883",
+          "raw_response_sha256": "87017e8dae896438f4c74f1ff9e6285fd1894899cdeb6148d4d35bf83fc6ec25",
+          "raw_response_chars": 356,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": true,
+            "domain_term": true,
+            "reason_codes": [
+              "VALUE",
+              "DOMAIN_TERM_FORM"
+            ],
+            "short_rationale": "HYPOTHESIS has a different value for the ceiling height and a different form of the domain term."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "p13",
+      "category": "direction",
+      "hard_negative": true,
+      "proposed_label": "changed",
+      "proposed_reason_code": "DIRECTION_LOCATION",
+      "valid_runs": 3,
+      "invalid_runs": 0,
+      "exact_contract_runs": 1,
+      "preserved_votes": 0,
+      "unanimous": true,
+      "byte_identical_responses": false,
+      "majority_label": "changed",
+      "runs": [
+        {
+          "attempt": 1,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 544,
+          "request_sha256": "c0616c708a77be6eb92427d981b45dccc9b7970c2f3259b9af943aaf299bb826",
+          "raw_response_sha256": "6d313e1d158cc137587f8660e4979dc8598fa117b2c98bdba459c1604f9ff87a",
+          "raw_response_chars": 284,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": true,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [
+              "DIRECTION_LOCATION"
+            ],
+            "short_rationale": "Direction of placement differs."
+          },
+          "error": null
+        },
+        {
+          "attempt": 2,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": false,
+          "latency_ms": 551,
+          "request_sha256": "c0616c708a77be6eb92427d981b45dccc9b7970c2f3259b9af943aaf299bb826",
+          "raw_response_sha256": "1fa09b7deb3d68e116ea49663b092d45eec320db1a622c254d084ee712b9a0a7",
+          "raw_response_chars": 292,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": true,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [
+              "DIRECTION_LOCATION"
+            ],
+            "short_rationale": "Direction of placement differs."
+          },
+          "error": null
+        },
+        {
+          "attempt": 3,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": false,
+          "latency_ms": 555,
+          "request_sha256": "c0616c708a77be6eb92427d981b45dccc9b7970c2f3259b9af943aaf299bb826",
+          "raw_response_sha256": "1fa09b7deb3d68e116ea49663b092d45eec320db1a622c254d084ee712b9a0a7",
+          "raw_response_chars": 292,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": true,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [
+              "DIRECTION_LOCATION"
+            ],
+            "short_rationale": "Direction of placement differs."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "p14",
+      "category": "negation",
+      "hard_negative": true,
+      "proposed_label": "changed",
+      "proposed_reason_code": "NEGATION",
+      "valid_runs": 3,
+      "invalid_runs": 0,
+      "exact_contract_runs": 3,
+      "preserved_votes": 0,
+      "unanimous": true,
+      "byte_identical_responses": false,
+      "majority_label": "changed",
+      "runs": [
+        {
+          "attempt": 1,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 698,
+          "request_sha256": "00c2ee251dca1e8757b7218d37c1764094a0ae77746d6359b0249ce933f1d4dd",
+          "raw_response_sha256": "8fcf91f4f56467a0010010dd8d5a2a273bb831a8ccc2a9bff3bf9d7d356abb08",
+          "raw_response_chars": 391,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": true,
+            "direction_location": true,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": true,
+            "reason_codes": [
+              "NEGATION",
+              "DIRECTION_LOCATION",
+              "INSTRUCTION_ACTION"
+            ],
+            "short_rationale": "Hypothetical instruction is opposite of reference instruction, and location and action are also different."
+          },
+          "error": null
+        },
+        {
+          "attempt": 2,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 642,
+          "request_sha256": "00c2ee251dca1e8757b7218d37c1764094a0ae77746d6359b0249ce933f1d4dd",
+          "raw_response_sha256": "13bde51bfbefa0e45d4d607e8d849712fde82674f1bd9dbc1773e9a369250657",
+          "raw_response_chars": 355,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": true,
+            "direction_location": true,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": true,
+            "reason_codes": [
+              "NEGATION",
+              "DIRECTION_LOCATION",
+              "INSTRUCTION_ACTION"
+            ],
+            "short_rationale": "Hypothetical instruction is the opposite of the reference instruction."
+          },
+          "error": null
+        },
+        {
+          "attempt": 3,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 641,
+          "request_sha256": "00c2ee251dca1e8757b7218d37c1764094a0ae77746d6359b0249ce933f1d4dd",
+          "raw_response_sha256": "13bde51bfbefa0e45d4d607e8d849712fde82674f1bd9dbc1773e9a369250657",
+          "raw_response_chars": 355,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": true,
+            "direction_location": true,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": true,
+            "reason_codes": [
+              "NEGATION",
+              "DIRECTION_LOCATION",
+              "INSTRUCTION_ACTION"
+            ],
+            "short_rationale": "Hypothetical instruction is the opposite of the reference instruction."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "p15",
+      "category": "value",
+      "hard_negative": true,
+      "proposed_label": "changed",
+      "proposed_reason_code": "VALUE",
+      "valid_runs": 3,
+      "invalid_runs": 0,
+      "exact_contract_runs": 3,
+      "preserved_votes": 0,
+      "unanimous": true,
+      "byte_identical_responses": true,
+      "majority_label": "changed",
+      "runs": [
+        {
+          "attempt": 1,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 588,
+          "request_sha256": "f7343813fbe429f6b5b39f7c0a14d025b1b6585a2dfb07dd82b35f0c89f5df41",
+          "raw_response_sha256": "85f1c659ed791ec605b7f03a543ef059409c92d5af74d9353c3afaa74c58324b",
+          "raw_response_chars": 280,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": true,
+            "domain_term": true,
+            "reason_codes": [
+              "VALUE"
+            ],
+            "short_rationale": "HYPOTHESIS has a different value for 天井高"
+          },
+          "error": null
+        },
+        {
+          "attempt": 2,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 575,
+          "request_sha256": "f7343813fbe429f6b5b39f7c0a14d025b1b6585a2dfb07dd82b35f0c89f5df41",
+          "raw_response_sha256": "85f1c659ed791ec605b7f03a543ef059409c92d5af74d9353c3afaa74c58324b",
+          "raw_response_chars": 280,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": true,
+            "domain_term": true,
+            "reason_codes": [
+              "VALUE"
+            ],
+            "short_rationale": "HYPOTHESIS has a different value for 天井高"
+          },
+          "error": null
+        },
+        {
+          "attempt": 3,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 573,
+          "request_sha256": "f7343813fbe429f6b5b39f7c0a14d025b1b6585a2dfb07dd82b35f0c89f5df41",
+          "raw_response_sha256": "85f1c659ed791ec605b7f03a543ef059409c92d5af74d9353c3afaa74c58324b",
+          "raw_response_chars": 280,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": true,
+            "domain_term": true,
+            "reason_codes": [
+              "VALUE"
+            ],
+            "short_rationale": "HYPOTHESIS has a different value for 天井高"
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "p16",
+      "category": "value",
+      "hard_negative": true,
+      "proposed_label": "changed",
+      "proposed_reason_code": "VALUE",
+      "valid_runs": 3,
+      "invalid_runs": 0,
+      "exact_contract_runs": 3,
+      "preserved_votes": 0,
+      "unanimous": true,
+      "byte_identical_responses": true,
+      "majority_label": "changed",
+      "runs": [
+        {
+          "attempt": 1,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 626,
+          "request_sha256": "c8b380e69fb77ffdcce7eb69856949dfe9ef3e0bddd4088a936f0502e3de86f4",
+          "raw_response_sha256": "f36a301822e1b465b457d62ad38ab02730cf7cae041a6b3c08fd02c4bfc60f60",
+          "raw_response_chars": 312,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": true,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": true,
+            "reason_codes": [
+              "DIRECTION_LOCATION",
+              "DOMAIN_TERM_FORM"
+            ],
+            "short_rationale": "Time of day and domain term '定例' differ."
+          },
+          "error": null
+        },
+        {
+          "attempt": 2,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 614,
+          "request_sha256": "c8b380e69fb77ffdcce7eb69856949dfe9ef3e0bddd4088a936f0502e3de86f4",
+          "raw_response_sha256": "f36a301822e1b465b457d62ad38ab02730cf7cae041a6b3c08fd02c4bfc60f60",
+          "raw_response_chars": 312,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": true,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": true,
+            "reason_codes": [
+              "DIRECTION_LOCATION",
+              "DOMAIN_TERM_FORM"
+            ],
+            "short_rationale": "Time of day and domain term '定例' differ."
+          },
+          "error": null
+        },
+        {
+          "attempt": 3,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 614,
+          "request_sha256": "c8b380e69fb77ffdcce7eb69856949dfe9ef3e0bddd4088a936f0502e3de86f4",
+          "raw_response_sha256": "f36a301822e1b465b457d62ad38ab02730cf7cae041a6b3c08fd02c4bfc60f60",
+          "raw_response_chars": 312,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": true,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": true,
+            "reason_codes": [
+              "DIRECTION_LOCATION",
+              "DOMAIN_TERM_FORM"
+            ],
+            "short_rationale": "Time of day and domain term '定例' differ."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "p17",
+      "category": "unit",
+      "hard_negative": true,
+      "proposed_label": "changed",
+      "proposed_reason_code": "UNIT",
+      "valid_runs": 3,
+      "invalid_runs": 0,
+      "exact_contract_runs": 3,
+      "preserved_votes": 0,
+      "unanimous": true,
+      "byte_identical_responses": true,
+      "majority_label": "changed",
+      "runs": [
+        {
+          "attempt": 1,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 623,
+          "request_sha256": "2066724d3540950022886e8ad82cfa2b486092293afb2774971da091781e5667",
+          "raw_response_sha256": "114805877f1da825c9dd05303b8a13deee1d267a5f5915a1ddcd93a6a6b32686",
+          "raw_response_chars": 306,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": true,
+            "domain_term": false,
+            "reason_codes": [
+              "VALUE"
+            ],
+            "short_rationale": "HYPOTHESIS has a different value for the area (mm instead of m^2)"
+          },
+          "error": null
+        },
+        {
+          "attempt": 2,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 614,
+          "request_sha256": "2066724d3540950022886e8ad82cfa2b486092293afb2774971da091781e5667",
+          "raw_response_sha256": "114805877f1da825c9dd05303b8a13deee1d267a5f5915a1ddcd93a6a6b32686",
+          "raw_response_chars": 306,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": true,
+            "domain_term": false,
+            "reason_codes": [
+              "VALUE"
+            ],
+            "short_rationale": "HYPOTHESIS has a different value for the area (mm instead of m^2)"
+          },
+          "error": null
+        },
+        {
+          "attempt": 3,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 614,
+          "request_sha256": "2066724d3540950022886e8ad82cfa2b486092293afb2774971da091781e5667",
+          "raw_response_sha256": "114805877f1da825c9dd05303b8a13deee1d267a5f5915a1ddcd93a6a6b32686",
+          "raw_response_chars": 306,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": true,
+            "domain_term": false,
+            "reason_codes": [
+              "VALUE"
+            ],
+            "short_rationale": "HYPOTHESIS has a different value for the area (mm instead of m^2)"
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "p18",
+      "category": "unit",
+      "hard_negative": true,
+      "proposed_label": "changed",
+      "proposed_reason_code": "UNIT",
+      "valid_runs": 3,
+      "invalid_runs": 0,
+      "exact_contract_runs": 3,
+      "preserved_votes": 0,
+      "unanimous": true,
+      "byte_identical_responses": true,
+      "majority_label": "changed",
+      "runs": [
+        {
+          "attempt": 1,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 734,
+          "request_sha256": "f44b46593068c055237e624283de0d7ad55806398468b4fa10c833b7809de4d0",
+          "raw_response_sha256": "8f2f8a53776f3d774fd5104b3a970171de456b116150a961cbbe2701a5eb4a02",
+          "raw_response_chars": 348,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": true,
+            "domain_term": true,
+            "reason_codes": [
+              "NUMERAL_OR_UNIT_FORM",
+              "DOMAIN_TERM_FORM"
+            ],
+            "short_rationale": "HYPOTHESIS uses a different unit (m/s) and term (風量) than REFERENCE (㎥/h)"
+          },
+          "error": null
+        },
+        {
+          "attempt": 2,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 733,
+          "request_sha256": "f44b46593068c055237e624283de0d7ad55806398468b4fa10c833b7809de4d0",
+          "raw_response_sha256": "8f2f8a53776f3d774fd5104b3a970171de456b116150a961cbbe2701a5eb4a02",
+          "raw_response_chars": 348,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": true,
+            "domain_term": true,
+            "reason_codes": [
+              "NUMERAL_OR_UNIT_FORM",
+              "DOMAIN_TERM_FORM"
+            ],
+            "short_rationale": "HYPOTHESIS uses a different unit (m/s) and term (風量) than REFERENCE (㎥/h)"
+          },
+          "error": null
+        },
+        {
+          "attempt": 3,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 731,
+          "request_sha256": "f44b46593068c055237e624283de0d7ad55806398468b4fa10c833b7809de4d0",
+          "raw_response_sha256": "8f2f8a53776f3d774fd5104b3a970171de456b116150a961cbbe2701a5eb4a02",
+          "raw_response_chars": 348,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": true,
+            "domain_term": true,
+            "reason_codes": [
+              "NUMERAL_OR_UNIT_FORM",
+              "DOMAIN_TERM_FORM"
+            ],
+            "short_rationale": "HYPOTHESIS uses a different unit (m/s) and term (風量) than REFERENCE (㎥/h)"
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "p19",
+      "category": "direction",
+      "hard_negative": true,
+      "proposed_label": "changed",
+      "proposed_reason_code": "DIRECTION_LOCATION",
+      "valid_runs": 3,
+      "invalid_runs": 0,
+      "exact_contract_runs": 3,
+      "preserved_votes": 0,
+      "unanimous": true,
+      "byte_identical_responses": true,
+      "majority_label": "changed",
+      "runs": [
+        {
+          "attempt": 1,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 580,
+          "request_sha256": "814e9a51f10c004b199643ddb43ea2638dbea94c9bf870386cd8e4043b953a71",
+          "raw_response_sha256": "3beca52d64683b5fab6ac5506baba500d0cda27ecdaa6a40ff6a302dcaee868a",
+          "raw_response_chars": 305,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "minor",
+            "negation": false,
+            "direction_location": true,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": true,
+            "reason_codes": [
+              "DIRECTION_LOCATION",
+              "DOMAIN_TERM_FORM"
+            ],
+            "short_rationale": "Direction and domain term differ."
+          },
+          "error": null
+        },
+        {
+          "attempt": 2,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 564,
+          "request_sha256": "814e9a51f10c004b199643ddb43ea2638dbea94c9bf870386cd8e4043b953a71",
+          "raw_response_sha256": "3beca52d64683b5fab6ac5506baba500d0cda27ecdaa6a40ff6a302dcaee868a",
+          "raw_response_chars": 305,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "minor",
+            "negation": false,
+            "direction_location": true,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": true,
+            "reason_codes": [
+              "DIRECTION_LOCATION",
+              "DOMAIN_TERM_FORM"
+            ],
+            "short_rationale": "Direction and domain term differ."
+          },
+          "error": null
+        },
+        {
+          "attempt": 3,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 568,
+          "request_sha256": "814e9a51f10c004b199643ddb43ea2638dbea94c9bf870386cd8e4043b953a71",
+          "raw_response_sha256": "3beca52d64683b5fab6ac5506baba500d0cda27ecdaa6a40ff6a302dcaee868a",
+          "raw_response_chars": 305,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "minor",
+            "negation": false,
+            "direction_location": true,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": true,
+            "reason_codes": [
+              "DIRECTION_LOCATION",
+              "DOMAIN_TERM_FORM"
+            ],
+            "short_rationale": "Direction and domain term differ."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "p20",
+      "category": "direction",
+      "hard_negative": true,
+      "proposed_label": "changed",
+      "proposed_reason_code": "DIRECTION_LOCATION",
+      "valid_runs": 3,
+      "invalid_runs": 0,
+      "exact_contract_runs": 3,
+      "preserved_votes": 0,
+      "unanimous": true,
+      "byte_identical_responses": true,
+      "majority_label": "changed",
+      "runs": [
+        {
+          "attempt": 1,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 585,
+          "request_sha256": "5a02e05fb7eef0b17801b822655c816145e8df3a2f4d3ba1e5f9e1a977901917",
+          "raw_response_sha256": "e15c39407ca95d744fddc891de89711f4fae54c1b10469c0c16bc1029d912122",
+          "raw_response_chars": 305,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": true,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": true,
+            "reason_codes": [
+              "DIRECTION_LOCATION",
+              "DOMAIN_TERM_FORM"
+            ],
+            "short_rationale": "Direction and domain term differ."
+          },
+          "error": null
+        },
+        {
+          "attempt": 2,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 579,
+          "request_sha256": "5a02e05fb7eef0b17801b822655c816145e8df3a2f4d3ba1e5f9e1a977901917",
+          "raw_response_sha256": "e15c39407ca95d744fddc891de89711f4fae54c1b10469c0c16bc1029d912122",
+          "raw_response_chars": 305,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": true,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": true,
+            "reason_codes": [
+              "DIRECTION_LOCATION",
+              "DOMAIN_TERM_FORM"
+            ],
+            "short_rationale": "Direction and domain term differ."
+          },
+          "error": null
+        },
+        {
+          "attempt": 3,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 575,
+          "request_sha256": "5a02e05fb7eef0b17801b822655c816145e8df3a2f4d3ba1e5f9e1a977901917",
+          "raw_response_sha256": "e15c39407ca95d744fddc891de89711f4fae54c1b10469c0c16bc1029d912122",
+          "raw_response_chars": 305,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": true,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": true,
+            "reason_codes": [
+              "DIRECTION_LOCATION",
+              "DOMAIN_TERM_FORM"
+            ],
+            "short_rationale": "Direction and domain term differ."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "p21",
+      "category": "instruction-action",
+      "hard_negative": true,
+      "proposed_label": "changed",
+      "proposed_reason_code": "INSTRUCTION_ACTION",
+      "valid_runs": 3,
+      "invalid_runs": 0,
+      "exact_contract_runs": 3,
+      "preserved_votes": 0,
+      "unanimous": true,
+      "byte_identical_responses": false,
+      "majority_label": "changed",
+      "runs": [
+        {
+          "attempt": 1,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 684,
+          "request_sha256": "5da59b1dd7fd39d3791b859a5f1760bf4564ddb87c4261fbfdef46315a35c45f",
+          "raw_response_sha256": "a39bb5183df062cd203a4533ab6fbe9d009571383445b3c067cecfc22fc63c55",
+          "raw_response_chars": 346,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "minor",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": false,
+            "domain_term": true,
+            "reason_codes": [
+              "DOMAIN_TERM_FORM"
+            ],
+            "short_rationale": "HYPOTHESIS uses the polite form \"しました\" instead of the plain form \"しておいてください\" in REFERENCE."
+          },
+          "error": null
+        },
+        {
+          "attempt": 2,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 667,
+          "request_sha256": "5da59b1dd7fd39d3791b859a5f1760bf4564ddb87c4261fbfdef46315a35c45f",
+          "raw_response_sha256": "b293d483f0b72bbf534315ce6f88b1ba54c270ffc55e38d20f8db812d988c38d",
+          "raw_response_chars": 343,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "minor",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": false,
+            "domain_term": true,
+            "reason_codes": [
+              "DOMAIN_TERM_FORM"
+            ],
+            "short_rationale": "HYPOTHESIS uses the polite form \"しました\" instead of the plain form \"してください\" in REFERENCE."
+          },
+          "error": null
+        },
+        {
+          "attempt": 3,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 664,
+          "request_sha256": "5da59b1dd7fd39d3791b859a5f1760bf4564ddb87c4261fbfdef46315a35c45f",
+          "raw_response_sha256": "b293d483f0b72bbf534315ce6f88b1ba54c270ffc55e38d20f8db812d988c38d",
+          "raw_response_chars": 343,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "minor",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": false,
+            "domain_term": true,
+            "reason_codes": [
+              "DOMAIN_TERM_FORM"
+            ],
+            "short_rationale": "HYPOTHESIS uses the polite form \"しました\" instead of the plain form \"してください\" in REFERENCE."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "p22",
+      "category": "value",
+      "hard_negative": true,
+      "proposed_label": "changed",
+      "proposed_reason_code": "VALUE",
+      "valid_runs": 3,
+      "invalid_runs": 0,
+      "exact_contract_runs": 3,
+      "preserved_votes": 0,
+      "unanimous": true,
+      "byte_identical_responses": true,
+      "majority_label": "changed",
+      "runs": [
+        {
+          "attempt": 1,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 606,
+          "request_sha256": "3f20f2f60ece67d97d8cbe1ccf3cf6fbe7b6728553189bf41e58a62d7ee12e6f",
+          "raw_response_sha256": "a6c27895bc030ea0cdf3800b95d6f018f7f777ad1227d9db50df17539c4a2bcb",
+          "raw_response_chars": 302,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": true,
+            "domain_term": true,
+            "reason_codes": [
+              "VALUE"
+            ],
+            "short_rationale": "HYPOTHESIS has a different value for the pitch of the rubbers."
+          },
+          "error": null
+        },
+        {
+          "attempt": 2,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 595,
+          "request_sha256": "3f20f2f60ece67d97d8cbe1ccf3cf6fbe7b6728553189bf41e58a62d7ee12e6f",
+          "raw_response_sha256": "a6c27895bc030ea0cdf3800b95d6f018f7f777ad1227d9db50df17539c4a2bcb",
+          "raw_response_chars": 302,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": true,
+            "domain_term": true,
+            "reason_codes": [
+              "VALUE"
+            ],
+            "short_rationale": "HYPOTHESIS has a different value for the pitch of the rubbers."
+          },
+          "error": null
+        },
+        {
+          "attempt": 3,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 594,
+          "request_sha256": "3f20f2f60ece67d97d8cbe1ccf3cf6fbe7b6728553189bf41e58a62d7ee12e6f",
+          "raw_response_sha256": "a6c27895bc030ea0cdf3800b95d6f018f7f777ad1227d9db50df17539c4a2bcb",
+          "raw_response_chars": 302,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": true,
+            "domain_term": true,
+            "reason_codes": [
+              "VALUE"
+            ],
+            "short_rationale": "HYPOTHESIS has a different value for the pitch of the rubbers."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "p23",
+      "category": "omission",
+      "hard_negative": false,
+      "proposed_label": "changed",
+      "proposed_reason_code": "OMISSION",
+      "valid_runs": 3,
+      "invalid_runs": 0,
+      "exact_contract_runs": 3,
+      "preserved_votes": 0,
+      "unanimous": true,
+      "byte_identical_responses": true,
+      "majority_label": "changed",
+      "runs": [
+        {
+          "attempt": 1,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 613,
+          "request_sha256": "d4205075f46cbb0153c0625b555b5c021faeaac367b5a797d038122454149b1f",
+          "raw_response_sha256": "e4e6591e97825685641eccea2f7cbfa36428f4fc9df5ff083dd9cbeebcc57879",
+          "raw_response_chars": 337,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": true,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [
+              "DIRECTION_LOCATION",
+              "INSTRUCTION_ACTION"
+            ],
+            "short_rationale": "Direction and instruction action differ between the two texts."
+          },
+          "error": null
+        },
+        {
+          "attempt": 2,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 605,
+          "request_sha256": "d4205075f46cbb0153c0625b555b5c021faeaac367b5a797d038122454149b1f",
+          "raw_response_sha256": "e4e6591e97825685641eccea2f7cbfa36428f4fc9df5ff083dd9cbeebcc57879",
+          "raw_response_chars": 337,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": true,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [
+              "DIRECTION_LOCATION",
+              "INSTRUCTION_ACTION"
+            ],
+            "short_rationale": "Direction and instruction action differ between the two texts."
+          },
+          "error": null
+        },
+        {
+          "attempt": 3,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 607,
+          "request_sha256": "d4205075f46cbb0153c0625b555b5c021faeaac367b5a797d038122454149b1f",
+          "raw_response_sha256": "e4e6591e97825685641eccea2f7cbfa36428f4fc9df5ff083dd9cbeebcc57879",
+          "raw_response_chars": 337,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": true,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [
+              "DIRECTION_LOCATION",
+              "INSTRUCTION_ACTION"
+            ],
+            "short_rationale": "Direction and instruction action differ between the two texts."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "p24",
+      "category": "addition",
+      "hard_negative": false,
+      "proposed_label": "changed",
+      "proposed_reason_code": "ADDITION",
+      "valid_runs": 3,
+      "invalid_runs": 0,
+      "exact_contract_runs": 0,
+      "preserved_votes": 0,
+      "unanimous": true,
+      "byte_identical_responses": false,
+      "majority_label": "changed",
+      "runs": [
+        {
+          "attempt": 1,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": false,
+          "latency_ms": 1745,
+          "request_sha256": "72d96656af907806337051f3ac2b1f6df1b46fc0f6e498008601759ca990a151",
+          "raw_response_sha256": "7cf621daf242bf2c405d4ba7cd66c175430b6433fc9f772ec4a9c07e22e4e519",
+          "raw_response_chars": 1120,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": true,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [
+              "DIRECTION_LOCATION",
+              "INSTRUCTION_ACTION"
+            ],
+            "short_rationale": "HYPOTHESIS adds a new instruction to maintain a ceiling height of 2700mm."
+          },
+          "error": null
+        },
+        {
+          "attempt": 2,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": false,
+          "latency_ms": 2032,
+          "request_sha256": "72d96656af907806337051f3ac2b1f6df1b46fc0f6e498008601759ca990a151",
+          "raw_response_sha256": "62860919b5983337665f50164ec65926e40fd3ae5529f5c8d0022f4c6e3f524e",
+          "raw_response_chars": 1165,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": true,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [
+              "DIRECTION_LOCATION",
+              "INSTRUCTION_ACTION"
+            ],
+            "short_rationale": "HYPOTHESIS adds a new instruction to maintain a ceiling height of 2700mm."
+          },
+          "error": null
+        },
+        {
+          "attempt": 3,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": false,
+          "latency_ms": 2038,
+          "request_sha256": "72d96656af907806337051f3ac2b1f6df1b46fc0f6e498008601759ca990a151",
+          "raw_response_sha256": "62860919b5983337665f50164ec65926e40fd3ae5529f5c8d0022f4c6e3f524e",
+          "raw_response_chars": 1165,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": true,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [
+              "DIRECTION_LOCATION",
+              "INSTRUCTION_ACTION"
+            ],
+            "short_rationale": "HYPOTHESIS adds a new instruction to maintain a ceiling height of 2700mm."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "p25",
+      "category": "self-correction",
+      "hard_negative": true,
+      "proposed_label": "changed",
+      "proposed_reason_code": "SELF_CORRECTION",
+      "valid_runs": 3,
+      "invalid_runs": 0,
+      "exact_contract_runs": 3,
+      "preserved_votes": 0,
+      "unanimous": true,
+      "byte_identical_responses": true,
+      "majority_label": "changed",
+      "runs": [
+        {
+          "attempt": 1,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 668,
+          "request_sha256": "af3145833481bfc5c20a301d02009a0fe8535ff49fe16c51c9752f36600e2be7",
+          "raw_response_sha256": "118b022ade29c393c069583b325a7e7f0e076150dc15e38cc6e34b260f3d616a",
+          "raw_response_chars": 346,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": true,
+            "domain_term": true,
+            "reason_codes": [
+              "VALUE",
+              "DOMAIN_TERM_FORM"
+            ],
+            "short_rationale": "HYPOTHESIS has a different value for the area and a different form of the domain term."
+          },
+          "error": null
+        },
+        {
+          "attempt": 2,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 663,
+          "request_sha256": "af3145833481bfc5c20a301d02009a0fe8535ff49fe16c51c9752f36600e2be7",
+          "raw_response_sha256": "118b022ade29c393c069583b325a7e7f0e076150dc15e38cc6e34b260f3d616a",
+          "raw_response_chars": 346,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": true,
+            "domain_term": true,
+            "reason_codes": [
+              "VALUE",
+              "DOMAIN_TERM_FORM"
+            ],
+            "short_rationale": "HYPOTHESIS has a different value for the area and a different form of the domain term."
+          },
+          "error": null
+        },
+        {
+          "attempt": 3,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 663,
+          "request_sha256": "af3145833481bfc5c20a301d02009a0fe8535ff49fe16c51c9752f36600e2be7",
+          "raw_response_sha256": "118b022ade29c393c069583b325a7e7f0e076150dc15e38cc6e34b260f3d616a",
+          "raw_response_chars": 346,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": true,
+            "domain_term": true,
+            "reason_codes": [
+              "VALUE",
+              "DOMAIN_TERM_FORM"
+            ],
+            "short_rationale": "HYPOTHESIS has a different value for the area and a different form of the domain term."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "p26",
+      "category": "ordering",
+      "hard_negative": true,
+      "proposed_label": "changed",
+      "proposed_reason_code": "ORDERING",
+      "valid_runs": 3,
+      "invalid_runs": 0,
+      "exact_contract_runs": 0,
+      "preserved_votes": 0,
+      "unanimous": true,
+      "byte_identical_responses": false,
+      "majority_label": "changed",
+      "runs": [
+        {
+          "attempt": 1,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": false,
+          "latency_ms": 643,
+          "request_sha256": "4daf624b5f9ad5eb4d432cc03c7249b652cb4fecd4d86a181ded4e8fda12952c",
+          "raw_response_sha256": "6d29a26b5d3e99e527705dda7ea27e7e502894859526c86cffd8859528463426",
+          "raw_response_chars": 343,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": true,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": true,
+            "reason_codes": [
+              "DIRECTION_LOCATION",
+              "INSTRUCTION_ACTION"
+            ],
+            "short_rationale": "The instruction state changed from before to after the merge."
+          },
+          "error": null
+        },
+        {
+          "attempt": 2,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": false,
+          "latency_ms": 567,
+          "request_sha256": "4daf624b5f9ad5eb4d432cc03c7249b652cb4fecd4d86a181ded4e8fda12952c",
+          "raw_response_sha256": "3bdc85d7740a1b9d6537b5a29255d8d45154fa3a8ff9f784b3719010fac289c0",
+          "raw_response_chars": 296,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": true,
+            "instruction_action": false,
+            "critical_fact": false,
+            "domain_term": true,
+            "reason_codes": [
+              "DIRECTION_LOCATION"
+            ],
+            "short_rationale": "The instruction order was reversed."
+          },
+          "error": null
+        },
+        {
+          "attempt": 3,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": false,
+          "latency_ms": 563,
+          "request_sha256": "4daf624b5f9ad5eb4d432cc03c7249b652cb4fecd4d86a181ded4e8fda12952c",
+          "raw_response_sha256": "3bdc85d7740a1b9d6537b5a29255d8d45154fa3a8ff9f784b3719010fac289c0",
+          "raw_response_chars": 296,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": true,
+            "instruction_action": false,
+            "critical_fact": false,
+            "domain_term": true,
+            "reason_codes": [
+              "DIRECTION_LOCATION"
+            ],
+            "short_rationale": "The instruction order was reversed."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "p27",
+      "category": "actor",
+      "hard_negative": true,
+      "proposed_label": "changed",
+      "proposed_reason_code": "ACTOR",
+      "valid_runs": 3,
+      "invalid_runs": 0,
+      "exact_contract_runs": 3,
+      "preserved_votes": 0,
+      "unanimous": true,
+      "byte_identical_responses": true,
+      "majority_label": "changed",
+      "runs": [
+        {
+          "attempt": 1,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 541,
+          "request_sha256": "8555e56835f3a72de76abc8a133dbf11e60fdeec4b459fb7e8d259e2ce2a18c6",
+          "raw_response_sha256": "2253e65bbff842e253098769f6b016e52733166a24a0185dedc7bbd2d6156883",
+          "raw_response_chars": 275,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [
+              "INSTRUCTION_ACTION"
+            ],
+            "short_rationale": "Who must act differs."
+          },
+          "error": null
+        },
+        {
+          "attempt": 2,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 539,
+          "request_sha256": "8555e56835f3a72de76abc8a133dbf11e60fdeec4b459fb7e8d259e2ce2a18c6",
+          "raw_response_sha256": "2253e65bbff842e253098769f6b016e52733166a24a0185dedc7bbd2d6156883",
+          "raw_response_chars": 275,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [
+              "INSTRUCTION_ACTION"
+            ],
+            "short_rationale": "Who must act differs."
+          },
+          "error": null
+        },
+        {
+          "attempt": 3,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 539,
+          "request_sha256": "8555e56835f3a72de76abc8a133dbf11e60fdeec4b459fb7e8d259e2ce2a18c6",
+          "raw_response_sha256": "2253e65bbff842e253098769f6b016e52733166a24a0185dedc7bbd2d6156883",
+          "raw_response_chars": 275,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "major",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": true,
+            "critical_fact": false,
+            "domain_term": false,
+            "reason_codes": [
+              "INSTRUCTION_ACTION"
+            ],
+            "short_rationale": "Who must act differs."
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "p28",
+      "category": "domain-term-form",
+      "hard_negative": false,
+      "proposed_label": "preserved",
+      "proposed_reason_code": "DOMAIN_TERM_FORM",
+      "valid_runs": 3,
+      "invalid_runs": 0,
+      "exact_contract_runs": 3,
+      "preserved_votes": 0,
+      "unanimous": true,
+      "byte_identical_responses": true,
+      "majority_label": "changed",
+      "runs": [
+        {
+          "attempt": 1,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 621,
+          "request_sha256": "824d4a48f39afc97cd1fb7231bd4aeccc4847c4b991fa91a6acdd67c16f49e98",
+          "raw_response_sha256": "39a8cd0c6dedc1ab01c56e1ec63694621d0388cf054f49d5a8b27529dfde4678",
+          "raw_response_chars": 290,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "minor",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": false,
+            "domain_term": true,
+            "reason_codes": [
+              "DOMAIN_TERM_FORM"
+            ],
+            "short_rationale": "Different term for '打ち放し' and '打ちっぱなし'"
+          },
+          "error": null
+        },
+        {
+          "attempt": 2,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 610,
+          "request_sha256": "824d4a48f39afc97cd1fb7231bd4aeccc4847c4b991fa91a6acdd67c16f49e98",
+          "raw_response_sha256": "39a8cd0c6dedc1ab01c56e1ec63694621d0388cf054f49d5a8b27529dfde4678",
+          "raw_response_chars": 290,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "minor",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": false,
+            "domain_term": true,
+            "reason_codes": [
+              "DOMAIN_TERM_FORM"
+            ],
+            "short_rationale": "Different term for '打ち放し' and '打ちっぱなし'"
+          },
+          "error": null
+        },
+        {
+          "attempt": 3,
+          "parseable_schema_valid": true,
+          "exact_output_contract_valid": true,
+          "latency_ms": 610,
+          "request_sha256": "824d4a48f39afc97cd1fb7231bd4aeccc4847c4b991fa91a6acdd67c16f49e98",
+          "raw_response_sha256": "39a8cd0c6dedc1ab01c56e1ec63694621d0388cf054f49d5a8b27529dfde4678",
+          "raw_response_chars": 290,
+          "verdict": {
+            "meaning_preserved": false,
+            "severity": "minor",
+            "negation": false,
+            "direction_location": false,
+            "instruction_action": false,
+            "critical_fact": false,
+            "domain_term": true,
+            "reason_codes": [
+              "DOMAIN_TERM_FORM"
+            ],
+            "short_rationale": "Different term for '打ち放し' and '打ちっぱなし'"
+          },
+          "error": null
+        }
+      ]
+    }
+  ]
+}
