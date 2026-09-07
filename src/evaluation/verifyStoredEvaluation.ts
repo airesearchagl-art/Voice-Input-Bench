@@ -47,8 +47,14 @@ export type EvaluationVerificationErrorKind =
   | 'EVALUATION_INTEGRITY_MISMATCH'
   /** The Run, Result or input texts are no longer the ones evaluated. */
   | 'EVALUATION_SUBJECT_MISMATCH'
-  /** Recomputing raw-char-v1 does not reproduce the stored metrics. */
-  | 'EVALUATION_METRICS_MISMATCH';
+  /** Recomputing the evaluator does not reproduce the stored metrics. */
+  | 'EVALUATION_METRICS_MISMATCH'
+  /**
+   * Recomputing does not reproduce the stored entities, matches, or leftovers.
+   *
+   * Only critical-info-v1 stores that working; raw-char-v1 has none to check.
+   */
+  | 'EVALUATION_ENTITIES_MISMATCH';
 
 export class EvaluationVerificationError extends Error {
   readonly kind: EvaluationVerificationErrorKind;

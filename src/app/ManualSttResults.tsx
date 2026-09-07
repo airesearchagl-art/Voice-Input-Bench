@@ -1,8 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import type { RunCatalogEntry } from '@/results/runEvidence';
 import type { IntegrityTrust, StoredResult } from '@/results/resultSchema';
+import type { EvaluatorId, StoredEvaluation } from '@/evaluation/createEvaluation';
+import type {
+  CriticalEvaluationV2,
+  StoredCriticalEntity,
+} from '@/evaluation/criticalEvaluationSchema';
 import type { EvaluationV1 } from '@/evaluation/evaluationSchema';
 import { DELIVERY_PATHS, STT_TOOL_IDS, type DeliveryPath, type SttToolId } from '@/results/tools';
 import {
@@ -50,7 +55,7 @@ type EvaluationEntry =
   | {
       status: 'verified';
       evaluationId: string;
-      evaluation: EvaluationV1;
+      evaluation: StoredEvaluation;
       referenceText: string;
       hypothesisText: string;
     }
@@ -117,6 +122,70 @@ function formatCer(cer: number): string {
   return cer.toFixed(4);
 }
 
+/** A rate reads better as a percentage, with the raw fraction kept beside it. */
+function formatRate(rate: number): string {
+  return `${(rate * 100).toFixed(1)}%`;
+}
+
+type VerifiedEvaluationEntry = Extract<EvaluationEntry, { status: 'verified' }>;
+
+interface RawCharEntry extends VerifiedEvaluationEntry {
+  evaluation: EvaluationV1;
+}
+
+interface CriticalEntry extends VerifiedEvaluationEntry {
+  evaluation: CriticalEvaluationV2;
+}
+
+function isVerified(entry: EvaluationEntry): entry is VerifiedEvaluationEntry {
+  return entry.status === 'verified';
+}
+
+function isCritical(entry: VerifiedEvaluationEntry): entry is CriticalEntry {
+  return entry.evaluation.schema_version === 2;
+}
+
+/**
+ * The evaluator contract as the artifact records it.
+ *
+ * Rendered field by field from the stored record rather than from a hard-coded
+ * list, so an artifact measured under an older contract shows the semantics it
+ * actually carries instead of the ones this build happens to implement.
+ */
+function EvaluatorRows({ evaluation }: { evaluation: StoredEvaluation }) {
+  return (
+    <>
+      <dt>Evaluation ID</dt>
+      <dd>{evaluation.evaluation_id}</dd>
+      {Object.entries(evaluation.evaluator).map(([field, value]) => (
+        <Fragment key={field}>
+          <dt>{field === 'id' ? 'Evaluator ID' : field}</dt>
+          <dd>{String(value)}</dd>
+        </Fragment>
+      ))}
+    </>
+  );
+}
+
+/**
+ * One entity with the span it was read from.
+ *
+ * The code point range is shown, not decoration: it is what makes the artifact
+ * auditable against the text, so it belongs on screen next to the text it
+ * points into.
+ */
+function EntitySpan({ entity }: { entity: StoredCriticalEntity }) {
+  return (
+    <>
+      <span className="mono">{entity.raw}</span>
+      <span className="hint">
+        {' '}
+        [{entity.start_code_point}–{entity.end_code_point})
+      </span>
+    </>
+  );
+}
+
 /**
  * raw-char-v1 for one Result.
  *
@@ -125,35 +194,16 @@ function formatCer(cer: number): string {
  * not a grade: there is no ranking here and no better or worse tool.
  */
 function RawEvaluationSection({
-  resultId,
-  sealed,
   entries,
   busy,
   disabled,
-  error,
   onCreate,
 }: {
-  resultId: string;
-  sealed: boolean;
-  entries: EvaluationEntry[];
+  entries: RawCharEntry[];
   busy: boolean;
   disabled: boolean;
-  error: ApiErrorShape | null;
   onCreate: () => void;
 }) {
-  if (!sealed) {
-    return (
-      <div className="raw-eval">
-        <h4>Raw Character Evaluation</h4>
-        <p className="fixed-note">
-          この Result は integrity 署名を持たない legacy (schema v1) のため、
-          <strong>raw-char-v1 の strict evaluation 対象外</strong>です。観測としては
-          読めますが、tool identity が保存後に編集されていないことを証明できません。
-        </p>
-      </div>
-    );
-  }
-
   return (
     <div className="raw-eval">
       <h4>Raw Character Evaluation</h4>
@@ -161,42 +211,147 @@ function RawEvaluationSection({
         {busy ? '評価中…' : 'Raw評価を作成'}
       </button>
 
-      {error && <ErrorBox title={`Evaluation（${resultId}）`} error={error} />}
-
       {entries.length === 0 && (
         <p className="fixed-note">この Result にはまだ raw-char-v1 の評価がありません。</p>
       )}
 
-      {entries.map((entry) =>
-        entry.status === 'verified' ? (
+      {entries.map((entry) => (
+        <div key={entry.evaluationId} className="raw-eval-card">
+          <dl className="kv compact">
+            <EvaluatorRows evaluation={entry.evaluation} />
+            <dt>Exact Match</dt>
+            <dd>{entry.evaluation.metrics.exact_match ? 'true' : 'false'}</dd>
+            <dt>CER</dt>
+            <dd>{formatCer(entry.evaluation.metrics.cer)}</dd>
+            <dt>Edit Distance</dt>
+            <dd>{entry.evaluation.metrics.edit_distance}</dd>
+            <dt>S / D / I</dt>
+            <dd>
+              {entry.evaluation.metrics.substitutions} / {entry.evaluation.metrics.deletions} /{' '}
+              {entry.evaluation.metrics.insertions}
+            </dd>
+            <dt>Reference chars</dt>
+            <dd>{entry.evaluation.metrics.reference_chars}</dd>
+            <dt>Hypothesis chars</dt>
+            <dd>{entry.evaluation.metrics.hypothesis_chars}</dd>
+            <dt>Created At</dt>
+            <dd>{entry.evaluation.created_at}</dd>
+          </dl>
+
+          <div className="raw-eval-texts">
+            <div>
+              <span className="hint">canonical source（reference）</span>
+              <pre className="transcript">{entry.referenceText}</pre>
+            </div>
+            <div>
+              <span className="hint">raw transcript（hypothesis）</span>
+              <pre className="transcript">{entry.hypothesisText}</pre>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * critical-info-v1 for one Result.
+ *
+ * A preservation rate on its own would be the least useful number on the page,
+ * so the entities are listed with it: which facts were matched, which the
+ * transcript lost, and which it introduced. The surfaces are shown as written
+ * on both sides, because 「2700mm」 preserving 「二千七百ミリ」 is exactly the
+ * kind of thing an operator wants to see rather than take on trust.
+ */
+function CriticalEvaluationSection({
+  entries,
+  busy,
+  disabled,
+  onCreate,
+}: {
+  entries: CriticalEntry[];
+  busy: boolean;
+  disabled: boolean;
+  onCreate: () => void;
+}) {
+  return (
+    <div className="raw-eval">
+      <h4>Critical Information Evaluation</h4>
+      <button type="button" className="secondary" onClick={onCreate} disabled={disabled}>
+        {busy ? '評価中…' : 'Critical情報を評価'}
+      </button>
+
+      {entries.length === 0 && (
+        <p className="fixed-note">この Result にはまだ critical-info-v1 の評価がありません。</p>
+      )}
+
+      {entries.map((entry) => {
+        const { metrics } = entry.evaluation;
+        return (
           <div key={entry.evaluationId} className="raw-eval-card">
             <dl className="kv compact">
-              <dt>Evaluation ID</dt>
-              <dd>{entry.evaluation.evaluation_id}</dd>
-              <dt>Evaluator ID</dt>
-              <dd>{entry.evaluation.evaluator.id}</dd>
-              <dt>Unit</dt>
-              <dd>{entry.evaluation.evaluator.unit}</dd>
-              <dt>Normalization</dt>
-              <dd>{entry.evaluation.evaluator.normalization}</dd>
-              <dt>Exact Match</dt>
-              <dd>{entry.evaluation.metrics.exact_match ? 'true' : 'false'}</dd>
-              <dt>CER</dt>
-              <dd>{formatCer(entry.evaluation.metrics.cer)}</dd>
-              <dt>Edit Distance</dt>
-              <dd>{entry.evaluation.metrics.edit_distance}</dd>
-              <dt>S / D / I</dt>
+              <EvaluatorRows evaluation={entry.evaluation} />
+              <dt>Matched / Missing / Extra</dt>
               <dd>
-                {entry.evaluation.metrics.substitutions} / {entry.evaluation.metrics.deletions} /{' '}
-                {entry.evaluation.metrics.insertions}
+                {metrics.matched} / {metrics.missing} / {metrics.extra}
               </dd>
-              <dt>Reference chars</dt>
-              <dd>{entry.evaluation.metrics.reference_chars}</dd>
-              <dt>Hypothesis chars</dt>
-              <dd>{entry.evaluation.metrics.hypothesis_chars}</dd>
+              <dt>Preservation Rate</dt>
+              <dd>
+                {formatRate(metrics.preservation_rate)}（{metrics.matched} /{' '}
+                {metrics.reference_entities}）
+              </dd>
+              <dt>Reference entities</dt>
+              <dd>{metrics.reference_entities}</dd>
+              <dt>Hypothesis entities</dt>
+              <dd>{metrics.hypothesis_entities}</dd>
+              <dt>Exact multiset match</dt>
+              <dd>{metrics.exact_entity_multiset_match ? 'true' : 'false'}</dd>
               <dt>Created At</dt>
               <dd>{entry.evaluation.created_at}</dd>
             </dl>
+
+            <div className="entity-block">
+              <span className="hint">matched entities（reference → hypothesis）</span>
+              {entry.evaluation.matches.length === 0 ? (
+                <p className="fixed-note">保持できた entity はありません。</p>
+              ) : (
+                <ul className="entity-list">
+                  {entry.evaluation.matches.map((match) => (
+                    <li key={`${match.canonical_key}-${match.reference.start_code_point}`}>
+                      <EntitySpan entity={match.reference} /> →{' '}
+                      <EntitySpan entity={match.hypothesis} />{' '}
+                      <span className="hint">{match.canonical_key}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            {entry.evaluation.missing.length > 0 && (
+              <div className="entity-block">
+                <span className="hint">missing（reference にあって hypothesis に無い）</span>
+                <ul className="entity-list warn">
+                  {entry.evaluation.missing.map((item) => (
+                    <li key={`${item.canonical_key}-${item.start_code_point}`}>
+                      <EntitySpan entity={item} /> <span className="hint">{item.canonical_key}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {entry.evaluation.extra.length > 0 && (
+              <div className="entity-block">
+                <span className="hint">extra（hypothesis にあって reference に無い）</span>
+                <ul className="entity-list warn">
+                  {entry.evaluation.extra.map((item) => (
+                    <li key={`${item.canonical_key}-${item.start_code_point}`}>
+                      <EntitySpan entity={item} /> <span className="hint">{item.canonical_key}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             <div className="raw-eval-texts">
               <div>
@@ -209,15 +364,88 @@ function RawEvaluationSection({
               </div>
             </div>
           </div>
-        ) : (
-          <ErrorBox
-            key={entry.evaluationId}
-            title={entry.evaluationId}
-            error={{ kind: entry.reason, message: entry.message, detail: entry.detail }}
-          />
-        ),
-      )}
+        );
+      })}
     </div>
+  );
+}
+
+/**
+ * Both evaluators for one Result, plus anything that failed to verify.
+ *
+ * A rejected Evaluation is not shown under either evaluator: the reason it was
+ * rejected can be that its evaluator record is unreadable, so filing it under
+ * one of them would be a guess.
+ */
+function EvaluationSections({
+  resultId,
+  sealed,
+  entries,
+  busyEvaluator,
+  disabled,
+  error,
+  onCreateRawChar,
+  onCreateCritical,
+}: {
+  resultId: string;
+  sealed: boolean;
+  entries: EvaluationEntry[];
+  busyEvaluator: string | null;
+  disabled: boolean;
+  error: ApiErrorShape | null;
+  onCreateRawChar: () => void;
+  onCreateCritical: () => void;
+}) {
+  if (!sealed) {
+    return (
+      <div className="raw-eval">
+        <h4>Evaluation</h4>
+        <p className="fixed-note">
+          この Result は integrity 署名を持たない legacy (schema v1) のため、
+          <strong>raw-char-v1 / critical-info-v1 いずれの strict evaluation も対象外</strong>
+          です。観測としては読めますが、tool identity が保存後に編集されていないことを
+          証明できません。
+        </p>
+      </div>
+    );
+  }
+
+  const verified = entries.filter(isVerified);
+  const rejected = entries.filter((entry) => entry.status === 'rejected');
+
+  return (
+    <>
+      {error && <ErrorBox title={`Evaluation（${resultId}）`} error={error} />}
+
+      <RawEvaluationSection
+        entries={verified.filter((entry): entry is RawCharEntry => !isCritical(entry))}
+        busy={busyEvaluator === 'raw-char-v1'}
+        disabled={disabled}
+        onCreate={onCreateRawChar}
+      />
+
+      <CriticalEvaluationSection
+        entries={verified.filter(isCritical)}
+        busy={busyEvaluator === 'critical-info-v1'}
+        disabled={disabled}
+        onCreate={onCreateCritical}
+      />
+
+      {rejected.length > 0 && (
+        <div className="raw-eval">
+          <h4>検証に失敗した Evaluation</h4>
+          {rejected.map((entry) =>
+            entry.status === 'rejected' ? (
+              <ErrorBox
+                key={entry.evaluationId}
+                title={entry.evaluationId}
+                error={{ kind: entry.reason, message: entry.message, detail: entry.detail }}
+              />
+            ) : null,
+          )}
+        </div>
+      )}
+    </>
   );
 }
 
@@ -253,8 +481,11 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
   /** Carries the Run it belongs to, so a late failure is never read as another Run's. */
   const [saveError, setSaveError] = useState<{ runId: string; error: ApiErrorShape } | null>(null);
 
-  /** The Result currently being evaluated, if any. */
-  const [evaluating, setEvaluating] = useState<string | null>(null);
+  /** Which Result is being evaluated with which evaluator, if any. */
+  const [evaluating, setEvaluating] = useState<{
+    resultId: string;
+    evaluatorId: EvaluatorId;
+  } | null>(null);
   const [evaluationError, setEvaluationError] = useState<{
     runId: string;
     resultId: string;
@@ -440,18 +671,19 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
   /**
    * Evaluate one sealed Result against its Run's canonical text.
    *
-   * Only the Result ID is sent. Everything the measurement is about is resolved
-   * server-side, so nothing this page believes can influence the numbers.
+   * Only the Result ID and which evaluator to run are sent. Everything the
+   * measurement is about is resolved server-side, so nothing this page believes
+   * can influence the numbers.
    */
   const createEvaluation = useCallback(
-    async (resultId: string, runId: string) => {
-      setEvaluating(resultId);
+    async (resultId: string, runId: string, evaluatorId: EvaluatorId) => {
+      setEvaluating({ resultId, evaluatorId });
       setEvaluationError(null);
       try {
         const response = await fetch('/api/evaluations', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ resultId }),
+          body: JSON.stringify({ resultId, evaluatorId }),
         });
         if (!response.ok) {
           setEvaluationError({ runId, resultId, error: await readApiError(response) });
@@ -673,18 +905,25 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
                 </dl>
                 <pre className="transcript">{entry.transcript}</pre>
 
-                <RawEvaluationSection
+                <EvaluationSections
                   resultId={entry.resultId}
                   sealed={entry.integrityTrust === 'sealed'}
                   entries={evaluationsByResult.get(entry.resultId) ?? []}
-                  busy={evaluating === entry.resultId}
+                  busyEvaluator={
+                    evaluating?.resultId === entry.resultId ? evaluating.evaluatorId : null
+                  }
                   disabled={evaluating !== null}
                   error={
                     evaluationError && evaluationError.resultId === entry.resultId
                       ? evaluationError.error
                       : null
                   }
-                  onCreate={() => void createEvaluation(entry.resultId, selectedRunId)}
+                  onCreateRawChar={() =>
+                    void createEvaluation(entry.resultId, selectedRunId, 'raw-char-v1')
+                  }
+                  onCreateCritical={() =>
+                    void createEvaluation(entry.resultId, selectedRunId, 'critical-info-v1')
+                  }
                 />
               </article>
             ) : (

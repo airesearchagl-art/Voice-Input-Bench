@@ -340,3 +340,134 @@ describe('GET /api/evaluations/<evaluation-id>', () => {
     expect(body.error.kind).toBe('EVALUATION_INTEGRITY_MISMATCH');
   });
 });
+
+describe('POST /api/evaluations with an evaluator', () => {
+  it('defaults to raw-char-v1 when no evaluator is named', async () => {
+    await writeRun();
+    await saveSealedResult();
+
+    const response = await postEvaluation(postRequest({ resultId: RESULT_ID }));
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as {
+      evaluation: { schema_version: number; evaluator: { id: string } };
+    };
+    expect(body.evaluation.schema_version).toBe(1);
+    expect(body.evaluation.evaluator.id).toBe('raw-char-v1');
+  });
+
+  it('runs critical-info-v1 when asked for it', async () => {
+    await writeRun();
+    await saveSealedResult();
+
+    const response = await postEvaluation(
+      postRequest({ resultId: RESULT_ID, evaluatorId: 'critical-info-v1' }),
+    );
+    expect(response.status).toBe(201);
+
+    const body = (await response.json()) as {
+      evaluation: {
+        schema_version: number;
+        evaluator: { id: string; unit: string; normalization: string };
+        metrics: {
+          reference_entities: number;
+          matched: number;
+          missing: number;
+          extra: number;
+          preservation_rate: number;
+        };
+        missing: Array<{ surface: string }>;
+        extra: Array<{ surface: string }>;
+      };
+    };
+
+    expect(body.evaluation.schema_version).toBe(2);
+    expect(body.evaluation.evaluator).toEqual({
+      id: 'critical-info-v1',
+      scope: 'numeric-unit-time',
+      number_grammar: 'number-grammar-v1',
+      unit_aliases: 'unit-alias-v1',
+      matching: 'canonical-multiset-v1',
+      separator_policy: 'space-fullwidth-space-v1',
+    });
+    // The source says 二千七百ミリ and the transcript says 2700ミリ — the same
+    // fact, spelled differently.
+    expect(body.evaluation.metrics).toMatchObject({
+      reference_entities: 1,
+      matched: 1,
+      missing: 0,
+      extra: 0,
+      preservation_rate: 1,
+    });
+  });
+
+  it('refuses an evaluator it does not implement', async () => {
+    await writeRun();
+    await saveSealedResult();
+
+    const response = await postEvaluation(
+      postRequest({ resultId: RESULT_ID, evaluatorId: 'llm-grader-v1' }),
+    );
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: { kind: string; message: string } };
+    expect(body.error.kind).toBe('BAD_REQUEST');
+    expect(body.error.message).toContain('critical-info-v1');
+  });
+
+  it('refuses a non-string evaluator', async () => {
+    await writeRun();
+    await saveSealedResult();
+    const response = await postEvaluation(postRequest({ resultId: RESULT_ID, evaluatorId: 7 }));
+    expect(response.status).toBe(400);
+  });
+
+  it('refuses a legacy v1 Result for critical-info-v1 as well', async () => {
+    await writeRun();
+    await saveLegacyResult();
+
+    const response = await postEvaluation(
+      postRequest({ resultId: LEGACY_RESULT_ID, evaluatorId: 'critical-info-v1' }),
+    );
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as { error: { kind: string } };
+    expect(body.error.kind).toBe('EVALUATION_RESULT_NOT_SEALED');
+  });
+
+  it('lists a raw-char and a critical Evaluation for the same Run', async () => {
+    await writeRun();
+    await saveSealedResult();
+    await postEvaluation(postRequest({ resultId: RESULT_ID }));
+    await postEvaluation(postRequest({ resultId: RESULT_ID, evaluatorId: 'critical-info-v1' }));
+
+    const body = (await (await getEvaluations(getRequest(`?runId=${RUN_ID}`))).json()) as {
+      evaluations: Array<{ status: string; evaluation?: { evaluator: { id: string } } }>;
+    };
+    expect(body.evaluations).toHaveLength(2);
+    expect(body.evaluations.every((entry) => entry.status === 'verified')).toBe(true);
+    expect(body.evaluations.map((entry) => entry.evaluation?.evaluator.id).sort()).toEqual([
+      'critical-info-v1',
+      'raw-char-v1',
+    ]);
+  });
+
+  it('returns one verified critical Evaluation with both texts', async () => {
+    await writeRun();
+    await saveSealedResult();
+    const created = (await (
+      await postEvaluation(postRequest({ resultId: RESULT_ID, evaluatorId: 'critical-info-v1' }))
+    ).json()) as { evaluationId: string };
+
+    const response = await getEvaluation(
+      new Request(`http://localhost/api/evaluations/${created.evaluationId}`),
+      detailContext(created.evaluationId),
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      evaluation: { schema_version: number };
+      referenceText: string;
+      hypothesisText: string;
+    };
+    expect(body.evaluation.schema_version).toBe(2);
+    expect(body.referenceText).toBe(SOURCE_TEXT);
+    expect(body.hypothesisText).toBe(TRANSCRIPT);
+  });
+});

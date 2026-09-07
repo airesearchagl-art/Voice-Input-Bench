@@ -6,7 +6,13 @@ import {
   createSessionStore,
 } from '@/lib/engineConfig';
 import { badRequest, toErrorResponse } from '@/lib/apiError';
-import { createRawCharEvaluation, listEvaluationsForRun } from '@/evaluation/createEvaluation';
+import {
+  EVALUATOR_IDS,
+  createEvaluation,
+  isEvaluatorId,
+  listEvaluationsForRun,
+} from '@/evaluation/createEvaluation';
+import { RAW_CHAR_ALGORITHM } from '@/evaluation/rawChar';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,15 +54,21 @@ export async function GET(request: Request) {
 
 interface PostEvaluationBody {
   resultId?: unknown;
+  evaluatorId?: unknown;
 }
 
 /**
  * `POST /api/evaluations` — evaluate one sealed Result.
  *
- * The client sends a Result ID and nothing else. Which Run, which canonical
- * text, which tool, and every hash are resolved server-side from disk; a
- * measurement built from client-supplied metadata would not be a measurement of
- * anything in particular.
+ * The client sends a Result ID and which evaluator to run. That is all it gets
+ * to send: which Run, which canonical text, which tool, and every hash are
+ * resolved server-side from disk, because a measurement built from
+ * client-supplied metadata would not be a measurement of anything in particular.
+ *
+ * `evaluatorId` is optional and defaults to `raw-char-v1`, so the P3-A request
+ * shape keeps working unchanged. An unrecognized name is refused rather than
+ * defaulted — quietly running a different measurement than the one asked for
+ * would store a number under the wrong heading.
  */
 export async function POST(request: Request) {
   let body: PostEvaluationBody;
@@ -70,8 +82,13 @@ export async function POST(request: Request) {
     return badRequest('resultId が必要です。');
   }
 
+  const evaluatorId = body.evaluatorId ?? RAW_CHAR_ALGORITHM;
+  if (!isEvaluatorId(evaluatorId)) {
+    return badRequest(`evaluatorId は ${EVALUATOR_IDS.join(' / ')} のいずれかである必要があります。`);
+  }
+
   try {
-    const outcome = await createRawCharEvaluation({ resultId: body.resultId }, deps());
+    const outcome = await createEvaluation({ resultId: body.resultId, evaluatorId }, deps());
     return NextResponse.json(
       {
         ok: true,

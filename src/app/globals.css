@@ -425,3 +425,18 @@ td.coverage.rejected-only {
     grid-template-columns: 1fr 1fr;
   }
 }
+
+.entity-block {
+  margin-top: 10px;
+}
+
+.entity-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.entity-list.warn {
+  color: var(--warn);
+}
