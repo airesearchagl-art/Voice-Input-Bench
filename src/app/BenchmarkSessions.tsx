@@ -379,6 +379,11 @@ export default function BenchmarkSessions() {
                           ⚠ 未帰属の rejected {row.unattributedRejected.length} 件
                         </div>
                       )}
+                      {row.legacyUnsealed.length > 0 && (
+                        <div className="unattributed-flag">
+                          ⚠ 未署名 (legacy v1) {row.legacyUnsealed.length} 件
+                        </div>
+                      )}
                     </td>
                     <td className="mono">
                       {row.runId}
@@ -419,6 +424,25 @@ export default function BenchmarkSessions() {
                       }}
                     />
                   ))}
+                  <div style={{ height: 12 }} />
+                </>
+              )}
+
+              {row.legacyUnsealed.length > 0 && (
+                <>
+                  <p className="fixed-note">
+                    以下の Result は integrity 署名を持たない legacy (schema v1) です。観測
+                    としては読めますが、tool identity が保存後に編集されていないことを証明
+                    できないため、どの tool の coverage にも計上していません。
+                  </p>
+                  <ul className="legacy-list">
+                    {row.legacyUnsealed.map((legacy) => (
+                      <li key={legacy.resultId} className="mono">
+                        {legacy.resultId} / {legacy.toolId ?? 'tool 不明'} / {legacy.status}
+                        {legacy.reason ? ` / ${legacy.reason}` : ''}
+                      </li>
+                    ))}
+                  </ul>
                   <div style={{ height: 12 }} />
                 </>
               )}

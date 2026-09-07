@@ -384,3 +384,10 @@ td.coverage.rejected-only {
   font-size: 11px;
   color: var(--warn);
 }
+
+.legacy-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 11px;
+  color: var(--warn);
+}

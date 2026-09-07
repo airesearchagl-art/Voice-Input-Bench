@@ -5,9 +5,10 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { LocalRunStore } from '@/storage/LocalRunStore';
 import { LocalResultStore } from '@/storage/LocalResultStore';
+import { computeResultSemanticSha256, type ResultPayloadV2 } from './resultSchema';
 import { RunEvidenceError, listVerifiableRuns, verifyRunEvidence } from './runEvidence';
 import { listResultsForRun, saveManualSttResult } from './saveResult';
-import { ToolResolutionError } from './tools';
+import { BUILT_IN_TOOL_NAMES, ToolResolutionError, type SttToolId } from './tools';
 import { StorageBoundaryError } from '@/storage/rootIsolation';
 
 /**
@@ -238,7 +239,7 @@ describe('saveManualSttResult', () => {
     expect((await readdir(outcome.resultDir)).sort()).toEqual(['result.json', 'transcript.txt']);
 
     const result = outcome.result;
-    expect(result.schema_version).toBe(1);
+    expect(result.schema_version).toBe(2);
     expect(result.result_id).toBe(RESULT_ID);
     expect(result.run_id).toBe(RUN_ID);
     expect(result.captured_at).toBe(NOW.toISOString());
@@ -662,6 +663,25 @@ describe('RF-3: stored Results are verified on read', () => {
     await writeFile(file, `${JSON.stringify(result, null, 2)}\n`);
   }
 
+  /**
+   * Edit a Result and re-seal it, as someone who knows the hashing scheme would.
+   *
+   * The seal cannot stop that, and is not meant to — it stops silent edits. What
+   * still has to hold afterwards is every check the seal does not cover: the
+   * transcript bytes on disk, and the Run as it actually is.
+   */
+  async function resealResultJson(mutate: (result: Record<string, unknown>) => void) {
+    const file = resultStore.resolveResultFile(RESULT_ID, 'result.json');
+    const result = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    mutate(result);
+    delete result.integrity;
+    result.integrity = {
+      algorithm: 'sha256',
+      semantic_sha256: computeResultSemanticSha256(result as unknown as ResultPayloadV2),
+    };
+    await writeFile(file, `${JSON.stringify(result, null, 2)}\n`);
+  }
+
   it('returns a verified entry for an untouched Result', async () => {
     await seed();
     const entry = await listOne();
@@ -688,8 +708,9 @@ describe('RF-3: stored Results are verified on read', () => {
 
   it('rejects a transcript whose byte length no longer matches', async () => {
     await seed();
-    // Same recorded hash, different recorded length.
-    await patchResultJson((result) => {
+    // Same recorded hash, different recorded length — re-sealed, so the byte
+    // check has to catch it on its own.
+    await resealResultJson((result) => {
       (result.transcript as Record<string, unknown>).bytes = 9999;
     });
 
@@ -757,7 +778,7 @@ describe('RF-3: stored Results are verified on read', () => {
   it('rejects an unsupported result schema', async () => {
     await seed();
     await patchResultJson((result) => {
-      result.schema_version = 2;
+      result.schema_version = 3;
     });
 
     const entry = await listOne();
@@ -948,5 +969,406 @@ describe('RF-2: tool and capture contract on readback', () => {
     const entry = await listOne();
     expect(entry.status).toBe('rejected');
     if (entry.status === 'rejected') expect(entry.trustedToolId).toBeUndefined();
+  });
+});
+
+/**
+ * R1.1 — Result semantic integrity.
+ *
+ * Field-by-field validation proves a Result is well-formed. It cannot prove the
+ * Result still says what it said when it was written: every check passes just as
+ * happily after `tool.id` and `tool.name` are rewritten together from Windows to
+ * Aqua Voice, and the observation has quietly moved to the other column.
+ *
+ * The seal is what makes valid-to-valid edits visible.
+ */
+describe('R1.1: Result semantic integrity', () => {
+  async function seedSealed(
+    resultId: string,
+    toolId: SttToolId = 'windows-standard-voice-input',
+    rawTranscript = 'Windows の書き起こし',
+  ) {
+    return saveManualSttResult(
+      { ...INPUT, toolId, rawTranscript },
+      { runStore, resultStore, now: () => NOW, resultId },
+    );
+  }
+
+  /** A P2-A Result, written the way P2-A wrote them: no integrity record. */
+  async function seedLegacyV1(
+    resultId: string,
+    toolId: Exclude<SttToolId, 'other'> = 'windows-standard-voice-input',
+    transcript = 'legacy の書き起こし',
+  ) {
+    const evidence = await verifyRunEvidence(runStore, RUN_ID);
+    const legacy = {
+      schema_version: 1,
+      result_id: resultId,
+      run_id: evidence.runId,
+      captured_at: NOW.toISOString(),
+      tool: { id: toolId, name: BUILT_IN_TOOL_NAMES[toolId], version: null },
+      capture: { method: 'manual-paste', delivery_path: 'speaker-to-mic' },
+      run_evidence: {
+        manifest_schema_version: evidence.manifestSchemaVersion,
+        test_id: evidence.testId,
+        source_sha256: evidence.sourceSha256,
+        audio_sha256: evidence.audioSha256,
+      },
+      transcript: {
+        file: 'transcript.txt',
+        encoding: 'utf-8',
+        line_endings: 'lf',
+        sha256: sha(transcript),
+        bytes: Buffer.byteLength(transcript, 'utf8'),
+      },
+    };
+    await resultStore.saveResult(resultId, {
+      transcriptText: transcript,
+      resultJson: Buffer.from(`${JSON.stringify(legacy, null, 2)}\n`, 'utf8'),
+    });
+  }
+
+  async function patch(resultId: string, mutate: (result: Record<string, unknown>) => void) {
+    const file = resultStore.resolveResultFile(resultId, 'result.json');
+    const result = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    mutate(result);
+    await writeFile(file, `${JSON.stringify(result, null, 2)}\n`);
+  }
+
+  async function onlyEntry(runId = RUN_ID) {
+    const entries = await listResultsForRun({ runStore, resultStore }, runId);
+    expect(entries).toHaveLength(1);
+    return entries[0]!;
+  }
+
+  it('seals a new Windows Result, which reads back as sealed and verified', async () => {
+    await writeRun();
+    const outcome = await seedSealed(RESULT_ID);
+
+    expect(outcome.result.schema_version).toBe(2);
+    expect(outcome.result.integrity.algorithm).toBe('sha256');
+    expect(outcome.result.integrity.semantic_sha256).toMatch(/^[0-9a-f]{64}$/);
+
+    const entry = await onlyEntry();
+    expect(entry.status).toBe('verified');
+    if (entry.status === 'verified') {
+      expect(entry.integrityTrust).toBe('sealed');
+      expect(entry.result.tool.id).toBe('windows-standard-voice-input');
+    }
+  });
+
+  it('seals a new Aqua Voice Result, which reads back as sealed and verified', async () => {
+    await writeRun();
+    await seedSealed(RESULT_ID, 'aqua-voice', 'Aqua の書き起こし');
+
+    const entry = await onlyEntry();
+    expect(entry.status).toBe('verified');
+    if (entry.status === 'verified') {
+      expect(entry.integrityTrust).toBe('sealed');
+      expect(entry.result.tool.id).toBe('aqua-voice');
+    }
+  });
+
+  it('rejects a Windows → Aqua identity swap that is valid on both sides', async () => {
+    await writeRun();
+    await seedSealed(RESULT_ID);
+
+    // Both fields moved together, so nothing contradicts anything. Only the
+    // seal knows this Result used to say something else.
+    await patch(RESULT_ID, (result) => {
+      const tool = result.tool as Record<string, unknown>;
+      tool.id = 'aqua-voice';
+      tool.name = BUILT_IN_TOOL_NAMES['aqua-voice'];
+    });
+
+    const entry = await onlyEntry();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') {
+      expect(entry.reason).toBe('RESULT_INTEGRITY_MISMATCH');
+      // The metadata is in doubt, so there is nothing to attribute it to.
+      expect(entry.integrityTrust).toBeUndefined();
+    }
+  });
+
+  it('rejects a delivery_path swapped for another valid delivery_path', async () => {
+    await writeRun();
+    await seedSealed(RESULT_ID);
+    await patch(RESULT_ID, (result) => {
+      (result.capture as Record<string, unknown>).delivery_path = 'virtual-audio';
+    });
+
+    const entry = await onlyEntry();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('RESULT_INTEGRITY_MISMATCH');
+  });
+
+  it('rejects a captured_at swapped for another valid timestamp', async () => {
+    await writeRun();
+    await seedSealed(RESULT_ID);
+    await patch(RESULT_ID, (result) => {
+      result.captured_at = '2026-09-07T09:30:00.000Z';
+    });
+
+    const entry = await onlyEntry();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('RESULT_INTEGRITY_MISMATCH');
+  });
+
+  it('rejects a Result re-pointed at another Run with that Run’s real evidence', async () => {
+    await writeRun();
+    await writeRun(OTHER_RUN_ID, { testId: 'numbers-units-001' });
+    await seedSealed(RESULT_ID);
+
+    const other = await verifyRunEvidence(runStore, OTHER_RUN_ID);
+    await patch(RESULT_ID, (result) => {
+      result.run_id = other.runId;
+      result.run_evidence = {
+        manifest_schema_version: other.manifestSchemaVersion,
+        test_id: other.testId,
+        source_sha256: other.sourceSha256,
+        audio_sha256: other.audioSha256,
+      };
+    });
+
+    // It now claims the other Run, and every claim it makes about that Run is
+    // true. The seal is the only thing that says it was written about a
+    // different one.
+    expect(await listResultsForRun({ runStore, resultStore }, RUN_ID)).toEqual([]);
+    const entry = await onlyEntry(OTHER_RUN_ID);
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('RESULT_INTEGRITY_MISMATCH');
+  });
+
+  it('rejects rewritten transcript metadata even when the file is rewritten to match', async () => {
+    await writeRun();
+    await seedSealed(RESULT_ID);
+
+    const replacement = '別の書き起こしに差し替えられた本文';
+    await writeFile(resultStore.resolveResultFile(RESULT_ID, 'transcript.txt'), replacement);
+    await patch(RESULT_ID, (result) => {
+      const transcript = result.transcript as Record<string, unknown>;
+      transcript.sha256 = sha(replacement);
+      transcript.bytes = Buffer.byteLength(replacement, 'utf8');
+    });
+
+    // File and record agree, so the transcript checks alone would pass.
+    const entry = await onlyEntry();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('RESULT_INTEGRITY_MISMATCH');
+  });
+
+  it('accepts a reformatted result.json with reordered keys', async () => {
+    await writeRun();
+    await seedSealed(RESULT_ID);
+
+    const file = resultStore.resolveResultFile(RESULT_ID, 'result.json');
+    const original = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    const reordered: Record<string, unknown> = {};
+    for (const key of Object.keys(original).reverse()) reordered[key] = original[key];
+    // Different key order, different indentation, no trailing newline.
+    await writeFile(file, JSON.stringify(reordered, null, 4));
+
+    const entry = await onlyEntry();
+    expect(entry.status).toBe('verified');
+    if (entry.status === 'verified') expect(entry.integrityTrust).toBe('sealed');
+  });
+
+  it('rejects a Result whose integrity record is missing or malformed', async () => {
+    await writeRun();
+    await seedSealed(RESULT_ID);
+    await patch(RESULT_ID, (result) => {
+      delete result.integrity;
+    });
+
+    const entry = await onlyEntry();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('RESULT_INTEGRITY_MISSING');
+  });
+
+  it('rejects an integrity record naming another algorithm', async () => {
+    await writeRun();
+    await seedSealed(RESULT_ID);
+    await patch(RESULT_ID, (result) => {
+      (result.integrity as Record<string, unknown>).algorithm = 'sha512';
+    });
+
+    const entry = await onlyEntry();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('RESULT_INTEGRITY_MISSING');
+  });
+
+  it('still reads a legacy v1 Result, marked unsealed', async () => {
+    await writeRun();
+    await seedLegacyV1(RESULT_ID);
+
+    const entry = await onlyEntry();
+    expect(entry.status).toBe('verified');
+    if (entry.status === 'verified') {
+      expect(entry.result.schema_version).toBe(1);
+      expect(entry.integrityTrust).toBe('legacy-unsealed');
+      expect(entry.transcript).toBe('legacy の書き起こし');
+    }
+  });
+
+  it('never rewrites a legacy v1 Result on disk', async () => {
+    await writeRun();
+    await seedLegacyV1(RESULT_ID);
+
+    const file = resultStore.resolveResultFile(RESULT_ID, 'result.json');
+    const before = sha(new Uint8Array(await readFile(file)));
+
+    await listResultsForRun({ runStore, resultStore }, RUN_ID);
+    await listResultsForRun({ runStore, resultStore }, RUN_ID);
+
+    expect(sha(new Uint8Array(await readFile(file)))).toBe(before);
+    // And no migration to v2 happened behind the reader's back.
+    const stored = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    expect(stored.schema_version).toBe(1);
+    expect(stored.integrity).toBeUndefined();
+  });
+
+  it('lists a legacy v1 and a sealed v2 Result side by side', async () => {
+    await writeRun();
+    await seedLegacyV1(RESULT_ID);
+    await seedSealed(RESULT_ID_2, 'aqua-voice', 'Aqua の書き起こし');
+
+    const entries = await listResultsForRun({ runStore, resultStore }, RUN_ID);
+    expect(entries.map((entry) => entry.status)).toEqual(['verified', 'verified']);
+    expect(
+      entries.map((entry) => (entry.status === 'verified' ? entry.integrityTrust : null)),
+    ).toEqual(['legacy-unsealed', 'sealed']);
+  });
+});
+
+/**
+ * R1.1 — a missing transcript still belongs to somebody.
+ *
+ * The metadata is checked before the transcript is read, so by the time the file
+ * turns out to be gone the reader already knows whose observation it was. That
+ * only holds when the metadata itself is trustworthy: an unsealed or tampered
+ * Result names a tool, but nothing backs the claim.
+ */
+describe('R1.1: missing transcript attribution', () => {
+  async function removeTranscript(resultId: string) {
+    await rm(resultStore.resolveResultFile(resultId, 'transcript.txt'), { force: true });
+  }
+
+  async function onlyEntry() {
+    const entries = await listResultsForRun({ runStore, resultStore }, RUN_ID);
+    expect(entries).toHaveLength(1);
+    return entries[0]!;
+  }
+
+  it('attributes a missing transcript to Windows when the Result is sealed', async () => {
+    await writeRun();
+    await saveManualSttResult(INPUT, {
+      runStore,
+      resultStore,
+      now: () => NOW,
+      resultId: RESULT_ID,
+    });
+    await removeTranscript(RESULT_ID);
+
+    const entry = await onlyEntry();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') {
+      expect(entry.reason).toBe('RESULT_TRANSCRIPT_MISSING');
+      expect(entry.trustedToolId).toBe('windows-standard-voice-input');
+      expect(entry.integrityTrust).toBe('sealed');
+    }
+  });
+
+  it('attributes a missing transcript to Aqua Voice when the Result is sealed', async () => {
+    await writeRun();
+    await saveManualSttResult(
+      { ...INPUT, toolId: 'aqua-voice', rawTranscript: 'Aqua の書き起こし' },
+      { runStore, resultStore, now: () => NOW, resultId: RESULT_ID },
+    );
+    await removeTranscript(RESULT_ID);
+
+    const entry = await onlyEntry();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') {
+      expect(entry.reason).toBe('RESULT_TRANSCRIPT_MISSING');
+      expect(entry.trustedToolId).toBe('aqua-voice');
+      expect(entry.integrityTrust).toBe('sealed');
+    }
+  });
+
+  it('attributes nothing when the metadata is tampered and the transcript is gone', async () => {
+    await writeRun();
+    await saveManualSttResult(INPUT, {
+      runStore,
+      resultStore,
+      now: () => NOW,
+      resultId: RESULT_ID,
+    });
+
+    const file = resultStore.resolveResultFile(RESULT_ID, 'result.json');
+    const stored = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    (stored.tool as Record<string, unknown>).id = 'aqua-voice';
+    (stored.tool as Record<string, unknown>).name = BUILT_IN_TOOL_NAMES['aqua-voice'];
+    await writeFile(file, `${JSON.stringify(stored, null, 2)}\n`);
+    await removeTranscript(RESULT_ID);
+
+    // The metadata failure is reported, not the missing file — there is no
+    // point naming a victim chosen by whoever did the editing.
+    const entry = await onlyEntry();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') {
+      expect(entry.reason).toBe('RESULT_INTEGRITY_MISMATCH');
+      expect(entry.integrityTrust).toBeUndefined();
+    }
+  });
+
+  it('does not treat a legacy v1 missing transcript as sealed evidence', async () => {
+    await writeRun();
+    const evidence = await verifyRunEvidence(runStore, RUN_ID);
+    const transcript = 'legacy の書き起こし';
+    await resultStore.saveResult(RESULT_ID, {
+      transcriptText: transcript,
+      resultJson: Buffer.from(
+        `${JSON.stringify(
+          {
+            schema_version: 1,
+            result_id: RESULT_ID,
+            run_id: RUN_ID,
+            captured_at: NOW.toISOString(),
+            tool: {
+              id: 'windows-standard-voice-input',
+              name: BUILT_IN_TOOL_NAMES['windows-standard-voice-input'],
+              version: null,
+            },
+            capture: { method: 'manual-paste', delivery_path: 'speaker-to-mic' },
+            run_evidence: {
+              manifest_schema_version: evidence.manifestSchemaVersion,
+              test_id: evidence.testId,
+              source_sha256: evidence.sourceSha256,
+              audio_sha256: evidence.audioSha256,
+            },
+            transcript: {
+              file: 'transcript.txt',
+              encoding: 'utf-8',
+              line_endings: 'lf',
+              sha256: sha(transcript),
+              bytes: Buffer.byteLength(transcript, 'utf8'),
+            },
+          },
+          null,
+          2,
+        )}\n`,
+        'utf8',
+      ),
+    });
+    await removeTranscript(RESULT_ID);
+
+    const entry = await onlyEntry();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') {
+      expect(entry.reason).toBe('RESULT_TRANSCRIPT_MISSING');
+      // It names a tool, but unsealed — not usable as that tool's evidence.
+      expect(entry.trustedToolId).toBe('windows-standard-voice-input');
+      expect(entry.integrityTrust).toBe('legacy-unsealed');
+    }
   });
 });

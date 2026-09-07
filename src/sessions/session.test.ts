@@ -7,7 +7,8 @@ import { LocalRunStore } from '@/storage/LocalRunStore';
 import { LocalResultStore } from '@/storage/LocalResultStore';
 import { LocalSessionStore } from '@/storage/LocalSessionStore';
 import { StorageBoundaryError } from '@/storage/rootIsolation';
-import { RunEvidenceError } from '@/results/runEvidence';
+import { RunEvidenceError, verifyRunEvidence } from '@/results/runEvidence';
+import { BUILT_IN_TOOL_NAMES } from '@/results/tools';
 import { saveManualSttResult } from '@/results/saveResult';
 import { SessionCreationError, createBenchmarkSession } from './createSession';
 import { SessionVerificationError } from './verifyStoredSession';
@@ -1146,5 +1147,212 @@ describe('RF-3: rejected Results are attributed to the tool they belong to', () 
       expect(cellOf(comparison, tool).rejectedCount).toBe(0);
     }
     expect(comparison.rows[0]!.unattributedRejected).toHaveLength(1);
+  });
+});
+
+/**
+ * R1.1 — what the matrix will and will not count.
+ *
+ * A cell is a claim that a specific tool produced (or failed to produce) a
+ * specific observation. That claim rests entirely on the Result's `tool`
+ * section, so only a Result whose metadata is sealed and intact can fill one.
+ *
+ * Unsealed P2-A Results are not errors and are not hidden — they are shown
+ * against the Case, outside the columns.
+ */
+describe('R1.1: only sealed Results count as per-tool coverage', () => {
+  async function seedSession() {
+    await writeRun(SHORT_RUN);
+    return createBenchmarkSession(createInput([SHORT_RUN]), {
+      ...deps(),
+      now: () => NOW,
+      sessionId: SESSION_ID,
+    });
+  }
+
+  function cellOf(comparison: Awaited<ReturnType<typeof buildSessionComparison>>, tool: string) {
+    return comparison.rows[0]!.cells.find((candidate) => candidate.tool === tool)!;
+  }
+
+  /** A P2-A Result, written exactly as P2-A wrote them: no integrity record. */
+  async function saveLegacyV1Result(
+    toolId: 'windows-standard-voice-input' | 'aqua-voice',
+    transcript: string,
+    resultId: string,
+  ) {
+    const evidence = await verifyRunEvidence(runStore, SHORT_RUN);
+    const legacy = {
+      schema_version: 1,
+      result_id: resultId,
+      run_id: SHORT_RUN,
+      captured_at: NOW.toISOString(),
+      tool: { id: toolId, name: BUILT_IN_TOOL_NAMES[toolId], version: null },
+      capture: { method: 'manual-paste', delivery_path: 'speaker-to-mic' },
+      run_evidence: {
+        manifest_schema_version: evidence.manifestSchemaVersion,
+        test_id: evidence.testId,
+        source_sha256: evidence.sourceSha256,
+        audio_sha256: evidence.audioSha256,
+      },
+      transcript: {
+        file: 'transcript.txt',
+        encoding: 'utf-8',
+        line_endings: 'lf',
+        sha256: sha(transcript),
+        bytes: Buffer.byteLength(transcript, 'utf8'),
+      },
+    };
+    return resultStore.saveResult(resultId, {
+      transcriptText: transcript,
+      resultJson: Buffer.from(`${JSON.stringify(legacy, null, 2)}\n`, 'utf8'),
+    });
+  }
+
+  it('counts two sealed Results as coverage on both sides', async () => {
+    await seedSession();
+    await saveResult(
+      SHORT_RUN,
+      'windows-standard-voice-input',
+      'Windows の観測',
+      '20260907T060000000Z-dddd0001',
+    );
+    await saveResult(SHORT_RUN, 'aqua-voice', 'Aqua の観測', '20260907T060001000Z-dddd0002');
+
+    const comparison = await buildSessionComparison(deps(), SESSION_ID);
+    for (const tool of BOTH_TOOLS) {
+      expect(cellOf(comparison, tool)).toMatchObject({ status: 'covered', verifiedCount: 1 });
+    }
+    expect(comparison.rows[0]!.legacyUnsealed).toEqual([]);
+    expect(comparison.rows[0]!.unattributedRejected).toEqual([]);
+  });
+
+  it('keeps a legacy v1 Result out of the cells and shows it against the Case', async () => {
+    await seedSession();
+    const resultId = '20260907T060002000Z-dddd0003';
+    await saveLegacyV1Result('windows-standard-voice-input', 'legacy の観測', resultId);
+
+    const comparison = await buildSessionComparison(deps(), SESSION_ID);
+    expect(cellOf(comparison, 'windows-standard-voice-input')).toMatchObject({
+      status: 'missing',
+      verifiedCount: 0,
+      rejectedCount: 0,
+    });
+    expect(cellOf(comparison, 'aqua-voice').status).toBe('missing');
+    expect(comparison.rows[0]!.legacyUnsealed).toEqual([
+      { resultId, toolId: 'windows-standard-voice-input', status: 'verified' },
+    ]);
+    expect(comparison.rows[0]!.unattributedRejected).toEqual([]);
+  });
+
+  it('does not let a legacy Result mask a sealed one for the same tool', async () => {
+    await seedSession();
+    await saveLegacyV1Result(
+      'windows-standard-voice-input',
+      'legacy の観測',
+      '20260907T060003000Z-dddd0004',
+    );
+    await saveResult(
+      SHORT_RUN,
+      'windows-standard-voice-input',
+      'Windows の観測',
+      '20260907T060004000Z-dddd0005',
+    );
+
+    const comparison = await buildSessionComparison(deps(), SESSION_ID);
+    // The sealed one covers the cell. The legacy one is reported alongside it,
+    // not folded into the count.
+    expect(cellOf(comparison, 'windows-standard-voice-input')).toMatchObject({
+      status: 'covered',
+      verifiedCount: 1,
+    });
+    expect(comparison.rows[0]!.legacyUnsealed).toHaveLength(1);
+  });
+
+  it('does not move a Result between columns on a valid-to-valid identity edit', async () => {
+    await seedSession();
+    const resultId = '20260907T060005000Z-dddd0006';
+    await saveResult(SHORT_RUN, 'windows-standard-voice-input', 'Windows の観測', resultId);
+
+    const file = resultStore.resolveResultFile(resultId, 'result.json');
+    const stored = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    const tool = stored.tool as Record<string, unknown>;
+    tool.id = 'aqua-voice';
+    tool.name = BUILT_IN_TOOL_NAMES['aqua-voice'];
+    await writeFile(file, `${JSON.stringify(stored, null, 2)}\n`);
+
+    const comparison = await buildSessionComparison(deps(), SESSION_ID);
+    // Neither the column it left nor the column it was pushed into.
+    for (const candidate of BOTH_TOOLS) {
+      expect(cellOf(comparison, candidate)).toMatchObject({
+        status: 'missing',
+        verifiedCount: 0,
+        rejectedCount: 0,
+      });
+    }
+    expect(comparison.rows[0]!.unattributedRejected).toHaveLength(1);
+    expect(comparison.rows[0]!.unattributedRejected[0]!.reason).toBe('RESULT_INTEGRITY_MISMATCH');
+  });
+
+  it('counts a sealed Windows Result with a missing transcript against Windows', async () => {
+    await seedSession();
+    const resultId = '20260907T060006000Z-dddd0007';
+    const stored = await saveResult(
+      SHORT_RUN,
+      'windows-standard-voice-input',
+      'Windows の観測',
+      resultId,
+    );
+    await rm(path.join(stored.resultDir, 'transcript.txt'), { force: true });
+
+    const comparison = await buildSessionComparison(deps(), SESSION_ID);
+    expect(cellOf(comparison, 'windows-standard-voice-input')).toMatchObject({
+      status: 'rejected-only',
+      rejectedCount: 1,
+    });
+    expect(cellOf(comparison, 'aqua-voice')).toMatchObject({
+      status: 'missing',
+      rejectedCount: 0,
+    });
+    expect(comparison.rows[0]!.unattributedRejected).toEqual([]);
+  });
+
+  it('counts a sealed Aqua Result with a missing transcript against Aqua', async () => {
+    await seedSession();
+    const resultId = '20260907T060007000Z-dddd0008';
+    const stored = await saveResult(SHORT_RUN, 'aqua-voice', 'Aqua の観測', resultId);
+    await rm(path.join(stored.resultDir, 'transcript.txt'), { force: true });
+
+    const comparison = await buildSessionComparison(deps(), SESSION_ID);
+    expect(cellOf(comparison, 'aqua-voice')).toMatchObject({
+      status: 'rejected-only',
+      rejectedCount: 1,
+    });
+    expect(cellOf(comparison, 'windows-standard-voice-input')).toMatchObject({
+      status: 'missing',
+      rejectedCount: 0,
+    });
+    expect(comparison.rows[0]!.unattributedRejected).toEqual([]);
+  });
+
+  it('does not attribute a legacy Result with a missing transcript to a cell', async () => {
+    await seedSession();
+    const resultId = '20260907T060008000Z-dddd0009';
+    const stored = await saveLegacyV1Result('aqua-voice', 'legacy の観測', resultId);
+    await rm(path.join(stored.resultDir, 'transcript.txt'), { force: true });
+
+    const comparison = await buildSessionComparison(deps(), SESSION_ID);
+    for (const tool of BOTH_TOOLS) {
+      expect(cellOf(comparison, tool)).toMatchObject({ status: 'missing', rejectedCount: 0 });
+    }
+    expect(comparison.rows[0]!.legacyUnsealed).toEqual([
+      {
+        resultId,
+        toolId: 'aqua-voice',
+        status: 'rejected',
+        reason: 'RESULT_TRANSCRIPT_MISSING',
+        message: 'transcript.txt を読み込めません。',
+      },
+    ]);
+    expect(comparison.rows[0]!.unattributedRejected).toEqual([]);
   });
 });

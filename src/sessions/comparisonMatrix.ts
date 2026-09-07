@@ -3,6 +3,7 @@ import type { LocalResultStore } from '@/storage/LocalResultStore';
 import type { LocalRunStore } from '@/storage/LocalRunStore';
 import type { LocalSessionStore } from '@/storage/LocalSessionStore';
 import { listResultsForRun } from '@/results/saveResult';
+import type { SttToolId } from '@/results/tools';
 import type { SessionTargetTool, SessionV1 } from './sessionSchema';
 import { verifySessionCaseEvidence, verifyStoredSessionShape } from './verifyStoredSession';
 
@@ -46,6 +47,25 @@ export interface MatrixRejection {
   detail?: string;
 }
 
+/**
+ * A Result that reads back fine but carries no integrity seal — a P2-A Result,
+ * written before Results were sealed.
+ *
+ * The observation is real. What cannot be shown is that its `tool` section says
+ * the same thing it said when it was written, and that section is exactly what
+ * decides which column of the comparison it belongs in. So it is shown against
+ * the Case, with whatever tool it claims, rather than counted as that tool's
+ * coverage.
+ */
+export interface MatrixLegacyEntry {
+  resultId: string;
+  /** What the Result claims, unverifiable. `null` when even that failed. */
+  toolId: SttToolId | null;
+  status: 'verified' | 'rejected';
+  reason?: string;
+  message?: string;
+}
+
 export interface MatrixCell {
   tool: SessionTargetTool;
   status: CellStatus;
@@ -70,6 +90,13 @@ export interface MatrixRow {
    * with it.
    */
   unattributedRejected: MatrixRejection[];
+  /**
+   * Results for this Case that predate Result sealing.
+   *
+   * Kept visible so the operator can see that observations exist, without them
+   * being read as per-tool coverage they cannot support.
+   */
+  legacyUnsealed: MatrixLegacyEntry[];
 }
 
 export interface SessionComparison {
@@ -142,12 +169,38 @@ export async function buildSessionComparison(
     );
 
     const unattributedRejected: MatrixRejection[] = [];
+    const legacyUnsealed: MatrixLegacyEntry[] = [];
+
     for (const entry of entries) {
+      // Unsealed Results are shown against the Case in either state. Their tool
+      // claim is readable but not provable, so it decides nothing here.
+      if (entry.integrityTrust === 'legacy-unsealed') {
+        legacyUnsealed.push(
+          entry.status === 'verified'
+            ? { resultId: entry.resultId, toolId: entry.result.tool.id, status: 'verified' }
+            : {
+                resultId: entry.resultId,
+                toolId: entry.trustedToolId ?? null,
+                status: 'rejected',
+                reason: entry.reason,
+                message: entry.message,
+              },
+        );
+        continue;
+      }
+
       if (entry.status !== 'rejected') continue;
-      // Attributable to a target tool? Then it belongs in that tool's cell.
-      // `trustedToolId` may also be `other`, which no cell of this Session
-      // covers — that lands here too.
-      if (session.target_tools.some((tool) => tool === entry.trustedToolId)) continue;
+
+      // Attributable to a target tool? Then it belongs in that tool's cell —
+      // but only on the strength of a seal. Without one, `trustedToolId` says
+      // the `tool` section is well-formed, not that it is unedited.
+      if (
+        entry.integrityTrust === 'sealed' &&
+        session.target_tools.some((tool) => tool === entry.trustedToolId)
+      ) {
+        continue;
+      }
+
       unattributedRejected.push({
         resultId: entry.resultId,
         reason: entry.reason,
@@ -161,6 +214,11 @@ export async function buildSessionComparison(
       const rejected: MatrixRejection[] = [];
 
       for (const entry of entries) {
+        // Only sealed Results count as this tool's evidence, in either
+        // direction. An unsealed Result could have been moved into — or out of
+        // — this column after the fact without leaving a trace.
+        if (entry.integrityTrust !== 'sealed') continue;
+
         if (entry.status === 'verified') {
           if (entry.result.tool.id !== tool) continue;
           verified.push({
@@ -204,6 +262,7 @@ export async function buildSessionComparison(
       audioSha256: sessionCase.audio_sha256,
       cells,
       unattributedRejected,
+      legacyUnsealed,
     });
   }
 

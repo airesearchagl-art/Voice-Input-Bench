@@ -1,7 +1,13 @@
 import { sha256OfText } from '@/lib/hash';
 import { isValidResultId } from '@/lib/resultId';
-import type { ResultV1 } from './resultSchema';
-import { RESULT_SCHEMA_VERSION } from './resultSchema';
+import {
+  LEGACY_RESULT_SCHEMA_VERSION,
+  RESULT_SCHEMA_VERSION,
+  computeResultSemanticSha256,
+  type IntegrityTrust,
+  type ResultPayloadV2,
+  type StoredResult,
+} from './resultSchema';
 import type { VerifiedRunEvidence } from './runEvidence';
 import {
   ToolIdentityError,
@@ -17,11 +23,20 @@ import {
  * app: the file may have been edited, moved between directories, or left behind
  * while the Run it cites changed underneath it.
  *
- * A Result that fails any of these checks is never shown as an observation.
+ * The checks come in two steps on purpose:
+ *
+ *   1. {@link verifyStoredResultMetadata} — everything `result.json` asserts.
+ *      Establishes *whose* observation this is and whether that claim can be
+ *      trusted, without needing the transcript file at all.
+ *   2. {@link verifyTranscriptAgainstResult} — the transcript bytes on disk.
+ *
+ * The order matters. A transcript that has gone missing is still a failure of a
+ * *known* tool when the metadata is sealed and intact; establishing ownership
+ * first keeps that gap attributable instead of anonymous.
  */
 
 export type ResultVerificationErrorKind =
-  /** `result.json` is not an object, or not schema v1. */
+  /** `result.json` is not an object, or not a schema version this app reads. */
   | 'RESULT_SCHEMA_UNSUPPORTED'
   /** A field the schema requires is missing or the wrong type. */
   | 'RESULT_MALFORMED'
@@ -29,6 +44,10 @@ export type ResultVerificationErrorKind =
   | 'RESULT_ID_MISMATCH'
   /** `run_id` is not the Run this listing is for. */
   | 'RESULT_RUN_ID_MISMATCH'
+  /** A sealed Result carries no readable integrity record. */
+  | 'RESULT_INTEGRITY_MISSING'
+  /** A sealed Result's metadata no longer hashes to what was recorded. */
+  | 'RESULT_INTEGRITY_MISMATCH'
   /** The transcript section names a different file or encoding contract. */
   | 'RESULT_TRANSCRIPT_CONTRACT_MISMATCH'
   /** The transcript on disk no longer hashes to the recorded value. */
@@ -63,22 +82,28 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+
+export interface VerifiedResultMetadata {
+  result: StoredResult;
+  /** `sealed` for v2 whose hash still matches; `legacy-unsealed` for v1. */
+  integrityTrust: IntegrityTrust;
+}
+
 /**
- * Check a stored Result against its directory, its transcript on disk, and the
- * Run as it stands right now.
+ * Check everything `result.json` asserts, against its own directory and against
+ * the Run as it stands right now.
  *
  * `runEvidence` is a fresh verification of the cited Run, not the snapshot the
  * Result carries — comparing the Result against itself would prove nothing.
  */
-export function verifyStoredResult(input: {
+export function verifyStoredResultMetadata(input: {
   resultId: string;
   stored: unknown;
-  transcript: string;
-  transcriptBytes: number;
   requestedRunId: string;
   runEvidence: VerifiedRunEvidence;
-}): ResultV1 {
-  const { resultId, stored, transcript, transcriptBytes, requestedRunId, runEvidence } = input;
+}): VerifiedResultMetadata {
+  const { resultId, stored, requestedRunId, runEvidence } = input;
   const fail = (kind: ResultVerificationErrorKind, message: string, detail?: string): never => {
     throw new ResultVerificationError(kind, resultId, message, detail);
   };
@@ -91,19 +116,23 @@ export function verifyStoredResult(input: {
   }
 
   const raw = stored as Record<string, unknown>;
+  const schemaVersion = raw.schema_version;
 
-  if (raw.schema_version !== RESULT_SCHEMA_VERSION) {
+  // v1 is still read so P2-A Results stay visible. It is never rewritten, and
+  // never carries a seal.
+  if (schemaVersion !== RESULT_SCHEMA_VERSION && schemaVersion !== LEGACY_RESULT_SCHEMA_VERSION) {
     fail(
       'RESULT_SCHEMA_UNSUPPORTED',
-      `Result schema v${String(raw.schema_version)} は対象外です（v${RESULT_SCHEMA_VERSION} のみ）。`,
-      `schema_version=${String(raw.schema_version)}`,
+      `Result schema v${String(schemaVersion)} は対象外です（v${LEGACY_RESULT_SCHEMA_VERSION} / v${RESULT_SCHEMA_VERSION} のみ）。`,
+      `schema_version=${String(schemaVersion)}`,
     );
   }
+  const sealed = schemaVersion === RESULT_SCHEMA_VERSION;
 
   if (raw.result_id !== resultId) {
     fail(
       'RESULT_ID_MISMATCH',
-      `result.json の result_id が保存先ディレクトリと一致しません。`,
+      'result.json の result_id が保存先ディレクトリと一致しません。',
       `directory=${resultId} result_id=${String(raw.result_id)}`,
     );
   }
@@ -111,7 +140,7 @@ export function verifyStoredResult(input: {
   if (raw.run_id !== requestedRunId) {
     fail(
       'RESULT_RUN_ID_MISMATCH',
-      `result.json の run_id が対象の Run と一致しません。`,
+      'result.json の run_id が対象の Run と一致しません。',
       `expected=${requestedRunId} actual=${String(raw.run_id)}`,
     );
   }
@@ -146,36 +175,28 @@ export function verifyStoredResult(input: {
       `file=${String(transcriptSection.file)} encoding=${String(transcriptSection.encoding)} line_endings=${String(transcriptSection.line_endings)}`,
     );
   }
-
-  // The recorded line-ending contract is only true if the bytes on disk keep it.
-  if (transcript.includes('\r')) {
+  if (
+    typeof transcriptSection.sha256 !== 'string' ||
+    !SHA256_PATTERN.test(transcriptSection.sha256) ||
+    typeof transcriptSection.bytes !== 'number' ||
+    !Number.isInteger(transcriptSection.bytes) ||
+    transcriptSection.bytes < 0
+  ) {
     fail(
       'RESULT_TRANSCRIPT_CONTRACT_MISMATCH',
-      'transcript.txt に CR が含まれており、line_endings: lf と矛盾します。',
-    );
-  }
-
-  const actualSha = sha256OfText(transcript);
-  if (transcriptSection.sha256 !== actualSha) {
-    fail(
-      'RESULT_TRANSCRIPT_HASH_MISMATCH',
-      'transcript.txt が result.json の SHA-256 と一致しません。',
-      `expected=${String(transcriptSection.sha256)} actual=${actualSha}`,
-    );
-  }
-
-  if (transcriptSection.bytes !== transcriptBytes) {
-    fail(
-      'RESULT_TRANSCRIPT_BYTES_MISMATCH',
-      'transcript.txt のバイト数が result.json と一致しません。',
-      `expected=${String(transcriptSection.bytes)} actual=${transcriptBytes}`,
+      'transcript の sha256 / bytes が記録として読めません。',
+      `sha256=${String(transcriptSection.sha256)} bytes=${String(transcriptSection.bytes)}`,
     );
   }
 
   // The Run as it stands now must still match the snapshot this Result took.
   const evidenceSection = evidence as Record<string, unknown>;
   const evidenceChecks: Array<[string, unknown, unknown]> = [
-    ['manifest_schema_version', evidenceSection.manifest_schema_version, runEvidence.manifestSchemaVersion],
+    [
+      'manifest_schema_version',
+      evidenceSection.manifest_schema_version,
+      runEvidence.manifestSchemaVersion,
+    ],
     ['test_id', evidenceSection.test_id, runEvidence.testId],
     ['source_sha256', evidenceSection.source_sha256, runEvidence.sourceSha256],
     ['audio_sha256', evidenceSection.audio_sha256, runEvidence.audioSha256],
@@ -190,5 +211,98 @@ export function verifyStoredResult(input: {
     }
   }
 
-  return raw as unknown as ResultV1;
+  if (!sealed) {
+    // A P2-A Result. Every check above holds, but with no seal an edit that
+    // swapped one valid value for another cannot be ruled out.
+    return { result: raw as unknown as StoredResult, integrityTrust: 'legacy-unsealed' };
+  }
+
+  const integrity = raw.integrity;
+  if (
+    !isPlainObject(integrity) ||
+    integrity.algorithm !== 'sha256' ||
+    typeof integrity.semantic_sha256 !== 'string' ||
+    !SHA256_PATTERN.test(integrity.semantic_sha256)
+  ) {
+    fail('RESULT_INTEGRITY_MISSING', 'integrity が sha256 の記録として読めません。');
+  }
+
+  const recorded = (integrity as Record<string, unknown>).semantic_sha256 as string;
+  const actual = computeResultSemanticSha256(raw as unknown as ResultPayloadV2);
+  if (recorded !== actual) {
+    fail(
+      'RESULT_INTEGRITY_MISMATCH',
+      'Result の metadata が記録された semantic hash と一致しません。保存後に編集された可能性があります。',
+      `recorded=${recorded} actual=${actual}`,
+    );
+  }
+
+  return { result: raw as unknown as StoredResult, integrityTrust: 'sealed' };
+}
+
+/**
+ * Check the transcript bytes on disk against what the Result recorded.
+ *
+ * Split out from the metadata step so a caller already knows whose observation
+ * this is before it reads the file.
+ */
+export function verifyTranscriptAgainstResult(input: {
+  resultId: string;
+  result: StoredResult;
+  transcript: string;
+  transcriptBytes: number;
+}): void {
+  const { resultId, result, transcript, transcriptBytes } = input;
+  const fail = (kind: ResultVerificationErrorKind, message: string, detail?: string): never => {
+    throw new ResultVerificationError(kind, resultId, message, detail);
+  };
+
+  // The recorded line-ending contract is only true if the bytes on disk keep it.
+  if (transcript.includes('\r')) {
+    fail(
+      'RESULT_TRANSCRIPT_CONTRACT_MISMATCH',
+      'transcript.txt に CR が含まれており、line_endings: lf と矛盾します。',
+    );
+  }
+
+  const actualSha = sha256OfText(transcript);
+  if (result.transcript.sha256 !== actualSha) {
+    fail(
+      'RESULT_TRANSCRIPT_HASH_MISMATCH',
+      'transcript.txt が result.json の SHA-256 と一致しません。',
+      `expected=${result.transcript.sha256} actual=${actualSha}`,
+    );
+  }
+
+  if (result.transcript.bytes !== transcriptBytes) {
+    fail(
+      'RESULT_TRANSCRIPT_BYTES_MISMATCH',
+      'transcript.txt のバイト数が result.json と一致しません。',
+      `expected=${String(result.transcript.bytes)} actual=${transcriptBytes}`,
+    );
+  }
+}
+
+/**
+ * Metadata and transcript in one call, for callers that already hold both.
+ *
+ * The listing path uses the two steps separately so it can attribute a missing
+ * transcript to the tool that owns it.
+ */
+export function verifyStoredResult(input: {
+  resultId: string;
+  stored: unknown;
+  transcript: string;
+  transcriptBytes: number;
+  requestedRunId: string;
+  runEvidence: VerifiedRunEvidence;
+}): VerifiedResultMetadata {
+  const metadata = verifyStoredResultMetadata(input);
+  verifyTranscriptAgainstResult({
+    resultId: input.resultId,
+    result: metadata.result,
+    transcript: input.transcript,
+    transcriptBytes: input.transcriptBytes,
+  });
+  return metadata;
 }

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import type { RunCatalogEntry } from '@/results/runEvidence';
-import type { ResultV1 } from '@/results/resultSchema';
+import type { IntegrityTrust, StoredResult } from '@/results/resultSchema';
 import { DELIVERY_PATHS, STT_TOOL_IDS, type DeliveryPath, type SttToolId } from '@/results/tools';
 
 /**
@@ -21,8 +21,21 @@ interface ApiErrorShape {
 }
 
 type ResultEntry =
-  | { status: 'verified'; resultId: string; result: ResultV1; transcript: string }
-  | { status: 'rejected'; resultId: string; reason: string; message: string; detail?: string };
+  | {
+      status: 'verified';
+      resultId: string;
+      result: StoredResult;
+      transcript: string;
+      integrityTrust: IntegrityTrust;
+    }
+  | {
+      status: 'rejected';
+      resultId: string;
+      reason: string;
+      message: string;
+      detail?: string;
+      integrityTrust?: IntegrityTrust;
+    };
 
 const DELIVERY_PATH_LABELS: Record<DeliveryPath, string> = {
   'speaker-to-mic': 'スピーカー → マイク（実音響）',
@@ -356,6 +369,12 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
                   <dd>{entry.result.transcript.sha256}</dd>
                   <dt>Audio SHA-256</dt>
                   <dd>{entry.result.run_evidence.audio_sha256}</dd>
+                  <dt>Integrity</dt>
+                  <dd>
+                    {entry.integrityTrust === 'sealed'
+                      ? `sealed (schema v${entry.result.schema_version})`
+                      : `未署名 / legacy (schema v${entry.result.schema_version})`}
+                  </dd>
                 </dl>
                 <pre className="transcript">{entry.transcript}</pre>
               </article>
