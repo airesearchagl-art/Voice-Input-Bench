@@ -1,10 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import type { RunCatalogEntry } from '@/results/runEvidence';
 import type { IntegrityTrust, StoredResult } from '@/results/resultSchema';
 import type { EvaluatorId, StoredEvaluation } from '@/evaluation/createEvaluation';
-import type { CriticalEvaluationV2 } from '@/evaluation/criticalEvaluationSchema';
+import type {
+  CriticalEvaluationV2,
+  StoredCriticalEntity,
+} from '@/evaluation/criticalEvaluationSchema';
 import type { EvaluationV1 } from '@/evaluation/evaluationSchema';
 import { DELIVERY_PATHS, STT_TOOL_IDS, type DeliveryPath, type SttToolId } from '@/results/tools';
 import {
@@ -142,17 +145,43 @@ function isCritical(entry: VerifiedEvaluationEntry): entry is CriticalEntry {
   return entry.evaluation.schema_version === 2;
 }
 
+/**
+ * The evaluator contract as the artifact records it.
+ *
+ * Rendered field by field from the stored record rather than from a hard-coded
+ * list, so an artifact measured under an older contract shows the semantics it
+ * actually carries instead of the ones this build happens to implement.
+ */
 function EvaluatorRows({ evaluation }: { evaluation: StoredEvaluation }) {
   return (
     <>
       <dt>Evaluation ID</dt>
       <dd>{evaluation.evaluation_id}</dd>
-      <dt>Evaluator ID</dt>
-      <dd>{evaluation.evaluator.id}</dd>
-      <dt>Unit</dt>
-      <dd>{evaluation.evaluator.unit}</dd>
-      <dt>Normalization</dt>
-      <dd>{evaluation.evaluator.normalization}</dd>
+      {Object.entries(evaluation.evaluator).map(([field, value]) => (
+        <Fragment key={field}>
+          <dt>{field === 'id' ? 'Evaluator ID' : field}</dt>
+          <dd>{String(value)}</dd>
+        </Fragment>
+      ))}
+    </>
+  );
+}
+
+/**
+ * One entity with the span it was read from.
+ *
+ * The code point range is shown, not decoration: it is what makes the artifact
+ * auditable against the text, so it belongs on screen next to the text it
+ * points into.
+ */
+function EntitySpan({ entity }: { entity: StoredCriticalEntity }) {
+  return (
+    <>
+      <span className="mono">{entity.raw}</span>
+      <span className="hint">
+        {' '}
+        [{entity.start_code_point}–{entity.end_code_point})
+      </span>
     </>
   );
 }
@@ -288,10 +317,10 @@ function CriticalEvaluationSection({
               ) : (
                 <ul className="entity-list">
                   {entry.evaluation.matches.map((match) => (
-                    <li key={`${match.key}-${match.reference_offset}`}>
-                      <span className="mono">{match.reference_surface}</span> →{' '}
-                      <span className="mono">{match.hypothesis_surface}</span>{' '}
-                      <span className="hint">{match.key}</span>
+                    <li key={`${match.canonical_key}-${match.reference.start_code_point}`}>
+                      <EntitySpan entity={match.reference} /> →{' '}
+                      <EntitySpan entity={match.hypothesis} />{' '}
+                      <span className="hint">{match.canonical_key}</span>
                     </li>
                   ))}
                 </ul>
@@ -303,9 +332,8 @@ function CriticalEvaluationSection({
                 <span className="hint">missing（reference にあって hypothesis に無い）</span>
                 <ul className="entity-list warn">
                   {entry.evaluation.missing.map((item) => (
-                    <li key={`${item.key}-${item.offset}`}>
-                      <span className="mono">{item.surface}</span>{' '}
-                      <span className="hint">{item.key}</span>
+                    <li key={`${item.canonical_key}-${item.start_code_point}`}>
+                      <EntitySpan entity={item} /> <span className="hint">{item.canonical_key}</span>
                     </li>
                   ))}
                 </ul>
@@ -317,9 +345,8 @@ function CriticalEvaluationSection({
                 <span className="hint">extra（hypothesis にあって reference に無い）</span>
                 <ul className="entity-list warn">
                   {entry.evaluation.extra.map((item) => (
-                    <li key={`${item.key}-${item.offset}`}>
-                      <span className="mono">{item.surface}</span>{' '}
-                      <span className="hint">{item.key}</span>
+                    <li key={`${item.canonical_key}-${item.start_code_point}`}>
+                      <EntitySpan entity={item} /> <span className="hint">{item.canonical_key}</span>
                     </li>
                   ))}
                 </ul>

@@ -383,8 +383,11 @@ describe('POST /api/evaluations with an evaluator', () => {
     expect(body.evaluation.schema_version).toBe(2);
     expect(body.evaluation.evaluator).toEqual({
       id: 'critical-info-v1',
-      unit: 'critical-entity',
-      normalization: 'fixed-alias-table',
+      scope: 'numeric-unit-time',
+      number_grammar: 'number-grammar-v1',
+      unit_aliases: 'unit-alias-v1',
+      matching: 'canonical-multiset-v1',
+      separator_policy: 'space-fullwidth-space-v1',
     });
     // The source says 二千七百ミリ and the transcript says 2700ミリ — the same
     // fact, spelled differently.

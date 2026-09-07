@@ -1,14 +1,20 @@
 import { sha256OfText } from '@/lib/hash';
 import {
   CRITICAL_INFO_ALGORITHM,
-  CRITICAL_INFO_NORMALIZATION,
-  CRITICAL_INFO_UNIT,
+  CRITICAL_INFO_MATCHING,
+  CRITICAL_INFO_NUMBER_GRAMMAR,
+  CRITICAL_INFO_SCOPE,
+  CRITICAL_INFO_SEPARATOR_POLICY,
+  CRITICAL_INFO_UNIT_ALIASES,
   type CriticalEntity,
   type CriticalEntityKind,
   type CriticalInfoAlgorithm,
+  type CriticalInfoMatching,
   type CriticalInfoMetrics,
-  type CriticalInfoNormalization,
-  type CriticalInfoUnit,
+  type CriticalInfoNumberGrammar,
+  type CriticalInfoScope,
+  type CriticalInfoSeparatorPolicy,
+  type CriticalInfoUnitAliases,
   type CriticalMatch,
 } from './criticalInfo';
 import type { EvaluationIntegrityV1, EvaluationPayloadV1 } from './evaluationSchema';
@@ -32,33 +38,73 @@ import type { EvaluationIntegrityV1, EvaluationPayloadV1 } from './evaluationSch
 
 export const CRITICAL_EVALUATION_SCHEMA_VERSION = 2 as const;
 
+/**
+ * Self-describing evaluator contract.
+ *
+ * A name alone does not pin a measurement down, and for this evaluator a name
+ * plus a unit does not either. What a preservation rate means depends on which
+ * numerals are readable, which unit spellings count as the same unit, what may
+ * sit between a number and its unit, and how the two lists are matched. All of
+ * it travels with every measurement, under the seal, so a stored rate says what
+ * it is a rate *of* long after the code has moved on.
+ *
+ * Each field names a versioned contract rather than describing it: widening the
+ * unit table or the grammar has to mean a new version here, not a quiet edit
+ * that leaves old artifacts claiming semantics they were never measured under.
+ * Golden tests pin each named version to its exact content.
+ *
+ * Server-fixed. No part of it is ever taken from a request.
+ */
 export interface CriticalEvaluatorV2 {
   id: CriticalInfoAlgorithm;
-  unit: CriticalInfoUnit;
-  normalization: CriticalInfoNormalization;
+  scope: CriticalInfoScope;
+  number_grammar: CriticalInfoNumberGrammar;
+  unit_aliases: CriticalInfoUnitAliases;
+  matching: CriticalInfoMatching;
+  separator_policy: CriticalInfoSeparatorPolicy;
 }
 
 export const CRITICAL_INFO_EVALUATOR: CriticalEvaluatorV2 = {
   id: CRITICAL_INFO_ALGORITHM,
-  unit: CRITICAL_INFO_UNIT,
-  normalization: CRITICAL_INFO_NORMALIZATION,
+  scope: CRITICAL_INFO_SCOPE,
+  number_grammar: CRITICAL_INFO_NUMBER_GRAMMAR,
+  unit_aliases: CRITICAL_INFO_UNIT_ALIASES,
+  matching: CRITICAL_INFO_MATCHING,
+  separator_policy: CRITICAL_INFO_SEPARATOR_POLICY,
 };
 
-/** One extracted fact, as stored. */
+/** The order the evaluator's fields are hashed and compared in. */
+export const CRITICAL_EVALUATOR_FIELDS = [
+  'id',
+  'scope',
+  'number_grammar',
+  'unit_aliases',
+  'matching',
+  'separator_policy',
+] as const satisfies ReadonlyArray<keyof CriticalEvaluatorV2>;
+
+/**
+ * One extracted fact, as stored.
+ *
+ * Identical in shape to {@link CriticalEntity}, span and all, so the artifact
+ * can be audited against the text it came from:
+ *
+ *     Array.from(text).slice(start_code_point, end_code_point).join('') === raw
+ */
 export interface StoredCriticalEntity {
   kind: CriticalEntityKind;
-  surface: string;
-  key: string;
-  offset: number;
+  raw: string;
+  start_code_point: number;
+  /** Exclusive. */
+  end_code_point: number;
+  canonical_key: string;
 }
 
 /** One reference fact paired with the hypothesis fact that preserved it. */
 export interface StoredCriticalMatch {
-  key: string;
-  reference_surface: string;
-  reference_offset: number;
-  hypothesis_surface: string;
-  hypothesis_offset: number;
+  canonical_key: string;
+  reference: StoredCriticalEntity;
+  hypothesis: StoredCriticalEntity;
 }
 
 export interface CriticalEvaluationPayloadV2 {
@@ -83,7 +129,7 @@ export interface CriticalEvaluationPayloadV2 {
   matches: StoredCriticalMatch[];
   /** Reference facts with no counterpart — what the transcript lost. */
   missing: StoredCriticalEntity[];
-  /** Hypothesis facts with no counterpart — numbers nobody said. */
+  /** Hypothesis facts with no counterpart — facts nobody stated. */
   extra: StoredCriticalEntity[];
 
   metrics: CriticalInfoMetrics;
@@ -94,30 +140,38 @@ export interface CriticalEvaluationV2 extends CriticalEvaluationPayloadV2 {
 }
 
 export function toStoredEntity(entity: CriticalEntity): StoredCriticalEntity {
-  return { kind: entity.kind, surface: entity.surface, key: entity.key, offset: entity.offset };
+  return {
+    kind: entity.kind,
+    raw: entity.raw,
+    start_code_point: entity.start_code_point,
+    end_code_point: entity.end_code_point,
+    canonical_key: entity.canonical_key,
+  };
 }
 
 export function toStoredMatch(match: CriticalMatch): StoredCriticalMatch {
   return {
-    key: match.key,
-    reference_surface: match.referenceSurface,
-    reference_offset: match.referenceOffset,
-    hypothesis_surface: match.hypothesisSurface,
-    hypothesis_offset: match.hypothesisOffset,
+    canonical_key: match.canonical_key,
+    reference: toStoredEntity(match.reference),
+    hypothesis: toStoredEntity(match.hypothesis),
   };
 }
 
 function canonicalEntity(entity: StoredCriticalEntity) {
-  return { kind: entity.kind, surface: entity.surface, key: entity.key, offset: entity.offset };
+  return {
+    kind: entity.kind,
+    raw: entity.raw,
+    start_code_point: entity.start_code_point,
+    end_code_point: entity.end_code_point,
+    canonical_key: entity.canonical_key,
+  };
 }
 
 function canonicalMatch(match: StoredCriticalMatch) {
   return {
-    key: match.key,
-    reference_surface: match.reference_surface,
-    reference_offset: match.reference_offset,
-    hypothesis_surface: match.hypothesis_surface,
-    hypothesis_offset: match.hypothesis_offset,
+    canonical_key: match.canonical_key,
+    reference: canonicalEntity(match.reference),
+    hypothesis: canonicalEntity(match.hypothesis),
   };
 }
 
@@ -137,8 +191,11 @@ export function canonicalCriticalEvaluationPayload(payload: CriticalEvaluationPa
     created_at: payload.created_at,
     evaluator: {
       id: payload.evaluator.id,
-      unit: payload.evaluator.unit,
-      normalization: payload.evaluator.normalization,
+      scope: payload.evaluator.scope,
+      number_grammar: payload.evaluator.number_grammar,
+      unit_aliases: payload.evaluator.unit_aliases,
+      matching: payload.evaluator.matching,
+      separator_policy: payload.evaluator.separator_policy,
     },
     run_id: payload.run_id,
     result_id: payload.result_id,
@@ -220,13 +277,22 @@ export function criticalEvaluationPayloadOf(
   };
 }
 
-/** Does this stored evaluator record describe critical-info-v1 exactly? */
+/**
+ * Does this stored evaluator record describe critical-info-v1 exactly?
+ *
+ * Every field, not just the id. An artifact naming a different grammar or a
+ * different alias table is not a slightly different reading of the same thing —
+ * it is a measurement this code cannot reproduce, and reproducing it is the
+ * only reason readback exists.
+ */
 export function isCriticalInfoEvaluator(value: unknown): value is CriticalEvaluatorV2 {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const evaluator = value as Record<string, unknown>;
-  return (
-    evaluator.id === CRITICAL_INFO_EVALUATOR.id &&
-    evaluator.unit === CRITICAL_INFO_EVALUATOR.unit &&
-    evaluator.normalization === CRITICAL_INFO_EVALUATOR.normalization
+  // Extra fields are refused too. A record naming a contract this build has
+  // never heard of describes semantics it cannot reproduce, and the seal alone
+  // would not catch it once the artifact has been re-sealed.
+  if (Object.keys(evaluator).length !== CRITICAL_EVALUATOR_FIELDS.length) return false;
+  return CRITICAL_EVALUATOR_FIELDS.every(
+    (field) => evaluator[field] === CRITICAL_INFO_EVALUATOR[field],
   );
 }

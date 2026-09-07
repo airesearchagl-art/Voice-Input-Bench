@@ -1,5 +1,5 @@
 /**
- * critical-info-v1 — did the numbers survive?
+ * critical-info-v1 — did the facts survive?
  *
  * raw-char-v1 says how far a transcript drifted, character by character. It
  * cannot say whether the drift mattered. Writing 「2700mm」 where the source
@@ -7,37 +7,60 @@
  * writing 「2600mm」 is a small distance and a wrong building.
  *
  * So this evaluator ignores spelling and looks only at the facts a
- * specification cannot afford to lose: quantities with their units, and clock
- * times. Entities are extracted from both texts, reduced to a canonical key,
- * and matched one-to-one as multisets.
+ * specification cannot afford to lose. In v1 that is exactly two things:
  *
- * Deliberately narrow. Recognition is driven by a **fixed alias table**, not by
- * inference: no general NER, no arbitrary unit conversion, no decimals,
- * fractions or signed values, no semantic similarity. Anything the table does
- * not name is simply not an entity, which is a visible gap rather than a
- * guess — and a guess here would be a number nobody wrote.
+ *   - a **measurement**: an integer with one of four approved units
+ *   - a **clock-hour**: an hour, optionally with 午前 / 午後
+ *
+ * Nothing else. A bare number with no unit is not a critical fact — it is a
+ * number, and reporting it as preserved or lost would say nothing about the
+ * specification. Anything the tables below do not name is not recognized.
+ *
+ * The narrowness is the design. Every widening — another unit, decimals, a
+ * minute field — changes what a preservation rate means, so each one has to be
+ * a deliberate, versioned edit rather than something the extractor infers.
  */
 
 export const CRITICAL_INFO_ALGORITHM = 'critical-info-v1' as const;
 export type CriticalInfoAlgorithm = typeof CRITICAL_INFO_ALGORITHM;
 
-/** What this evaluator counts: extracted entities, not characters. */
-export const CRITICAL_INFO_UNIT = 'critical-entity' as const;
-export type CriticalInfoUnit = typeof CRITICAL_INFO_UNIT;
+/** What v1 looks for. Numbers with units, and clock hours — nothing else. */
+export const CRITICAL_INFO_SCOPE = 'numeric-unit-time' as const;
+export type CriticalInfoScope = typeof CRITICAL_INFO_SCOPE;
+
+/** Which numeral forms are readable. See {@link parseNumeral}. */
+export const CRITICAL_INFO_NUMBER_GRAMMAR = 'number-grammar-v1' as const;
+export type CriticalInfoNumberGrammar = typeof CRITICAL_INFO_NUMBER_GRAMMAR;
+
+/** Which unit spellings are recognized. See {@link UNIT_ALIASES}. */
+export const CRITICAL_INFO_UNIT_ALIASES = 'unit-alias-v1' as const;
+export type CriticalInfoUnitAliases = typeof CRITICAL_INFO_UNIT_ALIASES;
+
+/** How the two entity lists are compared. See {@link analyzeCriticalInfo}. */
+export const CRITICAL_INFO_MATCHING = 'canonical-multiset-v1' as const;
+export type CriticalInfoMatching = typeof CRITICAL_INFO_MATCHING;
 
 /**
- * How much it is allowed to change before comparing.
- *
- * Not "none": numerals and units are folded to a canonical form. What it is
- * *not* is open-ended — every fold comes from the table below, so the set of
- * things treated as equal is finite and readable.
+ * What may sit between a number and its unit: an ASCII space or a full-width
+ * space, any number of them, never a line break.
  */
-export const CRITICAL_INFO_NORMALIZATION = 'fixed-alias-table' as const;
-export type CriticalInfoNormalization = typeof CRITICAL_INFO_NORMALIZATION;
+export const CRITICAL_INFO_SEPARATOR_POLICY = 'space-fullwidth-space-v1' as const;
+export type CriticalInfoSeparatorPolicy = typeof CRITICAL_INFO_SEPARATOR_POLICY;
 
 export type CriticalInfoErrorKind =
   /** The reference contains no entity, so a preservation rate has no meaning. */
-  'CRITICAL_INFO_NO_REFERENCE_ENTITY';
+  | 'CRITICAL_INFO_NO_REFERENCE_ENTITY'
+  /**
+   * The reference writes a number this grammar cannot read, attached to a unit
+   * or clock this evaluator does recognize.
+   *
+   * `2.7mm` is the shape of a fact, written in a syntax v1 does not support.
+   * Reading it as a bare `2` plus a `7mm` measurement would invent a fact
+   * nobody wrote, and silently dropping it would understate what the reference
+   * asked the transcript to preserve. Neither is acceptable, so no artifact is
+   * produced at all.
+   */
+  | 'CRITICAL_INFO_UNSUPPORTED_REFERENCE_NUMERIC_SYNTAX';
 
 export class CriticalInfoError extends Error {
   readonly kind: CriticalInfoErrorKind;
@@ -52,7 +75,7 @@ export class CriticalInfoError extends Error {
 }
 
 // ---------------------------------------------------------------------------
-// Numerals
+// number-grammar-v1
 // ---------------------------------------------------------------------------
 
 const ASCII_DIGITS = '0123456789';
@@ -73,82 +96,71 @@ const JAPANESE_DIGITS: Readonly<Record<string, number>> = {
   九: 9,
 };
 
-/** Multipliers inside one myriad section. Must appear in decreasing order. */
+/** Multipliers inside one myriad section. Must appear strictly decreasing. */
 const JAPANESE_SMALL_MULTIPLIERS: Readonly<Record<string, number>> = {
   十: 10,
   百: 100,
   千: 1000,
 };
 
-/** 万 closes a section and scales it. Integers only; nothing above 万. */
+/** 万 closes a section and scales it. At most one per numeral. */
 const JAPANESE_LARGE_MULTIPLIER = '万';
 
-function digitValue(char: string): number | null {
-  const ascii = ASCII_DIGITS.indexOf(char);
-  if (ascii >= 0) return ascii;
-  const fullwidth = FULLWIDTH_DIGITS.indexOf(char);
-  if (fullwidth >= 0) return fullwidth;
-  const japanese = JAPANESE_DIGITS[char];
-  return japanese === undefined ? null : japanese;
-}
+/** The largest integer v1 reads: 99,999,999. */
+export const MAX_SUPPORTED_INTEGER = 99_999_999;
 
-function isNumeralChar(char: string): boolean {
+export function isNumeralChar(char: string): boolean {
   return (
-    digitValue(char) !== null ||
+    ASCII_DIGITS.includes(char) ||
+    FULLWIDTH_DIGITS.includes(char) ||
+    JAPANESE_DIGITS[char] !== undefined ||
     JAPANESE_SMALL_MULTIPLIERS[char] !== undefined ||
     char === JAPANESE_LARGE_MULTIPLIER
   );
 }
 
-/**
- * Read one run of numeral characters as a non-negative integer.
- *
- * Two readings share the same character set and are told apart by what is
- * present: a run containing 十/百/千/万 is positional (二千七百 = 2700), and a
- * run without them is a digit string (二〇二六 = 2026, 2700 = 2700).
- *
- * Returns `null` for a run that is not a well-formed integer — 十百 or 二三十,
- * for instance. An unreadable run is left out rather than resolved to a number
- * nobody wrote; if it was in the reference it then shows up as missing, which
- * is the honest outcome.
- */
-export function parseNumeralRun(run: string): number | null {
-  const chars = Array.from(run);
-  if (chars.length === 0) return null;
-
-  const hasMultiplier = chars.some(
-    (char) =>
-      JAPANESE_SMALL_MULTIPLIERS[char] !== undefined || char === JAPANESE_LARGE_MULTIPLIER,
-  );
-
-  if (!hasMultiplier) {
-    let value = 0;
-    for (const char of chars) {
-      const digit = digitValue(char);
-      if (digit === null) return null;
-      value = value * 10 + digit;
-      if (!Number.isSafeInteger(value)) return null;
-    }
-    return value;
+function parseDigitRun(run: string, digits: string): number | null {
+  let value = 0;
+  for (const char of run) {
+    const digit = digits.indexOf(char);
+    if (digit < 0) return null;
+    value = value * 10 + digit;
+    if (value > MAX_SUPPORTED_INTEGER) return null;
   }
+  return value;
+}
+
+/**
+ * Read a positional Japanese integer: 二千七百 = 2700, 一万二千三百四十五 = 12345.
+ *
+ * Strict on purpose. One digit per multiplier, multipliers strictly decreasing
+ * within a section, at most one 万. 十百, 百百, 二三十 and 二万三万 are all
+ * refused rather than resolved to whatever the arithmetic happens to produce —
+ * a number nobody wrote is worse than no number.
+ */
+function parseJapaneseNumeral(chars: string[]): number | null {
+  // 〇 and 零 stand alone. They cannot take a multiplier, and a longer digit
+  // string like 二〇二六 is a different reading system that v1 does not accept.
+  if (chars.length === 1 && JAPANESE_DIGITS[chars[0]!] === 0) return 0;
 
   let total = 0;
   let section = 0;
   let pending: number | null = null;
   let lastSmall = Number.POSITIVE_INFINITY;
+  let seenLarge = false;
 
   for (const char of chars) {
-    const digit = digitValue(char);
-    if (digit !== null) {
-      // Digits may accumulate before a multiplier (2千 and 二千 both work), but
-      // a bare digit string cannot sit inside a positional numeral.
-      pending = (pending ?? 0) * 10 + digit;
+    const digit = JAPANESE_DIGITS[char];
+    if (digit !== undefined) {
+      // Two digits in a row is 二三十, not a positional numeral.
+      if (pending !== null) return null;
+      if (digit === 0) return null;
+      pending = digit;
       continue;
     }
 
     const small = JAPANESE_SMALL_MULTIPLIERS[char];
     if (small !== undefined) {
-      // 千 then 百 then 十, never the other way round.
       if (small >= lastSmall) return null;
       lastSmall = small;
       section += (pending ?? 1) * small;
@@ -157,9 +169,11 @@ export function parseNumeralRun(run: string): number | null {
     }
 
     if (char === JAPANESE_LARGE_MULTIPLIER) {
+      if (seenLarge) return null;
+      seenLarge = true;
       section += pending ?? 0;
-      if (section === 0) return null;
-      total += section * 10000;
+      if (section === 0 || section >= 10000) return null;
+      total = section * 10000;
       section = 0;
       pending = null;
       lastSmall = Number.POSITIVE_INFINITY;
@@ -170,266 +184,417 @@ export function parseNumeralRun(run: string): number | null {
   }
 
   total += section + (pending ?? 0);
-  return Number.isSafeInteger(total) ? total : null;
+  if (total > MAX_SUPPORTED_INTEGER) return null;
+  return total;
+}
+
+/**
+ * Read one numeral under number-grammar-v1.
+ *
+ * Three grammars, and a numeral must be written entirely in one of them:
+ *
+ *   A. ASCII integer      — `2700`
+ *   B. full-width integer — `２７００`
+ *   C. Japanese integer   — `二千七百`
+ *
+ * Mixed forms such as `2千7百` are refused. They are readable to a person, but
+ * accepting them would mean this evaluator decided on a grammar nobody
+ * approved, and the whole point of a versioned grammar is that it does not
+ * drift on its own.
+ *
+ * Returns `null` for anything outside the three grammars, including values
+ * above {@link MAX_SUPPORTED_INTEGER}.
+ */
+export function parseNumeral(text: string): number | null {
+  const chars = Array.from(text);
+  if (chars.length === 0) return null;
+
+  const allAscii = chars.every((char) => ASCII_DIGITS.includes(char));
+  if (allAscii) return parseDigitRun(text, ASCII_DIGITS);
+
+  const allFullwidth = chars.every((char) => FULLWIDTH_DIGITS.includes(char));
+  if (allFullwidth) return parseDigitRun(text, FULLWIDTH_DIGITS);
+
+  const allJapanese = chars.every(
+    (char) =>
+      JAPANESE_DIGITS[char] !== undefined ||
+      JAPANESE_SMALL_MULTIPLIERS[char] !== undefined ||
+      char === JAPANESE_LARGE_MULTIPLIER,
+  );
+  if (allJapanese) return parseJapaneseNumeral(chars);
+
+  return null;
 }
 
 // ---------------------------------------------------------------------------
-// Units
+// unit-alias-v1
 // ---------------------------------------------------------------------------
 
 /**
- * Every unit this evaluator recognizes, and every spelling it accepts for it.
+ * Every unit critical-info-v1 recognizes, and every spelling it accepts.
  *
  * The table is the whole contract. `2700mm` and `二千七百ミリ` are the same
  * quantity because `mm` and `ミリ` are listed together here, not because
- * anything inferred it. Adding a unit is a deliberate edit to this table.
+ * anything inferred it. A spelling that is not in this table is not a unit, and
+ * the number in front of it is therefore not a measurement.
  *
- * No conversion happens: `1m` and `1000mm` are different entities. Converting
- * would mean deciding that a transcript which changed the unit still preserved
- * the fact, which is not a call this evaluator is entitled to make.
+ * No conversion happens: this table maps spellings to one unit, never one unit
+ * to another. Deciding that a transcript which changed the unit still preserved
+ * the fact is not a call this evaluator is entitled to make.
  */
-export const UNIT_ALIASES: Readonly<Record<string, readonly string[]>> = {
-  mm: ['mm', 'ｍｍ', '㎜', 'ミリメートル', 'ミリ'],
-  cm: ['cm', 'ｃｍ', '㎝', 'センチメートル', 'センチ'],
-  m: ['m', 'ｍ', 'メートル'],
-  km: ['km', 'ｋｍ', '㎞', 'キロメートル'],
-  m2: ['m2', 'm²', '㎡', '平方メートル', '平米'],
-  m3: ['m3', 'm³', '㎥', '立方メートル', '立米'],
-  'm/s': ['m/s', 'メートル毎秒', 'メートル／秒', 'メートル/秒'],
-  'm3/h': ['m3/h', 'm³/h', '㎥/h', '㎥／h', '㎥/時', '立方メートル毎時', '立米毎時'],
-  kg: ['kg', '㎏', 'キログラム'],
-  g: ['g', 'グラム'],
-  '%': ['%', '％', 'パーセント'],
-  h: ['h', '時間'],
-  min: ['min', '分間', '分'],
-  floor: ['階', 'F', 'Ｆ'],
-  person: ['人'],
-  yen: ['円'],
-};
+export const UNIT_ALIASES = {
+  millimetre: ['mm', 'ミリ', 'ミリメートル'],
+  'square-metre': ['㎡', 'm²', 'm2', '平米', '平方メートル'],
+  'cubic-metre-per-hour': ['㎥/h', 'm³/h', 'm3/h', '立方メートル毎時', '立方メートル/時'],
+  'metre-per-second': ['m/s', 'メートル毎秒'],
+} as const satisfies Record<string, readonly string[]>;
 
-/** Aliases longest-first, so `m/s` wins over `m` and `ミリメートル` over `ミリ`. */
-const UNIT_LOOKUP: ReadonlyArray<{ alias: string; canonical: string; length: number }> = Object
-  .entries(UNIT_ALIASES)
-  .flatMap(([canonical, aliases]) =>
-    aliases.map((alias) => ({ alias, canonical, length: Array.from(alias).length })),
+export type CriticalUnit = keyof typeof UNIT_ALIASES;
+
+/** Aliases longest-first, so `ミリメートル` wins over `ミリ` and `m3/h` over `m2`. */
+const UNIT_LOOKUP: ReadonlyArray<{ alias: string[]; unit: CriticalUnit }> = Object.entries(
+  UNIT_ALIASES,
+)
+  .flatMap(([unit, aliases]) =>
+    (aliases as readonly string[]).map((alias) => ({
+      alias: Array.from(alias),
+      unit: unit as CriticalUnit,
+    })),
   )
-  .sort((a, b) => b.length - a.length || a.alias.localeCompare(b.alias));
+  .sort((a, b) => b.alias.length - a.alias.length || a.alias.join('').localeCompare(b.alias.join('')));
 
-/** Spaces allowed between a number and its unit. Never a line break. */
-const INLINE_SPACES = new Set([' ', '　']);
+// ---------------------------------------------------------------------------
+// space-fullwidth-space-v1
+// ---------------------------------------------------------------------------
+
+/** Separators allowed between a number and its unit. Never a line break. */
+export const SEPARATOR_CHARS = [' ', '　'] as const;
+const SEPARATORS = new Set<string>(SEPARATOR_CHARS);
 
 // ---------------------------------------------------------------------------
 // Entities
 // ---------------------------------------------------------------------------
 
-export type CriticalEntityKind = 'number' | 'time';
+export type CriticalEntityKind = 'measurement' | 'clock-time';
 
+/**
+ * One extracted fact, addressable back into the text it came from.
+ *
+ * The span is in **Unicode code points**, not UTF-16 units, and the end is
+ * exclusive. That makes the record auditable:
+ *
+ *     Array.from(text).slice(start_code_point, end_code_point).join('') === raw
+ *
+ * Anyone reading the artifact can put the claim back against the bytes and see
+ * that it points where it says it does — including when an emoji sits earlier
+ * in the line, which is exactly where a UTF-16 offset would quietly slip.
+ */
 export interface CriticalEntity {
   kind: CriticalEntityKind;
-  /** The exact substring this was read from, for showing the operator. */
-  surface: string;
+  /** The exact substring this was read from. */
+  raw: string;
+  start_code_point: number;
+  /** Exclusive. */
+  end_code_point: number;
   /** What equality is decided on. Two entities match iff these are equal. */
-  key: string;
-  /** Code point offset into the text. */
-  offset: number;
+  canonical_key: string;
 }
 
-const MERIDIEM_PREFIXES: ReadonlyArray<{ token: string; meridiem: string }> = [
-  { token: '午前', meridiem: 'am' },
-  { token: '午後', meridiem: 'pm' },
+const MERIDIEM_PREFIXES: ReadonlyArray<{ token: string[]; meridiem: string }> = [
+  { token: Array.from('午前'), meridiem: 'am' },
+  { token: Array.from('午後'), meridiem: 'pm' },
 ];
 
-function pad2(value: number): string {
-  return value.toString().padStart(2, '0');
-}
-
-/** `number:<value>:<unit>`, with `-` for a bare quantity. */
-export function numberKey(value: number, unit: string | null): string {
-  return `number:${value}:${unit ?? '-'}`;
+/** `measurement:<value>:<unit>` — e.g. `measurement:2700:millimetre`. */
+export function measurementKey(value: number, unit: CriticalUnit): string {
+  return `measurement:${value}:${unit}`;
 }
 
 /**
- * `time:<meridiem>:<hh>:<mm>`.
+ * `clock-time:<meridiem>:<hh>`.
  *
  * The meridiem is kept rather than folded into a 24-hour clock, so 「10時」 and
- * 「午後10時」 stay different. A transcript that dropped 午後 lost something.
+ * 「午後10時」 stay different: a transcript that dropped 午後 lost something.
  */
-export function timeKey(meridiem: string, hour: number, minute: number): string {
-  return `time:${meridiem}:${pad2(hour)}:${pad2(minute)}`;
+export function clockTimeKey(meridiem: string, hour: number): string {
+  return `clock-time:${meridiem}:${hour.toString().padStart(2, '0')}`;
 }
 
-interface Scanner {
-  chars: string[];
-  index: number;
-}
+// ---------------------------------------------------------------------------
+// Scanning
+// ---------------------------------------------------------------------------
 
-function matchLiteral(scanner: Scanner, literal: string): number | null {
-  const literalChars = Array.from(literal);
-  for (let i = 0; i < literalChars.length; i += 1) {
-    if (scanner.chars[scanner.index + i] !== literalChars[i]) return null;
+const SIGNS = new Set(['-', '+', '−', '＋', '－']);
+/** Characters that continue a numeric expression rather than ending it. */
+const DECIMAL_POINTS = new Set(['.', '．']);
+const GROUPING = new Set([',', '，']);
+const FRACTION_SLASHES = new Set(['/', '／']);
+
+function matchesAt(chars: string[], index: number, token: string[]): boolean {
+  for (let i = 0; i < token.length; i += 1) {
+    if (chars[index + i] !== token[i]) return false;
   }
-  return scanner.index + literalChars.length;
+  return true;
 }
 
-function skipInlineSpaces(chars: string[], from: number): number {
+function skipSeparators(chars: string[], from: number): number {
   let index = from;
-  while (index < chars.length && INLINE_SPACES.has(chars[index]!)) index += 1;
+  while (index < chars.length && SEPARATORS.has(chars[index]!)) index += 1;
   return index;
 }
 
-/** Read a maximal numeral run starting at `from`, or `null` if none starts there. */
-function readNumeralRun(
+/**
+ * Read the whole numeric expression starting at `from`, whether or not v1 can
+ * make sense of it.
+ *
+ * The point is to take it *whole*. `2.7` has to be consumed as one expression,
+ * because reading only the `2` would leave `7mm` behind to be picked up as a
+ * measurement that appears nowhere in the text.
+ */
+function readNumericExpression(
   chars: string[],
   from: number,
-): { value: number; end: number } | null {
-  let end = from;
-  while (end < chars.length && isNumeralChar(chars[end]!)) end += 1;
-  if (end === from) return null;
-  const value = parseNumeralRun(chars.slice(from, end).join(''));
-  return value === null ? null : { value, end };
-}
+): { end: number; text: string; signed: boolean; wellFormed: boolean } | null {
+  let index = from;
+  let signed = false;
 
-/** Longest matching unit alias at `from`, after optional inline spaces. */
-function readUnit(chars: string[], from: number): { canonical: string; end: number } | null {
-  const start = skipInlineSpaces(chars, from);
-  for (const entry of UNIT_LOOKUP) {
-    const aliasChars = Array.from(entry.alias);
-    let matches = true;
-    for (let i = 0; i < aliasChars.length; i += 1) {
-      if (chars[start + i] !== aliasChars[i]) {
-        matches = false;
-        break;
+  if (SIGNS.has(chars[index] ?? '')) {
+    if (!isNumeralChar(chars[index + 1] ?? '')) return null;
+    signed = true;
+    index += 1;
+  }
+
+  if (!isNumeralChar(chars[index] ?? '')) return null;
+
+  const start = index;
+  let wellFormed = true;
+
+  while (index < chars.length) {
+    const char = chars[index]!;
+    if (isNumeralChar(char)) {
+      index += 1;
+      continue;
+    }
+
+    // A separator only continues the expression when a numeral follows it, so a
+    // sentence-ending 。 or a trailing / is not swallowed.
+    const next = chars[index + 1] ?? '';
+    if (
+      (DECIMAL_POINTS.has(char) || GROUPING.has(char) || FRACTION_SLASHES.has(char)) &&
+      isNumeralChar(next)
+    ) {
+      wellFormed = false;
+      index += 2;
+      continue;
+    }
+
+    // Scientific notation: 1e3, 1e-3.
+    if ((char === 'e' || char === 'E') && ASCII_DIGITS.includes(chars[index - 1] ?? '')) {
+      if (isNumeralChar(next)) {
+        wellFormed = false;
+        index += 2;
+        continue;
+      }
+      if (SIGNS.has(next) && isNumeralChar(chars[index + 2] ?? '')) {
+        wellFormed = false;
+        index += 3;
+        continue;
       }
     }
-    if (matches) return { canonical: entry.canonical, end: start + aliasChars.length };
+
+    break;
   }
-  return null;
+
+  return { end: index, text: chars.slice(start, index).join(''), signed, wellFormed };
 }
 
+type Candidate =
+  | { outcome: 'entity'; entity: CriticalEntity; end: number }
+  /** Shaped like a fact, written in a syntax v1 does not read. */
+  | { outcome: 'unsupported'; raw: string; end: number; reason: string }
+  /** Not a critical fact at all — a bare number, or a unit v1 does not know. */
+  | { outcome: 'skip'; end: number }
+  | null;
+
 /**
- * Read a clock time at `from`: an optional 午前/午後, an hour before 時, and an
- * optional minute before 分.
+ * Read one candidate fact starting at `index`.
  *
- * 「3時間」 is a duration, not a clock reading, so a 時 followed by 間 is left
- * for the unit table to pick up.
+ * Returning `skip` and returning `unsupported` are different answers on
+ * purpose. A bare `320` is simply not a critical fact and nobody needs to hear
+ * about it; a `2.7mm` *is* a fact, written in a way v1 cannot read, and letting
+ * that pass as "no entity here" would quietly shrink what the reference claimed.
  */
-function readTime(
-  chars: string[],
-  from: number,
-): { meridiem: string; hour: number; minute: number; end: number } | null {
-  const scanner: Scanner = { chars, index: from };
+function readCandidate(chars: string[], index: number): Candidate {
+  let cursor = index;
   let meridiem = 'none';
-  let index = from;
 
   for (const prefix of MERIDIEM_PREFIXES) {
-    const after = matchLiteral(scanner, prefix.token);
-    if (after !== null) {
-      meridiem = prefix.meridiem;
-      index = skipInlineSpaces(chars, after);
-      break;
+    if (!matchesAt(chars, cursor, prefix.token)) continue;
+    const afterPrefix = skipSeparators(chars, cursor + prefix.token.length);
+    // 午前中 is not a clock reading. Only commit to the prefix when a number
+    // actually follows it.
+    if (!isNumeralChar(chars[afterPrefix] ?? '') && !SIGNS.has(chars[afterPrefix] ?? '')) {
+      continue;
     }
+    meridiem = prefix.meridiem;
+    cursor = afterPrefix;
+    break;
   }
 
-  const hour = readNumeralRun(chars, index);
-  if (hour === null) return null;
+  const numeric = readNumericExpression(chars, cursor);
+  if (numeric === null) return null;
 
-  let cursor = skipInlineSpaces(chars, hour.end);
-  if (chars[cursor] !== '時' || chars[cursor + 1] === '間') return null;
-  cursor += 1;
+  const afterNumber = skipSeparators(chars, numeric.end);
+  const value = numeric.signed || !numeric.wellFormed ? null : parseNumeral(numeric.text);
 
-  let minute = 0;
-  const minuteStart = skipInlineSpaces(chars, cursor);
-  const minuteRun = readNumeralRun(chars, minuteStart);
-  if (minuteRun !== null) {
-    const afterMinute = skipInlineSpaces(chars, minuteRun.end);
-    // Only 分 makes it a minute; 分間 is a duration and belongs to the number
-    // that follows, not to this clock reading.
-    if (chars[afterMinute] === '分' && chars[afterMinute + 1] !== '間') {
-      minute = minuteRun.value;
-      cursor = afterMinute + 1;
+  // A clock hour: <number>時, not followed by 間 (which makes it a duration).
+  if (chars[afterNumber] === '時' && chars[afterNumber + 1] !== '間') {
+    const end = afterNumber + 1;
+
+    // Minutes are not part of v1. 10時30分 is a clock reading this evaluator
+    // cannot represent, and reporting it as 10:00 would drop the 30 without
+    // saying so.
+    const minuteStart = skipSeparators(chars, end);
+    const minutes = readNumericExpression(chars, minuteStart);
+    if (minutes !== null) {
+      const afterMinutes = skipSeparators(chars, minutes.end);
+      if (chars[afterMinutes] === '分' && chars[afterMinutes + 1] !== '間') {
+        return {
+          outcome: 'unsupported',
+          raw: chars.slice(index, afterMinutes + 1).join(''),
+          end: afterMinutes + 1,
+          reason: 'minutes are not part of critical-info-v1',
+        };
+      }
     }
+
+    if (value === null) {
+      return {
+        outcome: 'unsupported',
+        raw: chars.slice(index, end).join(''),
+        end,
+        reason: 'unreadable hour',
+      };
+    }
+
+    return {
+      outcome: 'entity',
+      entity: {
+        kind: 'clock-time',
+        raw: chars.slice(index, end).join(''),
+        start_code_point: index,
+        end_code_point: end,
+        canonical_key: clockTimeKey(meridiem, value),
+      },
+      end,
+    };
   }
 
-  return { meridiem, hour: hour.value, minute, end: cursor };
+  for (const entry of UNIT_LOOKUP) {
+    if (!matchesAt(chars, afterNumber, entry.alias)) continue;
+    const end = afterNumber + entry.alias.length;
+
+    if (value === null) {
+      return {
+        outcome: 'unsupported',
+        raw: chars.slice(index, end).join(''),
+        end,
+        reason: 'unreadable quantity',
+      };
+    }
+
+    return {
+      outcome: 'entity',
+      entity: {
+        kind: 'measurement',
+        raw: chars.slice(index, end).join(''),
+        start_code_point: index,
+        end_code_point: end,
+        canonical_key: measurementKey(value, entry.unit),
+      },
+      end,
+    };
+  }
+
+  // No approved unit and no clock marker: not a critical fact. The whole
+  // numeric expression is consumed so nothing inside it is re-read.
+  return { outcome: 'skip', end: numeric.end };
+}
+
+export interface CriticalExtraction {
+  entities: CriticalEntity[];
+  /** Fact-shaped text v1 could not read. Surfaced, never turned into entities. */
+  unsupported: Array<{ raw: string; start_code_point: number; reason: string }>;
 }
 
 /**
- * Every critical entity in a text, left to right.
+ * Every critical entity in a text, left to right, with whatever v1 could not
+ * read reported alongside.
  *
- * A single pass: at each position, a clock reading is tried first (it can start
- * with 午前/午後, which no number can), then a quantity. Nothing overlaps, and
- * the same text always yields the same list in the same order.
+ * One pass, no overlaps, and the same text always yields the same lists in the
+ * same order.
  */
-export function extractCriticalEntities(text: string): CriticalEntity[] {
+export function extractCritical(text: string): CriticalExtraction {
   const chars = Array.from(text);
   const entities: CriticalEntity[] = [];
+  const unsupported: CriticalExtraction['unsupported'] = [];
   let index = 0;
 
   while (index < chars.length) {
     const char = chars[index]!;
-    const couldStartTime = MERIDIEM_PREFIXES.some((prefix) => prefix.token.startsWith(char));
+    const couldStart =
+      isNumeralChar(char) ||
+      SIGNS.has(char) ||
+      MERIDIEM_PREFIXES.some((prefix) => prefix.token[0] === char);
 
-    if (couldStartTime || isNumeralChar(char)) {
-      const time = readTime(chars, index);
-      if (time !== null) {
-        entities.push({
-          kind: 'time',
-          surface: chars.slice(index, time.end).join(''),
-          key: timeKey(time.meridiem, time.hour, time.minute),
-          offset: index,
-        });
-        index = time.end;
-        continue;
-      }
-    }
-
-    if (isNumeralChar(char)) {
-      const run = readNumeralRun(chars, index);
-      if (run !== null) {
-        const unit = readUnit(chars, run.end);
-        const end = unit?.end ?? run.end;
-        entities.push({
-          kind: 'number',
-          surface: chars.slice(index, end).join(''),
-          key: numberKey(run.value, unit?.canonical ?? null),
-          offset: index,
-        });
-        index = end;
-        continue;
-      }
-      // An unreadable numeral run: step past it whole, so its characters are
-      // not re-read as a different, smaller number.
-      let end = index;
-      while (end < chars.length && isNumeralChar(chars[end]!)) end += 1;
-      index = end;
+    if (!couldStart) {
+      index += 1;
       continue;
     }
 
-    index += 1;
+    const candidate = readCandidate(chars, index);
+    if (candidate === null) {
+      index += 1;
+      continue;
+    }
+
+    if (candidate.outcome === 'entity') entities.push(candidate.entity);
+    else if (candidate.outcome === 'unsupported') {
+      unsupported.push({
+        raw: candidate.raw,
+        start_code_point: index,
+        reason: candidate.reason,
+      });
+    }
+
+    index = Math.max(candidate.end, index + 1);
   }
 
-  return entities;
+  return { entities, unsupported };
+}
+
+/** Just the entities, for callers that do not need the unsupported list. */
+export function extractCriticalEntities(text: string): CriticalEntity[] {
+  return extractCritical(text).entities;
 }
 
 // ---------------------------------------------------------------------------
-// Matching
+// canonical-multiset-v1
 // ---------------------------------------------------------------------------
 
 export interface CriticalMatch {
-  key: string;
-  referenceSurface: string;
-  referenceOffset: number;
-  hypothesisSurface: string;
-  hypothesisOffset: number;
+  canonical_key: string;
+  reference: CriticalEntity;
+  hypothesis: CriticalEntity;
 }
 
 export interface CriticalInfoMetrics {
   reference_entities: number;
   hypothesis_entities: number;
   matched: number;
-  /** Reference entities with no counterpart. Information the transcript lost. */
+  /** Reference entities with no counterpart. Facts the transcript lost. */
   missing: number;
-  /** Hypothesis entities with no counterpart. Numbers nobody said. */
+  /** Hypothesis entities with no counterpart. Facts nobody stated. */
   extra: number;
   /** `matched / reference_entities`. */
   preservation_rate: number;
@@ -452,14 +617,32 @@ export interface CriticalInfoAnalysis {
  * Equality is exact key equality, so a greedy pass in reading order — take the
  * earliest unconsumed hypothesis entity with the same key — already produces a
  * maximum matching, and produces the same one every time. There is no partial
- * credit: an entity either survived or it did not.
+ * credit: a fact either survived or it did not.
+ *
+ * The reference is held to a stricter standard than the hypothesis. Text the
+ * grammar cannot read stops the whole evaluation when it is in the reference,
+ * because the reference defines what was asked for; in the hypothesis it is
+ * skipped whole, which shows up as the reference fact going missing.
  */
 export function analyzeCriticalInfo(
   reference: string,
   hypothesis: string,
 ): CriticalInfoAnalysis {
-  const referenceEntities = extractCriticalEntities(reference);
-  const hypothesisEntities = extractCriticalEntities(hypothesis);
+  const referenceExtraction = extractCritical(reference);
+
+  if (referenceExtraction.unsupported.length > 0) {
+    const first = referenceExtraction.unsupported[0]!;
+    throw new CriticalInfoError(
+      'CRITICAL_INFO_UNSUPPORTED_REFERENCE_NUMERIC_SYNTAX',
+      `reference の ${JSON.stringify(first.raw)} は critical-info-v1 が読めない数値表現です。`,
+      `raw=${first.raw} start_code_point=${first.start_code_point} reason=${first.reason}`,
+    );
+  }
+
+  const referenceEntities = referenceExtraction.entities;
+  // Whatever the hypothesis could not be read as is left out entirely. It never
+  // becomes a partial entity, so it can neither match nor count as extra.
+  const hypothesisEntities = extractCritical(hypothesis).entities;
 
   if (referenceEntities.length === 0) {
     // There is nothing to preserve, so every rate would be an invention —
@@ -473,9 +656,9 @@ export function analyzeCriticalInfo(
 
   const availableByKey = new Map<string, number[]>();
   hypothesisEntities.forEach((entity, position) => {
-    const bucket = availableByKey.get(entity.key);
+    const bucket = availableByKey.get(entity.canonical_key);
     if (bucket) bucket.push(position);
-    else availableByKey.set(entity.key, [position]);
+    else availableByKey.set(entity.canonical_key, [position]);
   });
 
   const consumed = new Set<number>();
@@ -483,34 +666,35 @@ export function analyzeCriticalInfo(
   const missing: CriticalEntity[] = [];
 
   for (const entity of referenceEntities) {
-    const bucket = availableByKey.get(entity.key);
-    const position = bucket?.shift();
+    const position = availableByKey.get(entity.canonical_key)?.shift();
     if (position === undefined) {
       missing.push(entity);
       continue;
     }
     consumed.add(position);
-    const counterpart = hypothesisEntities[position]!;
     matches.push({
-      key: entity.key,
-      referenceSurface: entity.surface,
-      referenceOffset: entity.offset,
-      hypothesisSurface: counterpart.surface,
-      hypothesisOffset: counterpart.offset,
+      canonical_key: entity.canonical_key,
+      reference: entity,
+      hypothesis: hypothesisEntities[position]!,
     });
   }
 
   const extra = hypothesisEntities.filter((_, position) => !consumed.has(position));
 
-  const metrics: CriticalInfoMetrics = {
-    reference_entities: referenceEntities.length,
-    hypothesis_entities: hypothesisEntities.length,
-    matched: matches.length,
-    missing: missing.length,
-    extra: extra.length,
-    preservation_rate: matches.length / referenceEntities.length,
-    exact_entity_multiset_match: missing.length === 0 && extra.length === 0,
+  return {
+    referenceEntities,
+    hypothesisEntities,
+    matches,
+    missing,
+    extra,
+    metrics: {
+      reference_entities: referenceEntities.length,
+      hypothesis_entities: hypothesisEntities.length,
+      matched: matches.length,
+      missing: missing.length,
+      extra: extra.length,
+      preservation_rate: matches.length / referenceEntities.length,
+      exact_entity_multiset_match: missing.length === 0 && extra.length === 0,
+    },
   };
-
-  return { referenceEntities, hypothesisEntities, matches, missing, extra, metrics };
 }

@@ -559,9 +559,11 @@ describe('stored Evaluations are re-derived on read', () => {
     const entry = await listOne();
     expect(entry.status).toBe('verified');
     if (entry.status === 'verified') {
-      expect(entry.evaluation.evaluator.id).toBe('raw-char-v1');
-      expect(entry.evaluation.evaluator.unit).toBe('unicode-code-point');
-      expect(entry.evaluation.evaluator.normalization).toBe('none');
+      expect(entry.evaluation.evaluator).toEqual({
+        id: 'raw-char-v1',
+        unit: 'unicode-code-point',
+        normalization: 'none',
+      });
     }
   });
 
@@ -915,8 +917,11 @@ describe('creating a critical information Evaluation', () => {
       evaluation_id: EVALUATION_ID,
       evaluator: {
         id: 'critical-info-v1',
-        unit: 'critical-entity',
-        normalization: 'fixed-alias-table',
+        scope: 'numeric-unit-time',
+        number_grammar: 'number-grammar-v1',
+        unit_aliases: 'unit-alias-v1',
+        matching: 'canonical-multiset-v1',
+        separator_policy: 'space-fullwidth-space-v1',
       },
       run_id: RUN_ID,
       result_id: RESULT_ID,
@@ -945,13 +950,36 @@ describe('creating a critical information Evaluation', () => {
     });
     expect(outcome.evaluation.matches).toEqual([
       {
-        key: 'number:2700:mm',
-        reference_surface: '二千七百ミリ',
-        reference_offset: expect.any(Number),
-        hypothesis_surface: '2700ミリ',
-        hypothesis_offset: expect.any(Number),
+        canonical_key: 'measurement:2700:millimetre',
+        reference: {
+          kind: 'measurement',
+          raw: '二千七百ミリ',
+          start_code_point: expect.any(Number),
+          end_code_point: expect.any(Number),
+          canonical_key: 'measurement:2700:millimetre',
+        },
+        hypothesis: {
+          kind: 'measurement',
+          raw: '2700ミリ',
+          start_code_point: expect.any(Number),
+          end_code_point: expect.any(Number),
+          canonical_key: 'measurement:2700:millimetre',
+        },
       },
     ]);
+
+    // Both spans point back into the texts they were read from.
+    const match = outcome.evaluation.matches[0]!;
+    expect(
+      Array.from(SOURCE_TEXT)
+        .slice(match.reference.start_code_point, match.reference.end_code_point)
+        .join(''),
+    ).toBe('二千七百ミリ');
+    expect(
+      Array.from(WINDOWS_TRANSCRIPT)
+        .slice(match.hypothesis.start_code_point, match.hypothesis.end_code_point)
+        .join(''),
+    ).toBe('2700ミリ');
   });
 
   it('stores the working, not just the rate', async () => {
@@ -963,14 +991,22 @@ describe('creating a critical information Evaluation', () => {
       deps({ evaluationId: EVALUATION_ID }),
     );
 
-    expect(outcome.evaluation.entities.reference.map((entity) => entity.key)).toEqual([
-      'number:2700:mm',
+    expect(outcome.evaluation.entities.reference.map((entity) => entity.canonical_key)).toEqual([
+      'measurement:2700:millimetre',
     ]);
-    expect(outcome.evaluation.entities.hypothesis.map((entity) => entity.key)).toEqual([
-      'number:2600:mm',
+    expect(outcome.evaluation.entities.hypothesis.map((entity) => entity.canonical_key)).toEqual([
+      'measurement:2600:millimetre',
     ]);
-    expect(outcome.evaluation.missing.map((entity) => entity.surface)).toEqual(['二千七百ミリ']);
-    expect(outcome.evaluation.extra.map((entity) => entity.surface)).toEqual(['2600ミリ']);
+    expect(outcome.evaluation.missing.map((entity) => entity.raw)).toEqual(['二千七百ミリ']);
+    expect(outcome.evaluation.extra.map((entity) => entity.raw)).toEqual(['2600ミリ']);
+
+    // Every stored span points back into the text it was read from.
+    const referenceChars = Array.from(SOURCE_TEXT);
+    for (const entity of outcome.evaluation.entities.reference) {
+      expect(
+        referenceChars.slice(entity.start_code_point, entity.end_code_point).join(''),
+      ).toBe(entity.raw);
+    }
     expect(outcome.evaluation.metrics).toMatchObject({
       matched: 0,
       missing: 1,
@@ -1182,15 +1218,93 @@ describe('stored critical Evaluations are re-derived on read', () => {
     if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_ENTITIES_MISMATCH');
   });
 
-  it('rejects an evaluator that is a different measurement', async () => {
+  const EVALUATOR_FIELD_EDITS: Array<[string, string]> = [
+    ['id', 'normalized-info-v1'],
+    ['scope', 'numeric-only'],
+    ['number_grammar', 'number-grammar-v2'],
+    ['unit_aliases', 'unit-alias-v2'],
+    ['matching', 'greedy-overlap-v1'],
+    ['separator_policy', 'any-whitespace-v1'],
+  ];
+
+  for (const [field, value] of EVALUATOR_FIELD_EDITS) {
+    it(`rejects an edited evaluator.${field} even when re-sealed`, async () => {
+      await seedCritical();
+      await patchCritical((evaluation) => {
+        (evaluation.evaluator as Record<string, unknown>)[field] = value;
+      }, true);
+
+      const entry = await listOne();
+      expect(entry.status).toBe('rejected');
+      if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_EVALUATOR_MISMATCH');
+    });
+  }
+
+  it('rejects an evaluator carrying a field this build has never heard of', async () => {
     await seedCritical();
     await patchCritical((evaluation) => {
-      (evaluation.evaluator as Record<string, unknown>).normalization = 'none';
+      (evaluation.evaluator as Record<string, unknown>).rounding_policy = 'nearest-v1';
     }, true);
 
     const entry = await listOne();
     expect(entry.status).toBe('rejected');
     if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_EVALUATOR_MISMATCH');
+  });
+
+  it('rejects an edited entity span', async () => {
+    await seedCritical();
+    await patchCritical((evaluation) => {
+      const entities = evaluation.entities as { reference: Array<Record<string, unknown>> };
+      entities.reference[0]!.start_code_point = 0;
+    });
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_INTEGRITY_MISMATCH');
+  });
+
+  it('rejects an edited entity span even when re-sealed', async () => {
+    await seedCritical();
+    // The span no longer points at the text the raw came from. Only recomputing
+    // from the bytes catches it.
+    await patchCritical((evaluation) => {
+      const entities = evaluation.entities as { reference: Array<Record<string, unknown>> };
+      entities.reference[0]!.start_code_point = 0;
+      entities.reference[0]!.end_code_point = 6;
+    }, true);
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_ENTITIES_MISMATCH');
+  });
+
+  it('rejects an edited span inside a match even when re-sealed', async () => {
+    await seedCritical();
+    await patchCritical((evaluation) => {
+      const missing = evaluation.missing as Array<Record<string, unknown>>;
+      missing[0]!.end_code_point = (missing[0]!.end_code_point as number) + 1;
+    }, true);
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_ENTITIES_MISMATCH');
+  });
+
+  it('stores spans that point back into the texts they were read from', async () => {
+    const outcome = await seedCritical();
+    const referenceChars = Array.from(SOURCE_TEXT);
+    const hypothesisChars = Array.from(WRONG_VALUE_TRANSCRIPT);
+
+    for (const entity of outcome.evaluation.entities.reference) {
+      expect(
+        referenceChars.slice(entity.start_code_point, entity.end_code_point).join(''),
+      ).toBe(entity.raw);
+    }
+    for (const entity of outcome.evaluation.entities.hypothesis) {
+      expect(
+        hypothesisChars.slice(entity.start_code_point, entity.end_code_point).join(''),
+      ).toBe(entity.raw);
+    }
   });
 
   it('rejects an Evaluation whose transcript changed underneath it', async () => {

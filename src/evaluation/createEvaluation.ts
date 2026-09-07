@@ -214,11 +214,9 @@ function buildCriticalPayload(
     schema_version: CRITICAL_EVALUATION_SCHEMA_VERSION,
     evaluation_id: evaluationId,
     created_at: createdAt,
-    evaluator: {
-      id: CRITICAL_INFO_EVALUATOR.id,
-      unit: CRITICAL_INFO_EVALUATOR.unit,
-      normalization: CRITICAL_INFO_EVALUATOR.normalization,
-    },
+    // Server-fixed, never from the request: the artifact has to record the
+    // full semantics it was measured under, not just a name.
+    evaluator: { ...CRITICAL_INFO_EVALUATOR },
     run_id: subject.runId,
     result_id: subject.resultId,
     // The subject and the input hashes are resolved identically for both
