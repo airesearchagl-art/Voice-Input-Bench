@@ -8,6 +8,8 @@ import { verifyRunEvidence } from './runEvidence';
 import { resolveDeliveryPath, resolveTool } from './tools';
 import { assertRootIsolation } from '@/storage/rootIsolation';
 import { ResultVerificationError, verifyStoredResult } from './verifyStoredResult';
+import { trustedToolIdOf } from './verifyToolIdentity';
+import type { SttToolId } from './tools';
 
 /**
  * One manual STT observation → one immutable Result.
@@ -137,7 +139,22 @@ export async function saveManualSttResult(
  */
 export type ResultListEntry =
   | { status: 'verified'; resultId: string; result: ResultV1; transcript: string }
-  | { status: 'rejected'; resultId: string; reason: string; message: string; detail?: string };
+  | {
+      status: 'rejected';
+      resultId: string;
+      reason: string;
+      message: string;
+      detail?: string;
+      /**
+       * The tool this Result belongs to, when that much survived verification.
+       *
+       * Set only when the tool/capture contract itself still holds — a Result
+       * whose `tool` section is what failed has no trustworthy owner, and
+       * guessing one would put a failure in some tool's column that that tool
+       * may have had nothing to do with.
+       */
+      trustedToolId?: SttToolId;
+    };
 
 /**
  * Results attached to one Run, oldest first.
@@ -205,6 +222,7 @@ export async function listResultsForRun(
           reason: caught.kind,
           message: caught.message,
           detail: caught.detail,
+          trustedToolId: trustedToolIdOf(stored),
         });
         continue;
       }

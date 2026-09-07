@@ -342,3 +342,117 @@ describe('GET /api/sessions/[sessionId]', () => {
     expect(await readFile(file, 'utf8')).toBe(before);
   });
 });
+
+describe('RF-1 / RF-3 at the HTTP boundary', () => {
+  async function patchSessionFile(
+    sessionId: string,
+    mutate: (session: Record<string, unknown>) => void,
+  ) {
+    const file = path.join(sessionsRoot, sessionId, 'session.json');
+    const session = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    mutate(session);
+    await writeFile(file, `${JSON.stringify(session, null, 2)}\n`);
+  }
+
+  it('records an integrity hash on the created Session', async () => {
+    await writeRun(SHORT_RUN);
+    const { response } = await createSession([SHORT_RUN]);
+    const full = (await response.json()) as {
+      session: { integrity: { algorithm: string; semantic_sha256: string } };
+    };
+    expect(full.session.integrity.algorithm).toBe('sha256');
+    expect(full.session.integrity.semantic_sha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('returns 409 for a Session narrowed to a valid target_tools subset', async () => {
+    await writeRun(SHORT_RUN);
+    const { body } = await createSession([SHORT_RUN]);
+    await patchSessionFile(body.sessionId!, (session) => {
+      session.target_tools = ['windows-standard-voice-input'];
+    });
+
+    const response = await getSessionById(body.sessionId!);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: { kind: 'SESSION_INTEGRITY_MISMATCH' },
+    });
+  });
+
+  it('omits an integrity-broken Session from the listing', async () => {
+    await writeRun(SHORT_RUN);
+    const { body } = await createSession([SHORT_RUN]);
+    await patchSessionFile(body.sessionId!, (session) => {
+      session.name = 'renamed after the fact';
+    });
+
+    const listed = (await (await getSessions()).json()) as { sessions: unknown[] };
+    expect(listed.sessions).toEqual([]);
+  });
+
+  it('attributes a broken Windows Result to Windows only', async () => {
+    await writeRun(SHORT_RUN);
+    const { body } = await createSession([SHORT_RUN]);
+
+    const created = (await (
+      await postResult(
+        postRequest('http://localhost/api/results', {
+          runId: SHORT_RUN,
+          toolId: 'windows-standard-voice-input',
+          deliveryPath: 'speaker-to-mic',
+          rawTranscript: '壊れる観測',
+        }),
+      )
+    ).json()) as { resultId: string };
+    await writeFile(path.join(resultsRoot, created.resultId, 'transcript.txt'), '書き換え');
+
+    const comparison = (await (await getSessionById(body.sessionId!)).json()) as {
+      rows: Array<{
+        cells: Array<{ tool: string; status: string; rejectedCount: number }>;
+        unattributedRejected: unknown[];
+      }>;
+    };
+
+    const cells = comparison.rows[0]!.cells;
+    expect(cells.find((cell) => cell.tool === 'windows-standard-voice-input')).toMatchObject({
+      status: 'rejected-only',
+      rejectedCount: 1,
+    });
+    expect(cells.find((cell) => cell.tool === 'aqua-voice')).toMatchObject({
+      status: 'missing',
+      rejectedCount: 0,
+    });
+    expect(comparison.rows[0]!.unattributedRejected).toEqual([]);
+  });
+
+  it('reports a Result with a broken tool identity as unattributed', async () => {
+    await writeRun(SHORT_RUN);
+    const { body } = await createSession([SHORT_RUN]);
+
+    const created = (await (
+      await postResult(
+        postRequest('http://localhost/api/results', {
+          runId: SHORT_RUN,
+          toolId: 'aqua-voice',
+          deliveryPath: 'virtual-audio',
+          rawTranscript: '観測',
+        }),
+      )
+    ).json()) as { resultId: string };
+
+    const file = path.join(resultsRoot, created.resultId, 'result.json');
+    const result = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    (result.tool as Record<string, unknown>).id = 'whisper';
+    await writeFile(file, JSON.stringify(result, null, 2));
+
+    const comparison = (await (await getSessionById(body.sessionId!)).json()) as {
+      rows: Array<{
+        cells: Array<{ tool: string; rejectedCount: number }>;
+        unattributedRejected: Array<{ resultId: string }>;
+      }>;
+    };
+
+    expect(comparison.rows[0]!.cells.every((cell) => cell.rejectedCount === 0)).toBe(true);
+    expect(comparison.rows[0]!.unattributedRejected).toHaveLength(1);
+    expect(comparison.rows[0]!.unattributedRejected[0]!.resultId).toBe(created.resultId);
+  });
+});

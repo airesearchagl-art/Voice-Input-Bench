@@ -3,6 +3,11 @@ import { isValidResultId } from '@/lib/resultId';
 import type { ResultV1 } from './resultSchema';
 import { RESULT_SCHEMA_VERSION } from './resultSchema';
 import type { VerifiedRunEvidence } from './runEvidence';
+import {
+  ToolIdentityError,
+  verifyStoredToolIdentity,
+  type ToolIdentityErrorKind,
+} from './verifyToolIdentity';
 
 /**
  * Verification of a Result read back from disk.
@@ -31,7 +36,9 @@ export type ResultVerificationErrorKind =
   /** The transcript on disk is a different length than recorded. */
   | 'RESULT_TRANSCRIPT_BYTES_MISMATCH'
   /** The Result's run evidence disagrees with the Run as it is now. */
-  | 'RESULT_RUN_EVIDENCE_MISMATCH';
+  | 'RESULT_RUN_EVIDENCE_MISMATCH'
+  /** The tool, capture or timestamp contract no longer holds. */
+  | ToolIdentityErrorKind;
 
 export class ResultVerificationError extends Error {
   readonly kind: ResultVerificationErrorKind;
@@ -109,17 +116,22 @@ export function verifyStoredResult(input: {
     );
   }
 
-  const tool = raw.tool;
-  const capture = raw.capture;
   const evidence = raw.run_evidence;
   const transcriptNode = raw.transcript;
-  if (
-    !isPlainObject(tool) ||
-    !isPlainObject(capture) ||
-    !isPlainObject(evidence) ||
-    !isPlainObject(transcriptNode)
-  ) {
+  if (!isPlainObject(evidence) || !isPlainObject(transcriptNode)) {
     fail('RESULT_MALFORMED', 'result.json に必要なセクションがありません。');
+  }
+
+  // Tool identity, capture method and timestamp. These decide which column of a
+  // comparison the observation belongs in, so they are re-derived rather than
+  // read as given.
+  try {
+    verifyStoredToolIdentity(raw);
+  } catch (caught) {
+    if (caught instanceof ToolIdentityError) {
+      fail(caught.kind, caught.message, caught.detail);
+    }
+    throw caught;
   }
 
   const transcriptSection = transcriptNode as Record<string, unknown>;

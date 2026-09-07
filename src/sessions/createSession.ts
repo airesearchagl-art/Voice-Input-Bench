@@ -7,8 +7,10 @@ import { verifyRunEvidence } from '@/results/runEvidence';
 import {
   SESSION_SCHEMA_VERSION,
   SESSION_TARGET_TOOLS,
+  computeSessionSemanticSha256,
   isSessionTargetTool,
   type SessionCaseV1,
+  type SessionPayloadV1,
   type SessionTargetTool,
   type SessionV1,
 } from './sessionSchema';
@@ -161,13 +163,19 @@ export async function createBenchmarkSession(
   }
 
   const sessionId = deps.sessionId ?? createSessionId(now());
-  const session: SessionV1 = {
+  const payload: SessionPayloadV1 = {
     schema_version: SESSION_SCHEMA_VERSION,
     session_id: sessionId,
     created_at: now().toISOString(),
     name,
     cases,
     target_tools: targetTools,
+  };
+
+  // Recorded now so a later hand edit of any of the above is detectable.
+  const session: SessionV1 = {
+    ...payload,
+    integrity: { algorithm: 'sha256', semantic_sha256: computeSessionSemanticSha256(payload) },
   };
 
   const stored = await deps.sessionStore.saveSession(

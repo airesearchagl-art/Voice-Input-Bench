@@ -4,8 +4,10 @@ import type { LocalRunStore } from '@/storage/LocalRunStore';
 import { verifyRunEvidence, type VerifiedRunEvidence } from '@/results/runEvidence';
 import {
   SESSION_SCHEMA_VERSION,
+  computeSessionSemanticSha256,
   isSessionTargetTool,
   type SessionCaseV1,
+  type SessionPayloadV1,
   type SessionTargetTool,
   type SessionV1,
 } from './sessionSchema';
@@ -18,8 +20,13 @@ import {
  * different audio while the matrix kept claiming the same Cases, so a stored
  * Session is re-checked on every read rather than trusted.
  *
- * Structure is checked first (synchronously), then every Case is checked
- * against a fresh reading of the Run it pins.
+ * Structure is checked first, then the Session's own integrity hash, then every
+ * Case against a fresh reading of the Run it pins.
+ *
+ * The hash step is what catches an edit from one valid value to another —
+ * renaming the Session, moving `created_at`, or dropping a tool from
+ * `target_tools` all leave a structurally perfect file that no longer describes
+ * the experiment that was planned.
  */
 
 export type SessionVerificationErrorKind =
@@ -32,6 +39,10 @@ export type SessionVerificationErrorKind =
   | 'SESSION_DUPLICATE_TEST_ID'
   | 'SESSION_RUN_ID_INVALID'
   | 'SESSION_TARGET_TOOLS_INVALID'
+  /** The integrity record itself is missing or malformed. */
+  | 'SESSION_INTEGRITY_MISSING'
+  /** The Session's contents no longer hash to what was recorded. */
+  | 'SESSION_INTEGRITY_MISMATCH'
   /** A Case's recorded evidence disagrees with the Run as it stands now. */
   | 'SESSION_EVIDENCE_MISMATCH';
 
@@ -184,7 +195,17 @@ export function verifyStoredSessionShape(input: {
     targetTools.push(candidate);
   }
 
-  return {
+  const integrity = raw.integrity;
+  if (
+    !isPlainObject(integrity) ||
+    integrity.algorithm !== 'sha256' ||
+    typeof integrity.semantic_sha256 !== 'string' ||
+    !SHA256_PATTERN.test(integrity.semantic_sha256)
+  ) {
+    fail('SESSION_INTEGRITY_MISSING', 'integrity が sha256 の記録として読めません。');
+  }
+
+  const payload: SessionPayloadV1 = {
     schema_version: SESSION_SCHEMA_VERSION,
     session_id: sessionId,
     created_at: raw.created_at as string,
@@ -192,6 +213,18 @@ export function verifyStoredSessionShape(input: {
     cases,
     target_tools: targetTools,
   };
+
+  const recorded = (integrity as Record<string, unknown>).semantic_sha256 as string;
+  const actual = computeSessionSemanticSha256(payload);
+  if (recorded !== actual) {
+    fail(
+      'SESSION_INTEGRITY_MISMATCH',
+      'Session の内容が記録された semantic hash と一致しません。作成後に編集された可能性があります。',
+      `recorded=${recorded} actual=${actual}`,
+    );
+  }
+
+  return { ...payload, integrity: { algorithm: 'sha256', semantic_sha256: recorded } };
 }
 
 /**

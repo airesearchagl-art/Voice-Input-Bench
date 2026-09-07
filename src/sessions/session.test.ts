@@ -11,6 +11,7 @@ import { RunEvidenceError } from '@/results/runEvidence';
 import { saveManualSttResult } from '@/results/saveResult';
 import { SessionCreationError, createBenchmarkSession } from './createSession';
 import { SessionVerificationError } from './verifyStoredSession';
+import { computeSessionSemanticSha256, sessionPayloadOf } from './sessionSchema';
 import {
   buildSessionComparison,
   listVerifiedSessions,
@@ -202,7 +203,34 @@ describe('session creation resolves evidence server-side', () => {
         },
       ],
       target_tools: BOTH_TOOLS,
+      integrity: {
+        algorithm: 'sha256',
+        semantic_sha256: computeSessionSemanticSha256(sessionPayloadOf(outcome.session)),
+      },
     });
+  });
+
+  it('records an integrity hash over the Session payload', async () => {
+    await writeRun(SHORT_RUN);
+    const outcome = await createBenchmarkSession(createInput([SHORT_RUN]), {
+      ...deps(),
+      now: () => NOW,
+      sessionId: SESSION_ID,
+    });
+
+    expect(outcome.session.integrity.algorithm).toBe('sha256');
+    expect(outcome.session.integrity.semantic_sha256).toMatch(/^[0-9a-f]{64}$/);
+    // The hash covers the payload, not itself.
+    expect(outcome.session.integrity.semantic_sha256).toBe(
+      computeSessionSemanticSha256({
+        schema_version: 1,
+        session_id: SESSION_ID,
+        created_at: NOW.toISOString(),
+        name: '2026-09 建築ドメイン比較',
+        cases: outcome.session.cases,
+        target_tools: outcome.session.target_tools,
+      }),
+    );
   });
 
   it('ignores case metadata the client tries to supply', async () => {
@@ -493,7 +521,8 @@ describe('session readback verification', () => {
       await patchSession((session) => {
         (session.cases as Array<Record<string, unknown>>)[0]![field] = value;
       });
-      await expectRejected('SESSION_EVIDENCE_MISMATCH');
+      // The integrity hash catches this before the Run is even read.
+      await expectRejected('SESSION_INTEGRITY_MISMATCH');
     });
   }
 
@@ -505,6 +534,17 @@ describe('session readback verification', () => {
     await patchSession((session) => {
       (session.cases as Array<Record<string, unknown>>)[0]!.run_id = SHORT_RUN_REGENERATED;
     });
+    await expectRejected('SESSION_INTEGRITY_MISMATCH');
+  });
+
+  it('still reports an evidence mismatch when the Run itself was replaced', async () => {
+    // session.json is untouched, so the integrity hash passes. The Run at that
+    // id was deleted and rebuilt with different content — internally consistent,
+    // but no longer the Run this Session pinned.
+    await seed([SHORT_RUN]);
+    await rm(runStore.resolveRunDir(SHORT_RUN), { recursive: true });
+    await writeRun(SHORT_RUN, { testId: 'coding-001', seed: 9 });
+
     await expectRejected('SESSION_EVIDENCE_MISMATCH');
   });
 
@@ -533,6 +573,148 @@ describe('session readback verification', () => {
     const summaries = await listVerifiedSessions(deps());
     expect(summaries.map((entry) => entry.sessionId)).toEqual([SESSION_ID_2, SESSION_ID]);
     expect(summaries[0]).toMatchObject({ name: 'second', caseCount: 1, targetTools: BOTH_TOOLS });
+  });
+});
+
+describe('RF-1: semantic integrity of the stored Session', () => {
+  async function seed() {
+    await writeRun(SHORT_RUN);
+    await writeRun(NUMBERS_RUN);
+    return createBenchmarkSession(createInput([SHORT_RUN, NUMBERS_RUN]), {
+      ...deps(),
+      now: () => NOW,
+      sessionId: SESSION_ID,
+    });
+  }
+
+  async function patchSession(mutate: (session: Record<string, unknown>) => void) {
+    const file = sessionStore.resolveSessionFile(SESSION_ID);
+    const session = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    mutate(session);
+    await writeFile(file, `${JSON.stringify(session, null, 2)}\n`);
+  }
+
+  async function expectIntegrityRejection() {
+    const error = await loadVerifiedSession(deps(), SESSION_ID).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(SessionVerificationError);
+    expect((error as SessionVerificationError).kind).toBe('SESSION_INTEGRITY_MISMATCH');
+  }
+
+  it('accepts an untouched Session', async () => {
+    await seed();
+    const session = await loadVerifiedSession(deps(), SESSION_ID);
+    expect(session.integrity.algorithm).toBe('sha256');
+  });
+
+  it('rejects an edit to a different but perfectly valid name', async () => {
+    await seed();
+    await patchSession((session) => {
+      session.name = '別の実験名';
+    });
+    await expectIntegrityRejection();
+  });
+
+  it('rejects an edit to a different but perfectly valid created_at', async () => {
+    await seed();
+    await patchSession((session) => {
+      session.created_at = '2026-01-01T00:00:00.000Z';
+    });
+    await expectIntegrityRejection();
+  });
+
+  it('rejects narrowing target_tools to a valid subset', async () => {
+    // The exact edit that structural validation cannot see: still a valid
+    // Session, but a different experiment.
+    await seed();
+    await patchSession((session) => {
+      session.target_tools = ['windows-standard-voice-input'];
+    });
+    await expectIntegrityRejection();
+  });
+
+  it('rejects reordering target_tools', async () => {
+    await seed();
+    await patchSession((session) => {
+      session.target_tools = ['aqua-voice', 'windows-standard-voice-input'];
+    });
+    await expectIntegrityRejection();
+  });
+
+  it('rejects reordering cases', async () => {
+    await seed();
+    await patchSession((session) => {
+      session.cases = (session.cases as unknown[]).slice().reverse();
+    });
+    await expectIntegrityRejection();
+  });
+
+  it('rejects dropping a case', async () => {
+    await seed();
+    await patchSession((session) => {
+      session.cases = (session.cases as unknown[]).slice(0, 1);
+    });
+    await expectIntegrityRejection();
+  });
+
+  it('rejects a tampered integrity hash', async () => {
+    await seed();
+    await patchSession((session) => {
+      (session.integrity as Record<string, unknown>).semantic_sha256 = 'f'.repeat(64);
+    });
+    await expectIntegrityRejection();
+  });
+
+  it('rejects a missing or malformed integrity record', async () => {
+    await seed();
+    const file = sessionStore.resolveSessionFile(SESSION_ID);
+    const pristine = await readFile(file, 'utf8');
+
+    for (const mutate of [
+      (session: Record<string, unknown>) => delete session.integrity,
+      (session: Record<string, unknown>) => {
+        session.integrity = { algorithm: 'md5', semantic_sha256: 'f'.repeat(64) };
+      },
+      (session: Record<string, unknown>) => {
+        session.integrity = { algorithm: 'sha256', semantic_sha256: 'not-a-hash' };
+      },
+      (session: Record<string, unknown>) => {
+        session.integrity = 'sha256';
+      },
+    ]) {
+      await writeFile(file, pristine);
+      await patchSession(mutate);
+
+      const error = await loadVerifiedSession(deps(), SESSION_ID).catch((caught: unknown) => caught);
+      expect((error as SessionVerificationError).kind).toBe('SESSION_INTEGRITY_MISSING');
+    }
+  });
+
+  it('accepts a file that was only reformatted', async () => {
+    // Whitespace and key order are not part of what a Session means.
+    await seed();
+    const file = sessionStore.resolveSessionFile(SESSION_ID);
+    const session = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    const reordered = {
+      integrity: session.integrity,
+      target_tools: session.target_tools,
+      cases: session.cases,
+      name: session.name,
+      created_at: session.created_at,
+      session_id: session.session_id,
+      schema_version: session.schema_version,
+    };
+    await writeFile(file, JSON.stringify(reordered));
+
+    const verified = await loadVerifiedSession(deps(), SESSION_ID);
+    expect(verified.name).toBe('2026-09 建築ドメイン比較');
+  });
+
+  it('keeps an integrity-broken Session out of the verified listing', async () => {
+    await seed();
+    await patchSession((session) => {
+      session.name = 'tampered';
+    });
+    expect(await listVerifiedSessions(deps())).toEqual([]);
   });
 });
 
@@ -664,7 +846,7 @@ describe('comparison matrix', () => {
     expect(matrixCell.rejected[0]!.resultId).toBe('20260907T030006000Z-aaaa0007');
   });
 
-  it('shows verified and rejected side by side', async () => {
+  it('keeps a broken Windows observation out of the Aqua column', async () => {
     await seedSession();
     await saveResult(SHORT_RUN, 'aqua-voice', '正常な観測', '20260907T030007000Z-aaaa0008');
     const broken = await saveResult(
@@ -677,9 +859,10 @@ describe('comparison matrix', () => {
 
     const comparison = await buildSessionComparison(deps(), SESSION_ID);
     const aqua = cell(comparison, 'architecture-short-001', 'aqua-voice');
-    expect(aqua.verifiedCount).toBe(1);
-    expect(aqua.rejectedCount).toBe(1);
-    expect(aqua.status).toBe('covered');
+    const windows = cell(comparison, 'architecture-short-001', 'windows-standard-voice-input');
+
+    expect(aqua).toMatchObject({ verifiedCount: 1, rejectedCount: 0, status: 'covered' });
+    expect(windows).toMatchObject({ verifiedCount: 0, rejectedCount: 1, status: 'rejected-only' });
   });
 
   it('reflects a Result added after the Session was created', async () => {
@@ -774,5 +957,194 @@ describe('immutability across the whole flow', () => {
 
     const session = await loadVerifiedSession(deps(), SESSION_ID);
     expect(session.name).toBe('2026-09 建築ドメイン比較');
+  });
+});
+
+describe('RF-3: rejected Results are attributed to the tool they belong to', () => {
+  async function seedSession() {
+    await writeRun(SHORT_RUN);
+    return createBenchmarkSession(createInput([SHORT_RUN]), {
+      ...deps(),
+      now: () => NOW,
+      sessionId: SESSION_ID,
+    });
+  }
+
+  function cellOf(
+    comparison: Awaited<ReturnType<typeof buildSessionComparison>>,
+    tool: string,
+  ) {
+    return comparison.rows[0]!.cells.find((candidate) => candidate.tool === tool)!;
+  }
+
+  async function patchResultJson(
+    resultId: string,
+    mutate: (result: Record<string, unknown>) => void,
+  ) {
+    const file = resultStore.resolveResultFile(resultId, 'result.json');
+    const result = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    mutate(result);
+    await writeFile(file, `${JSON.stringify(result, null, 2)}\n`);
+  }
+
+  it('counts a broken Windows Result against Windows only', async () => {
+    await seedSession();
+    const stored = await saveResult(
+      SHORT_RUN,
+      'windows-standard-voice-input',
+      '壊れる観測',
+      '20260907T050000000Z-cccc0001',
+    );
+    await writeFile(path.join(stored.resultDir, 'transcript.txt'), '書き換え');
+
+    const comparison = await buildSessionComparison(deps(), SESSION_ID);
+    expect(cellOf(comparison, 'windows-standard-voice-input')).toMatchObject({
+      status: 'rejected-only',
+      verifiedCount: 0,
+      rejectedCount: 1,
+    });
+    expect(cellOf(comparison, 'aqua-voice')).toMatchObject({
+      status: 'missing',
+      rejectedCount: 0,
+    });
+    expect(comparison.rows[0]!.unattributedRejected).toEqual([]);
+  });
+
+  it('counts a broken Aqua Result against Aqua only', async () => {
+    await seedSession();
+    const stored = await saveResult(
+      SHORT_RUN,
+      'aqua-voice',
+      '壊れる観測',
+      '20260907T050001000Z-cccc0002',
+    );
+    await writeFile(path.join(stored.resultDir, 'transcript.txt'), '書き換え');
+
+    const comparison = await buildSessionComparison(deps(), SESSION_ID);
+    expect(cellOf(comparison, 'aqua-voice')).toMatchObject({
+      status: 'rejected-only',
+      rejectedCount: 1,
+    });
+    expect(cellOf(comparison, 'windows-standard-voice-input')).toMatchObject({
+      status: 'missing',
+      rejectedCount: 0,
+    });
+  });
+
+  it('attributes nothing when the tool identity itself is invalid', async () => {
+    await seedSession();
+    const resultId = '20260907T050002000Z-cccc0003';
+    await saveResult(SHORT_RUN, 'windows-standard-voice-input', '観測', resultId);
+    await patchResultJson(resultId, (result) => {
+      (result.tool as Record<string, unknown>).id = 'whisper';
+    });
+
+    const comparison = await buildSessionComparison(deps(), SESSION_ID);
+    for (const tool of ['windows-standard-voice-input', 'aqua-voice']) {
+      expect(cellOf(comparison, tool)).toMatchObject({ status: 'missing', rejectedCount: 0 });
+    }
+    expect(comparison.rows[0]!.unattributedRejected).toHaveLength(1);
+    expect(comparison.rows[0]!.unattributedRejected[0]!.resultId).toBe(resultId);
+  });
+
+  it('attributes nothing when the tool name contradicts the tool id', async () => {
+    await seedSession();
+    const resultId = '20260907T050003000Z-cccc0004';
+    await saveResult(SHORT_RUN, 'windows-standard-voice-input', '観測', resultId);
+    await patchResultJson(resultId, (result) => {
+      (result.tool as Record<string, unknown>).name = 'Aqua Voice';
+    });
+
+    const comparison = await buildSessionComparison(deps(), SESSION_ID);
+    expect(cellOf(comparison, 'windows-standard-voice-input').rejectedCount).toBe(0);
+    expect(cellOf(comparison, 'aqua-voice').rejectedCount).toBe(0);
+    expect(comparison.rows[0]!.unattributedRejected).toHaveLength(1);
+  });
+
+  it('shows a verified and a rejected observation of the same tool together', async () => {
+    await seedSession();
+    await saveResult(
+      SHORT_RUN,
+      'windows-standard-voice-input',
+      '正常な観測',
+      '20260907T050004000Z-cccc0005',
+    );
+    const broken = await saveResult(
+      SHORT_RUN,
+      'windows-standard-voice-input',
+      '壊れる観測',
+      '20260907T050005000Z-cccc0006',
+    );
+    await writeFile(path.join(broken.resultDir, 'transcript.txt'), '書き換え');
+
+    const comparison = await buildSessionComparison(deps(), SESSION_ID);
+    expect(cellOf(comparison, 'windows-standard-voice-input')).toMatchObject({
+      status: 'covered',
+      verifiedCount: 1,
+      rejectedCount: 1,
+    });
+    expect(cellOf(comparison, 'aqua-voice').status).toBe('missing');
+  });
+
+  it('leaves both tools covered when both Results are valid', async () => {
+    await seedSession();
+    await saveResult(
+      SHORT_RUN,
+      'windows-standard-voice-input',
+      'Windows',
+      '20260907T050006000Z-cccc0007',
+    );
+    await saveResult(SHORT_RUN, 'aqua-voice', 'Aqua', '20260907T050007000Z-cccc0008');
+
+    const comparison = await buildSessionComparison(deps(), SESSION_ID);
+    expect(cellOf(comparison, 'windows-standard-voice-input').status).toBe('covered');
+    expect(cellOf(comparison, 'aqua-voice').status).toBe('covered');
+    expect(comparison.rows[0]!.unattributedRejected).toEqual([]);
+  });
+
+  it('keeps an `other` tool Result out of the Windows and Aqua columns', async () => {
+    await seedSession();
+    await saveManualSttResult(
+      {
+        runId: SHORT_RUN,
+        toolId: 'other',
+        customToolName: '社内ツール',
+        deliveryPath: 'speaker-to-mic',
+        rawTranscript: '対象外ツールの観測',
+      },
+      { runStore, resultStore, now: () => NOW, resultId: '20260907T050008000Z-cccc0009' },
+    );
+
+    const comparison = await buildSessionComparison(deps(), SESSION_ID);
+    for (const tool of ['windows-standard-voice-input', 'aqua-voice']) {
+      expect(cellOf(comparison, tool)).toMatchObject({
+        status: 'missing',
+        verifiedCount: 0,
+        rejectedCount: 0,
+      });
+    }
+    expect(comparison.rows[0]!.unattributedRejected).toEqual([]);
+  });
+
+  it('surfaces a broken `other` Result as unattributed rather than as coverage', async () => {
+    await seedSession();
+    const resultId = '20260907T050009000Z-cccc000a';
+    const stored = await saveManualSttResult(
+      {
+        runId: SHORT_RUN,
+        toolId: 'other',
+        customToolName: '社内ツール',
+        deliveryPath: 'speaker-to-mic',
+        rawTranscript: '対象外ツールの観測',
+      },
+      { runStore, resultStore, now: () => NOW, resultId },
+    );
+    await writeFile(path.join(stored.resultDir, 'transcript.txt'), '書き換え');
+
+    const comparison = await buildSessionComparison(deps(), SESSION_ID);
+    for (const tool of ['windows-standard-voice-input', 'aqua-voice']) {
+      expect(cellOf(comparison, tool).rejectedCount).toBe(0);
+    }
+    expect(comparison.rows[0]!.unattributedRejected).toHaveLength(1);
   });
 });

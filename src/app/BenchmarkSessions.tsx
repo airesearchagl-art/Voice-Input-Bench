@@ -372,7 +372,14 @@ export default function BenchmarkSessions() {
               <tbody>
                 {loaded.rows.map((row) => (
                   <tr key={row.testId}>
-                    <td>{row.testId}</td>
+                    <td>
+                      {row.testId}
+                      {row.unattributedRejected.length > 0 && (
+                        <div className="unattributed-flag">
+                          ⚠ 未帰属の rejected {row.unattributedRejected.length} 件
+                        </div>
+                      )}
+                    </td>
                     <td className="mono">
                       {row.runId}
                       <br />
@@ -394,6 +401,28 @@ export default function BenchmarkSessions() {
           {loaded.rows.map((row) => (
             <article key={row.testId} className="case-block">
               <h3 className="subhead">{row.testId}</h3>
+
+              {row.unattributedRejected.length > 0 && (
+                <>
+                  <p className="fixed-note">
+                    以下の Result は tool identity を検証できなかったため、どの tool の
+                    coverage にも計上していません。
+                  </p>
+                  {row.unattributedRejected.map((rejection) => (
+                    <ErrorBox
+                      key={rejection.resultId}
+                      title={rejection.resultId}
+                      error={{
+                        kind: rejection.reason,
+                        message: rejection.message,
+                        detail: rejection.detail,
+                      }}
+                    />
+                  ))}
+                  <div style={{ height: 12 }} />
+                </>
+              )}
+
               <div className="transcripts">
                 {row.cells.map((cell) => (
                   <div key={cell.tool} className="transcript-card">

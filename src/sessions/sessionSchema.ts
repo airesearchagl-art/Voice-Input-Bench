@@ -18,6 +18,8 @@
  * derived from the Result tree as it stands at read time.
  */
 
+import { sha256OfText } from '@/lib/hash';
+
 export const SESSION_SCHEMA_VERSION = 1 as const;
 
 /**
@@ -43,7 +45,13 @@ export interface SessionCaseV1 {
   audio_sha256: string;
 }
 
-export interface SessionV1 {
+/**
+ * Everything a Session means, without the integrity record itself.
+ *
+ * This is what gets hashed. Anything in here is part of the plan; editing any
+ * of it changes what the experiment claims to be.
+ */
+export interface SessionPayloadV1 {
   schema_version: 1;
   session_id: string;
   created_at: string;
@@ -51,4 +59,65 @@ export interface SessionV1 {
   /** At most one entry per `test_id`. */
   cases: SessionCaseV1[];
   target_tools: SessionTargetTool[];
+}
+
+/**
+ * Self-check for the Session's own contents.
+ *
+ * Field-by-field validation catches nonsense — a malformed `run_id`, an unknown
+ * tool — but not a hand edit that swaps one valid value for another. Dropping
+ * `aqua-voice` from `target_tools` leaves a perfectly valid Session that
+ * silently describes a different experiment than the one that was run.
+ *
+ * The hash closes that: a Session is only accepted if its contents still hash
+ * to what was recorded when it was created.
+ */
+export interface SessionIntegrityV1 {
+  algorithm: 'sha256';
+  semantic_sha256: string;
+}
+
+export interface SessionV1 extends SessionPayloadV1 {
+  integrity: SessionIntegrityV1;
+}
+
+/**
+ * Serialize a Session's meaning in a fixed shape.
+ *
+ * Property order is written out explicitly rather than taken from the stored
+ * object, so re-indenting `session.json`, reordering its keys, or adding a
+ * field outside the schema does not change the hash — only changing what the
+ * Session *says* does.
+ */
+export function canonicalSessionPayload(payload: SessionPayloadV1): string {
+  return JSON.stringify({
+    schema_version: payload.schema_version,
+    session_id: payload.session_id,
+    created_at: payload.created_at,
+    name: payload.name,
+    cases: payload.cases.map((sessionCase) => ({
+      test_id: sessionCase.test_id,
+      run_id: sessionCase.run_id,
+      source_sha256: sessionCase.source_sha256,
+      audio_sha256: sessionCase.audio_sha256,
+    })),
+    target_tools: [...payload.target_tools],
+  });
+}
+
+/** SHA-256 of {@link canonicalSessionPayload}, over its UTF-8 bytes. */
+export function computeSessionSemanticSha256(payload: SessionPayloadV1): string {
+  return sha256OfText(canonicalSessionPayload(payload));
+}
+
+/** Strip the integrity record, leaving exactly what the hash covers. */
+export function sessionPayloadOf(session: SessionV1): SessionPayloadV1 {
+  return {
+    schema_version: session.schema_version,
+    session_id: session.session_id,
+    created_at: session.created_at,
+    name: session.name,
+    cases: session.cases,
+    target_tools: session.target_tools,
+  };
 }

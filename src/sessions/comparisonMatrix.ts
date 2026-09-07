@@ -61,6 +61,15 @@ export interface MatrixRow {
   sourceSha256: string;
   audioSha256: string;
   cells: MatrixCell[];
+  /**
+   * Rejected Results for this Case that cannot be attributed to a target tool.
+   *
+   * Either the tool identity itself failed verification, or the Result belongs
+   * to a tool outside this Session's comparison. Either way it is shown against
+   * the Case rather than counted against a tool that may have had nothing to do
+   * with it.
+   */
+  unattributedRejected: MatrixRejection[];
 }
 
 export interface SessionComparison {
@@ -132,6 +141,21 @@ export async function buildSessionComparison(
       sessionCase.run_id,
     );
 
+    const unattributedRejected: MatrixRejection[] = [];
+    for (const entry of entries) {
+      if (entry.status !== 'rejected') continue;
+      // Attributable to a target tool? Then it belongs in that tool's cell.
+      // `trustedToolId` may also be `other`, which no cell of this Session
+      // covers — that lands here too.
+      if (session.target_tools.some((tool) => tool === entry.trustedToolId)) continue;
+      unattributedRejected.push({
+        resultId: entry.resultId,
+        reason: entry.reason,
+        message: entry.message,
+        detail: entry.detail,
+      });
+    }
+
     const cells: MatrixCell[] = session.target_tools.map((tool) => {
       const verified: MatrixObservation[] = [];
       const rejected: MatrixRejection[] = [];
@@ -151,9 +175,10 @@ export async function buildSessionComparison(
           continue;
         }
 
-        // A rejected Result cannot be attributed to a tool with any confidence
-        // — its own contents are what failed verification. It is surfaced on
-        // every cell of the row so it cannot be quietly lost.
+        // A rejected Result lands in a tool's cell only when its tool identity
+        // survived verification. One broken Windows observation must not show
+        // up as a failure of Aqua Voice.
+        if (entry.trustedToolId !== tool) continue;
         rejected.push({
           resultId: entry.resultId,
           reason: entry.reason,
@@ -178,6 +203,7 @@ export async function buildSessionComparison(
       sourceSha256: sessionCase.source_sha256,
       audioSha256: sessionCase.audio_sha256,
       cells,
+      unattributedRejected,
     });
   }
 

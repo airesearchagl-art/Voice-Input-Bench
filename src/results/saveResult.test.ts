@@ -811,3 +811,142 @@ describe('RF-3: stored Results are verified on read', () => {
     expect(entries.every((entry) => entry.status === 'verified')).toBe(true);
   });
 });
+
+describe('RF-2: tool and capture contract on readback', () => {
+  async function seed(toolId = 'windows-standard-voice-input') {
+    await writeRun();
+    return saveManualSttResult(
+      { ...INPUT, toolId, toolVersion: '24H2', rawTranscript: '観測' },
+      { runStore, resultStore, now: () => NOW, resultId: RESULT_ID },
+    );
+  }
+
+  async function patchResultJson(mutate: (result: Record<string, unknown>) => void) {
+    const file = resultStore.resolveResultFile(RESULT_ID, 'result.json');
+    const result = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    mutate(result);
+    await writeFile(file, `${JSON.stringify(result, null, 2)}\n`);
+  }
+
+  async function listOne() {
+    const entries = await listResultsForRun({ runStore, resultStore }, RUN_ID);
+    expect(entries).toHaveLength(1);
+    return entries[0]!;
+  }
+
+  it('accepts an untouched Windows Result', async () => {
+    await seed('windows-standard-voice-input');
+    const entry = await listOne();
+    expect(entry.status).toBe('verified');
+  });
+
+  it('accepts an untouched Aqua Voice Result', async () => {
+    await seed('aqua-voice');
+    const entry = await listOne();
+    expect(entry.status).toBe('verified');
+  });
+
+  const TAMPERS: Array<[string, (result: Record<string, unknown>) => void, string]> = [
+    [
+      'an unknown tool.id',
+      (result) => {
+        (result.tool as Record<string, unknown>).id = 'whisper';
+      },
+      'RESULT_TOOL_CONTRACT_MISMATCH',
+    ],
+    [
+      'the Windows id under the Aqua name',
+      (result) => {
+        (result.tool as Record<string, unknown>).name = 'Aqua Voice';
+      },
+      'RESULT_TOOL_CONTRACT_MISMATCH',
+    ],
+    [
+      'the Aqua id under the Windows name',
+      (result) => {
+        const tool = result.tool as Record<string, unknown>;
+        tool.id = 'aqua-voice';
+      },
+      'RESULT_TOOL_CONTRACT_MISMATCH',
+    ],
+    [
+      '`other` with a blank name',
+      (result) => {
+        const tool = result.tool as Record<string, unknown>;
+        tool.id = 'other';
+        tool.name = '   ';
+      },
+      'RESULT_TOOL_CONTRACT_MISMATCH',
+    ],
+    [
+      'a non-string tool.version',
+      (result) => {
+        (result.tool as Record<string, unknown>).version = 42;
+      },
+      'RESULT_TOOL_CONTRACT_MISMATCH',
+    ],
+    [
+      'an untrimmed tool.version',
+      (result) => {
+        (result.tool as Record<string, unknown>).version = '  24H2  ';
+      },
+      'RESULT_TOOL_CONTRACT_MISMATCH',
+    ],
+    [
+      'a tampered capture.method',
+      (result) => {
+        (result.capture as Record<string, unknown>).method = 'automated';
+      },
+      'RESULT_CAPTURE_CONTRACT_MISMATCH',
+    ],
+    [
+      'an unknown delivery_path',
+      (result) => {
+        (result.capture as Record<string, unknown>).delivery_path = 'bluetooth';
+      },
+      'RESULT_CAPTURE_CONTRACT_MISMATCH',
+    ],
+    [
+      'an invalid captured_at',
+      (result) => {
+        result.captured_at = 'not a date';
+      },
+      'RESULT_CAPTURED_AT_INVALID',
+    ],
+  ];
+
+  for (const [label, mutate, kind] of TAMPERS) {
+    it(`rejects ${label}`, async () => {
+      await seed();
+      await patchResultJson(mutate);
+
+      const entry = await listOne();
+      expect(entry.status).toBe('rejected');
+      if (entry.status === 'rejected') expect(entry.reason).toBe(kind);
+    });
+  }
+
+  it('keeps a trusted tool id when only the transcript was tampered with', async () => {
+    await seed('aqua-voice');
+    await writeFile(resultStore.resolveResultFile(RESULT_ID, 'transcript.txt'), '書き換え');
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') {
+      expect(entry.reason).toBe('RESULT_TRANSCRIPT_HASH_MISMATCH');
+      // The tool section is intact, so the failure has a known owner.
+      expect(entry.trustedToolId).toBe('aqua-voice');
+    }
+  });
+
+  it('reports no trusted tool id when the tool section itself is broken', async () => {
+    await seed();
+    await patchResultJson((result) => {
+      (result.tool as Record<string, unknown>).id = 'whisper';
+    });
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.trustedToolId).toBeUndefined();
+  });
+});

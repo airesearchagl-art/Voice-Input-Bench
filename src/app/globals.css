@@ -378,3 +378,9 @@ td.coverage.rejected-only {
 .case-block {
   margin-bottom: 18px;
 }
+
+.unattributed-flag {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--warn);
+}
