@@ -3,8 +3,9 @@ import { isValidEvaluationId } from '@/lib/evaluationId';
 import { computeResultSemanticSha256, resultPayloadOf } from '@/results/resultSchema';
 import {
   EVALUATION_SCHEMA_VERSION,
+  RAW_CHAR_EVALUATOR,
   computeEvaluationSemanticSha256,
-  isRawCharAlgorithm,
+  isRawCharEvaluator,
   type EvaluationPayloadV1,
   type EvaluationV1,
 } from './evaluationSchema';
@@ -35,8 +36,11 @@ export type EvaluationVerificationErrorKind =
   | 'EVALUATION_MALFORMED'
   /** `evaluation_id` does not match the directory it is stored in. */
   | 'EVALUATION_ID_MISMATCH'
-  /** The Evaluation names an algorithm this milestone does not implement. */
-  | 'EVALUATION_ALGORITHM_UNSUPPORTED'
+  /**
+   * The evaluator record is missing, or names semantics this app does not
+   * implement — a different id, unit, or normalization.
+   */
+  | 'EVALUATION_EVALUATOR_MISMATCH'
   /** No readable integrity record. */
   | 'EVALUATION_INTEGRITY_MISSING'
   /** The metadata no longer hashes to what was recorded. */
@@ -117,11 +121,14 @@ export function verifyStoredEvaluation(input: {
     );
   }
 
-  if (!isRawCharAlgorithm(raw.algorithm)) {
+  // The evaluator has to be *there* before the seal can be computed over it.
+  // Its three values are checked after the seal, so a tampered file is
+  // reported as tampered rather than as a foreign evaluator.
+  if (!isPlainObject(raw.evaluator)) {
     fail(
-      'EVALUATION_ALGORITHM_UNSUPPORTED',
-      `algorithm ${String(raw.algorithm)} は対象外です。`,
-      `algorithm=${String(raw.algorithm)}`,
+      'EVALUATION_EVALUATOR_MISMATCH',
+      'evaluator が記録として読めません。',
+      `recorded=${JSON.stringify(raw.evaluator)} expected=${JSON.stringify(RAW_CHAR_EVALUATOR)}`,
     );
   }
 
@@ -162,6 +169,19 @@ export function verifyStoredEvaluation(input: {
       'EVALUATION_INTEGRITY_MISMATCH',
       'Evaluation の metadata が記録された semantic hash と一致しません。保存後に編集された可能性があります。',
       `recorded=${recordedSeal} actual=${actualSeal}`,
+    );
+  }
+
+  // --- The evaluator ------------------------------------------------------
+  // All three fields, not just the name. A validly sealed Evaluation that
+  // counted a different unit, or normalized before comparing, is not a slightly
+  // different reading of the same thing — it is a measurement this code cannot
+  // reproduce, and reproducing it is the only reason readback exists.
+  if (!isRawCharEvaluator(raw.evaluator)) {
+    fail(
+      'EVALUATION_EVALUATOR_MISMATCH',
+      'evaluator が raw-char-v1 / unicode-code-point / none と一致しません。',
+      `recorded=${JSON.stringify(raw.evaluator)} expected=${JSON.stringify(RAW_CHAR_EVALUATOR)}`,
     );
   }
 

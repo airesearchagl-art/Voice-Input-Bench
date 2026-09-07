@@ -230,7 +230,7 @@ describe('creating a raw character Evaluation', () => {
     expect(outcome.evaluation).toMatchObject({
       schema_version: 1,
       evaluation_id: EVALUATION_ID,
-      algorithm: 'raw-char-v1',
+      evaluator: { id: 'raw-char-v1', unit: 'unicode-code-point', normalization: 'none' },
       run_id: RUN_ID,
       result_id: RESULT_ID,
       metrics: expected,
@@ -407,8 +407,18 @@ describe('stored Evaluations are re-derived on read', () => {
     await seed();
     const file = evaluationStore.resolveEvaluationFile(EVALUATION_ID);
     const original = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
-    const reordered: Record<string, unknown> = {};
-    for (const key of Object.keys(original).reverse()) reordered[key] = original[key];
+
+    const reverseKeys = (value: Record<string, unknown>): Record<string, unknown> => {
+      const out: Record<string, unknown> = {};
+      for (const key of Object.keys(value).reverse()) out[key] = value[key];
+      return out;
+    };
+
+    const reordered = reverseKeys(original);
+    // Nested objects too — the canonical payload builds its own order, so none
+    // of this can move the hash.
+    reordered.evaluator = reverseKeys(original.evaluator as Record<string, unknown>);
+    reordered.metrics = reverseKeys(original.metrics as Record<string, unknown>);
     await writeFile(file, JSON.stringify(reordered, null, 4));
 
     expect((await listOne()).status).toBe('verified');
@@ -486,21 +496,106 @@ describe('stored Evaluations are re-derived on read', () => {
     if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_SCHEMA_UNSUPPORTED');
   });
 
-  it('rejects an algorithm this milestone does not implement', async () => {
+  it('records the evaluator semantics under the seal', async () => {
+    const outcome = await seed();
+    expect(outcome.evaluation.evaluator).toEqual({
+      id: 'raw-char-v1',
+      unit: 'unicode-code-point',
+      normalization: 'none',
+    });
+
+    // The stored file carries it too, and nothing else names the algorithm.
+    const stored = JSON.parse(
+      await readFile(evaluationStore.resolveEvaluationFile(EVALUATION_ID), 'utf8'),
+    ) as Record<string, unknown>;
+    expect(stored.evaluator).toEqual({
+      id: 'raw-char-v1',
+      unit: 'unicode-code-point',
+      normalization: 'none',
+    });
+    expect(stored.algorithm).toBeUndefined();
+  });
+
+  it('verifies an untouched evaluator record', async () => {
     await seed();
+    const entry = await listOne();
+    expect(entry.status).toBe('verified');
+    if (entry.status === 'verified') {
+      expect(entry.evaluation.evaluator.id).toBe('raw-char-v1');
+      expect(entry.evaluation.evaluator.unit).toBe('unicode-code-point');
+      expect(entry.evaluation.evaluator.normalization).toBe('none');
+    }
+  });
+
+  const EVALUATOR_EDITS: Array<[string, (evaluator: Record<string, unknown>) => void]> = [
+    ['id', (evaluator) => (evaluator.id = 'normalized-char-v1')],
+    ['unit', (evaluator) => (evaluator.unit = 'utf-16-code-unit')],
+    ['normalization', (evaluator) => (evaluator.normalization = 'nfkc')],
+  ];
+
+  for (const [field, edit] of EVALUATOR_EDITS) {
+    it(`rejects an edited evaluator.${field}`, async () => {
+      await seed();
+      await patchEvaluation(EVALUATION_ID, (evaluation) => {
+        edit(evaluation.evaluator as Record<string, unknown>);
+      });
+
+      const entry = await listOne();
+      expect(entry.status).toBe('rejected');
+      // Caught by the seal first, since the evaluator is inside it.
+      if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_INTEGRITY_MISMATCH');
+    });
+
+    it(`rejects an edited evaluator.${field} even when re-sealed`, async () => {
+      await seed();
+      await patchEvaluation(
+        EVALUATION_ID,
+        (evaluation) => {
+          edit(evaluation.evaluator as Record<string, unknown>);
+        },
+        true,
+      );
+
+      const entry = await listOne();
+      expect(entry.status).toBe('rejected');
+      if (entry.status === 'rejected') {
+        expect(entry.reason).toBe('EVALUATION_EVALUATOR_MISMATCH');
+      }
+    });
+  }
+
+  it('rejects an Evaluation with no evaluator record at all', async () => {
+    await seed();
+    // Not re-sealed, because the seal cannot even be computed without an
+    // evaluator — which is why this one structural check runs before it.
+    await patchEvaluation(EVALUATION_ID, (evaluation) => {
+      delete evaluation.evaluator;
+    });
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_EVALUATOR_MISMATCH');
+  });
+
+  it('rejects a plausible-looking evaluator that is a different measurement', async () => {
+    await seed();
+    // Every field is a well-formed string, and the id is even right. It still
+    // describes something this code does not compute.
     await patchEvaluation(
       EVALUATION_ID,
       (evaluation) => {
-        evaluation.algorithm = 'normalized-char-v1';
+        evaluation.evaluator = {
+          id: 'raw-char-v1',
+          unit: 'grapheme-cluster',
+          normalization: 'nfc',
+        };
       },
       true,
     );
 
     const entry = await listOne();
     expect(entry.status).toBe('rejected');
-    if (entry.status === 'rejected') {
-      expect(entry.reason).toBe('EVALUATION_ALGORITHM_UNSUPPORTED');
-    }
+    if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_EVALUATOR_MISMATCH');
   });
 
   it('rejects an evaluation_id that does not match its directory', async () => {
@@ -650,11 +745,97 @@ describe('four-root isolation', () => {
     });
   }
 
+  /**
+   * A directory literally named `..evaluations` is a child, not an escape.
+   * These are the layouts a `startsWith('..')` containment check waved through:
+   * genuinely inside another root, but looking like a path that leaves it.
+   */
+  const DOTTED_CASES: Array<[string, () => EvaluationDeps]> = [
+    [
+      'evaluations at <runs>/..evaluations',
+      () =>
+        deps({ evaluationStore: new LocalEvaluationStore(path.join(runsRoot, '..evaluations')) }),
+    ],
+    [
+      'evaluations at <results>/..evaluations',
+      () =>
+        deps({
+          evaluationStore: new LocalEvaluationStore(path.join(resultsRoot, '..evaluations')),
+        }),
+    ],
+    [
+      'evaluations at <sessions>/..evaluations',
+      () =>
+        deps({
+          evaluationStore: new LocalEvaluationStore(path.join(sessionsRoot, '..evaluations')),
+        }),
+    ],
+    [
+      'runs at <evaluations>/..runs',
+      () => deps({ runStore: new LocalRunStore(path.join(evaluationsRoot, '..runs')) }),
+    ],
+  ];
+
+  for (const [label, build] of DOTTED_CASES) {
+    it(`refuses ${label} before writing anything`, async () => {
+      await writeRun();
+      await saveSealedResult();
+      const evaluationsBefore = await treeFingerprint(evaluationsRoot);
+
+      await expectViolation(
+        createRawCharEvaluation(
+          { resultId: RESULT_ID },
+          { ...build(), evaluationId: EVALUATION_ID },
+        ),
+      );
+
+      // The check runs before the Run and Result are even read, so nothing
+      // lands anywhere.
+      expect(await treeFingerprint(evaluationsRoot)).toEqual(evaluationsBefore);
+      expect(await tempResidue(evaluationsRoot)).toEqual([]);
+    });
+  }
+
+  it('does not mistake a dotted sibling root for a nested one', async () => {
+    await writeRun();
+    await saveSealedResult();
+    // `<tmp>/..evaluations` alongside the other roots is a sibling.
+    const sibling = path.join(path.dirname(evaluationsRoot), '..evaluations-sibling');
+    const outcome = await createRawCharEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationStore: new LocalEvaluationStore(sibling), evaluationId: EVALUATION_ID }),
+    );
+    expect(outcome.evaluationId).toBe(EVALUATION_ID);
+    await rm(sibling, { recursive: true, force: true });
+  });
+
+  it('does not mistake a -archive suffix for a nested root', async () => {
+    await writeRun();
+    await saveSealedResult();
+    const archive = `${runsRoot}-archive`;
+    const outcome = await createRawCharEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationStore: new LocalEvaluationStore(archive), evaluationId: EVALUATION_ID }),
+    );
+    expect(outcome.evaluationId).toBe(EVALUATION_ID);
+    await rm(archive, { recursive: true, force: true });
+  });
+
   it('refuses the same violation on the read path', async () => {
     await writeRun();
     await expectViolation(
       listEvaluationsForRun(
         deps({ evaluationStore: new LocalEvaluationStore(path.join(runsRoot, 'nested')) }),
+        RUN_ID,
+      ),
+    );
+  });
+
+  it('refuses a dotted violation on the read path', async () => {
+    await writeRun();
+    await expectViolation(
+      listEvaluationsForRun(
+        deps({ evaluationStore: new LocalEvaluationStore(path.join(runsRoot, '..evaluations')) }),
         RUN_ID,
       ),
     );

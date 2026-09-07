@@ -173,8 +173,12 @@ function RawEvaluationSection({
             <dl className="kv compact">
               <dt>Evaluation ID</dt>
               <dd>{entry.evaluation.evaluation_id}</dd>
-              <dt>Algorithm</dt>
-              <dd>{entry.evaluation.algorithm}</dd>
+              <dt>Evaluator ID</dt>
+              <dd>{entry.evaluation.evaluator.id}</dd>
+              <dt>Unit</dt>
+              <dd>{entry.evaluation.evaluator.unit}</dd>
+              <dt>Normalization</dt>
+              <dd>{entry.evaluation.evaluator.normalization}</dd>
               <dt>Exact Match</dt>
               <dd>{entry.evaluation.metrics.exact_match ? 'true' : 'false'}</dd>
               <dt>CER</dt>

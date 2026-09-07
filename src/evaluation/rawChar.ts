@@ -19,6 +19,21 @@
 export const RAW_CHAR_ALGORITHM = 'raw-char-v1' as const;
 export type RawCharAlgorithm = typeof RAW_CHAR_ALGORITHM;
 
+/**
+ * What the algorithm counts, and what it does to the text first.
+ *
+ * These are the two decisions that make a CER mean one thing rather than
+ * another: counting UTF-16 units instead of code points, or normalizing before
+ * comparing, produces different numbers from the same texts. An artifact that
+ * records only a name leaves a reader guessing which of those a future
+ * `raw-char-v1` meant, so both travel with every measurement.
+ */
+export const RAW_CHAR_UNIT = 'unicode-code-point' as const;
+export type RawCharUnit = typeof RAW_CHAR_UNIT;
+
+export const RAW_CHAR_NORMALIZATION = 'none' as const;
+export type RawCharNormalization = typeof RAW_CHAR_NORMALIZATION;
+
 export type RawCharErrorKind =
   /** The reference is empty, so CER has no denominator. */
   | 'RAW_CHAR_EMPTY_REFERENCE'

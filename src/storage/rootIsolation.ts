@@ -31,14 +31,27 @@ export class StorageBoundaryError extends Error {
   }
 }
 
-/** Is `inner` the same directory as `outer`, or somewhere beneath it? */
+/**
+ * Is `inner` the same directory as `outer`, or somewhere beneath it?
+ *
+ * The escape is a `..` **path segment**, not the two characters. A directory
+ * named `..evaluations` is an ordinary child: `path.relative` returns it
+ * verbatim, and treating it as an escape would refuse a perfectly legal layout
+ * — the same mistake as reading `runs-archive` as being inside `runs`.
+ */
 export function isSameOrInside(inner: string, outer: string): boolean {
   const a = path.resolve(inner);
   const b = path.resolve(outer);
   if (a === b) return true;
+
   const relative = path.relative(b, a);
-  // `relative` escapes with `..` (or is absolute) exactly when `a` is outside `b`.
-  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+  if (relative === '') return true;
+  // A different drive or root: `path.relative` gives up and returns an
+  // absolute path, which means `a` is nowhere under `b`.
+  if (path.isAbsolute(relative)) return false;
+  // Exactly `..`, or a path whose first segment is `..`.
+  if (relative === '..' || relative.startsWith(`..${path.sep}`)) return false;
+  return true;
 }
 
 /** One named storage root. */

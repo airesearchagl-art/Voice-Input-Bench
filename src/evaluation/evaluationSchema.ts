@@ -1,6 +1,14 @@
 import { sha256OfText } from '@/lib/hash';
 import type { DeliveryPath, SttToolId } from '@/results/tools';
-import { RAW_CHAR_ALGORITHM, type RawCharAlgorithm, type RawCharMetrics } from './rawChar';
+import {
+  RAW_CHAR_ALGORITHM,
+  RAW_CHAR_NORMALIZATION,
+  RAW_CHAR_UNIT,
+  type RawCharAlgorithm,
+  type RawCharMetrics,
+  type RawCharNormalization,
+  type RawCharUnit,
+} from './rawChar';
 
 /**
  * Raw character Evaluation.
@@ -27,12 +35,36 @@ export const EVALUATION_SCHEMA_VERSION = 1 as const;
 /** The Result schema an Evaluation is allowed to be built from. */
 export const EVALUATION_SUBJECT_RESULT_SCHEMA_VERSION = 2 as const;
 
+/**
+ * Who measured, counting what, having normalized how.
+ *
+ * A name alone does not pin a measurement down. Two implementations can both
+ * call themselves `raw-char-v1` while one counts UTF-16 units and the other
+ * code points, or while one quietly applies NFC — and they will disagree on the
+ * same pair of texts. Recording all three under the seal means a stored CER
+ * says what it is a CER *of*, years after the code has moved on.
+ *
+ * Server-fixed. No part of it is ever taken from a request.
+ */
+export interface EvaluatorV1 {
+  id: RawCharAlgorithm;
+  unit: RawCharUnit;
+  normalization: RawCharNormalization;
+}
+
+export const RAW_CHAR_EVALUATOR: EvaluatorV1 = {
+  id: RAW_CHAR_ALGORITHM,
+  unit: RAW_CHAR_UNIT,
+  normalization: RAW_CHAR_NORMALIZATION,
+};
+
 /** Everything an Evaluation asserts, without the integrity record. */
 export interface EvaluationPayloadV1 {
   schema_version: 1;
   evaluation_id: string;
   created_at: string;
-  algorithm: RawCharAlgorithm;
+  /** The single record of evaluator semantics. There is no other copy. */
+  evaluator: EvaluatorV1;
 
   /** Resolved server-side from the Result on disk, never from the request. */
   run_id: string;
@@ -100,7 +132,11 @@ export function canonicalEvaluationPayload(payload: EvaluationPayloadV1): string
     schema_version: payload.schema_version,
     evaluation_id: payload.evaluation_id,
     created_at: payload.created_at,
-    algorithm: payload.algorithm,
+    evaluator: {
+      id: payload.evaluator.id,
+      unit: payload.evaluator.unit,
+      normalization: payload.evaluator.normalization,
+    },
     run_id: payload.run_id,
     result_id: payload.result_id,
     subject: {
@@ -156,7 +192,7 @@ export function evaluationPayloadOf(evaluation: EvaluationV1): EvaluationPayload
     schema_version: evaluation.schema_version,
     evaluation_id: evaluation.evaluation_id,
     created_at: evaluation.created_at,
-    algorithm: evaluation.algorithm,
+    evaluator: evaluation.evaluator,
     run_id: evaluation.run_id,
     result_id: evaluation.result_id,
     subject: evaluation.subject,
@@ -167,6 +203,20 @@ export function evaluationPayloadOf(evaluation: EvaluationV1): EvaluationPayload
   };
 }
 
-export function isRawCharAlgorithm(value: unknown): value is RawCharAlgorithm {
-  return value === RAW_CHAR_ALGORITHM;
+/**
+ * Does this stored evaluator record describe the evaluator this app implements?
+ *
+ * All three fields have to match. An Evaluation naming a different unit or a
+ * normalization step is not a slightly different reading of the same thing — it
+ * is a measurement this code cannot reproduce, and reproducing it is the only
+ * reason readback exists.
+ */
+export function isRawCharEvaluator(value: unknown): value is EvaluatorV1 {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const evaluator = value as Record<string, unknown>;
+  return (
+    evaluator.id === RAW_CHAR_EVALUATOR.id &&
+    evaluator.unit === RAW_CHAR_EVALUATOR.unit &&
+    evaluator.normalization === RAW_CHAR_EVALUATOR.normalization
+  );
 }

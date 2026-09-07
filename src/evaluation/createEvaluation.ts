@@ -10,6 +10,7 @@ import { assertStorageRootsIsolated } from '@/storage/rootIsolation';
 import {
   EVALUATION_SCHEMA_VERSION,
   EVALUATION_SUBJECT_RESULT_SCHEMA_VERSION,
+  RAW_CHAR_EVALUATOR,
   computeEvaluationSemanticSha256,
   type EvaluationPayloadV1,
   type EvaluationV1,
@@ -18,7 +19,7 @@ import {
   resolveEvaluationSubject,
   type EvaluationSubject,
 } from './evaluationSubject';
-import { RAW_CHAR_ALGORITHM, evaluateRawChar, toCodePoints } from './rawChar';
+import { evaluateRawChar, toCodePoints } from './rawChar';
 import {
   EvaluationVerificationError,
   verifyStoredEvaluation,
@@ -69,7 +70,13 @@ function buildPayload(
     schema_version: EVALUATION_SCHEMA_VERSION,
     evaluation_id: evaluationId,
     created_at: createdAt,
-    algorithm: RAW_CHAR_ALGORITHM,
+    // Server-fixed, never from the request: the artifact has to record what
+    // actually did the measuring.
+    evaluator: {
+      id: RAW_CHAR_EVALUATOR.id,
+      unit: RAW_CHAR_EVALUATOR.unit,
+      normalization: RAW_CHAR_EVALUATOR.normalization,
+    },
     run_id: subject.runId,
     result_id: subject.resultId,
     subject: {

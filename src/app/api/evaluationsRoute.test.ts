@@ -175,7 +175,7 @@ describe('POST /api/evaluations', () => {
       evaluationId: string;
       evaluation: {
         schema_version: number;
-        algorithm: string;
+        evaluator: { id: string; unit: string; normalization: string };
         run_id: string;
         result_id: string;
         metrics: { edit_distance: number; cer: number; exact_match: boolean };
@@ -188,7 +188,7 @@ describe('POST /api/evaluations', () => {
     expect(body.ok).toBe(true);
     expect(body.evaluation).toMatchObject({
       schema_version: 1,
-      algorithm: 'raw-char-v1',
+      evaluator: { id: 'raw-char-v1', unit: 'unicode-code-point', normalization: 'none' },
       run_id: RUN_ID,
       result_id: RESULT_ID,
     });
@@ -297,12 +297,19 @@ describe('GET /api/evaluations/<evaluation-id>', () => {
 
     const body = (await response.json()) as {
       ok: true;
-      evaluation: { evaluation_id: string; algorithm: string };
+      evaluation: {
+        evaluation_id: string;
+        evaluator: { id: string; unit: string; normalization: string };
+      };
       referenceText: string;
       hypothesisText: string;
     };
     expect(body.evaluation.evaluation_id).toBe(evaluationId);
-    expect(body.evaluation.algorithm).toBe('raw-char-v1');
+    expect(body.evaluation.evaluator).toEqual({
+      id: 'raw-char-v1',
+      unit: 'unicode-code-point',
+      normalization: 'none',
+    });
     expect(body.referenceText).toBe(SOURCE_TEXT);
     expect(body.hypothesisText).toBe(TRANSCRIPT);
   });
