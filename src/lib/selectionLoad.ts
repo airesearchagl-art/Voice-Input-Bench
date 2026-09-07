@@ -16,17 +16,17 @@
 
 export type SelectionStatus = 'idle' | 'loading' | 'loaded' | 'failed';
 
-export interface SelectionLoadState<TValue> {
+export interface SelectionLoadState<TValue, TError = string> {
   /** What the user has selected, or `null` for nothing. */
   selected: string | null;
   /** Incremented on every selection change; identifies the in-flight request. */
   requestId: number;
   status: SelectionStatus;
   value: TValue | null;
-  error: string | null;
+  error: TError | null;
 }
 
-export function idleSelection<TValue>(): SelectionLoadState<TValue> {
+export function idleSelection<TValue, TError = string>(): SelectionLoadState<TValue, TError> {
   return { selected: null, requestId: 0, status: 'idle', value: null, error: null };
 }
 
@@ -34,10 +34,10 @@ export function idleSelection<TValue>(): SelectionLoadState<TValue> {
  * Switch the selection. Clears the previous value so nothing from the old
  * selection is on screen while the new one loads.
  */
-export function selectTarget<TValue>(
-  state: SelectionLoadState<TValue>,
+export function selectTarget<TValue, TError>(
+  state: SelectionLoadState<TValue, TError>,
   selected: string | null,
-): SelectionLoadState<TValue> {
+): SelectionLoadState<TValue, TError> {
   return {
     selected,
     requestId: state.requestId + 1,
@@ -48,27 +48,42 @@ export function selectTarget<TValue>(
 }
 
 /** Is this response the one the current selection is waiting for? */
-export function isCurrentResponse<TValue>(
-  state: SelectionLoadState<TValue>,
+export function isCurrentResponse<TValue, TError>(
+  state: SelectionLoadState<TValue, TError>,
   response: { requestId: number; selected: string | null },
 ): boolean {
   return state.requestId === response.requestId && state.selected === response.selected;
 }
 
 /** Apply a loaded value, or ignore it if the selection has moved on. */
-export function applyLoaded<TValue>(
-  state: SelectionLoadState<TValue>,
+export function applyLoaded<TValue, TError>(
+  state: SelectionLoadState<TValue, TError>,
   response: { requestId: number; selected: string | null; value: TValue },
-): SelectionLoadState<TValue> {
+): SelectionLoadState<TValue, TError> {
   if (!isCurrentResponse(state, response)) return state;
   return { ...state, status: 'loaded', value: response.value, error: null };
 }
 
 /** Apply a failure, or ignore it if the selection has moved on. */
-export function applyFailed<TValue>(
-  state: SelectionLoadState<TValue>,
-  response: { requestId: number; selected: string | null; error: string },
-): SelectionLoadState<TValue> {
+export function applyFailed<TValue, TError>(
+  state: SelectionLoadState<TValue, TError>,
+  response: { requestId: number; selected: string | null; error: TError },
+): SelectionLoadState<TValue, TError> {
   if (!isCurrentResponse(state, response)) return state;
   return { ...state, status: 'failed', value: null, error: response.error };
+}
+
+/**
+ * Is `selected` still the thing on screen?
+ *
+ * Asked before a write's follow-up read is even started. A save for Run A can
+ * finish after the operator has moved to Run B, and starting A's reload at that
+ * point would put A's Results under B's name — the same misattribution
+ * {@link applyLoaded} guards against, one step earlier in the chain.
+ */
+export function isStillSelected<TValue, TError>(
+  state: SelectionLoadState<TValue, TError>,
+  selected: string,
+): boolean {
+  return state.selected === selected;
 }
