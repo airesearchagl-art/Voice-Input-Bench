@@ -18,6 +18,14 @@
  * Sending something to a human is not detection. It is the absence of a wrong
  * answer, which is worth measuring and is worth measuring under its own name.
  *
+ * Both are divided by **every hard negative in the corpus**, never by the subset
+ * a rule chose to answer. A denominator that shrinks as a rule reviews more
+ * would let "I did not answer" raise a recall score.
+ *
+ * Vote semantics are re-derived here from the stored `runs[]` rather than read
+ * from a stored flag, so a change to what counts as agreement is a change to one
+ * function and not to a set of files that were written months apart.
+ *
  * Every accuracy figure is provisional: the labels have not been confirmed by a
  * human. See HUMAN_GOLD_REVIEW.md.
  *
@@ -29,31 +37,19 @@ import path from 'node:path';
 import { EVIDENCE_DIR, rate, writeEvidence } from './lib/evidence.mjs';
 import { loadProbes } from './lib/probes.mjs';
 import { criticalSignal } from './lib/criticalInfoMirror.mjs';
+import {
+  HYBRIDS,
+  HYBRID_RULE_DESCRIPTIONS,
+  confusion,
+  hardNegativeMetrics,
+  scoreHybrid,
+} from './lib/scoring.mjs';
+import { tallyRuns } from './lib/voteSemantics.mjs';
 
 function readEvidence(name) {
   const file = path.join(EVIDENCE_DIR, name);
   if (!existsSync(file)) return null;
   return JSON.parse(readFileSync(file, 'utf8'));
-}
-
-/** Binary scoring over pairs the method actually decided. */
-function confusion(rows) {
-  const falsePreserved = rows.filter((r) => r.gold === 'changed' && r.predicted === 'preserved');
-  const falseChanged = rows.filter((r) => r.gold === 'preserved' && r.predicted === 'changed');
-  const correct = rows.filter((r) => r.gold === r.predicted);
-  const hard = rows.filter((r) => r.hard_negative);
-  const hardAutoChanged = hard.filter((r) => r.predicted === 'changed');
-
-  return {
-    decided: rows.length,
-    correct: correct.length,
-    provisional_accuracy: rate(correct.length, rows.length),
-    false_preserved: falsePreserved.length,
-    false_preserved_ids: falsePreserved.map((r) => r.id),
-    false_changed: falseChanged.length,
-    false_changed_ids: falseChanged.map((r) => r.id),
-    hard_negative_auto_changed_recall: rate(hardAutoChanged.length, hard.length),
-  };
 }
 
 const { probes, sha256, corpus } = loadProbes();
@@ -73,9 +69,18 @@ const summary = {
     'false_preserved (lower is better). Accuracy is reported and is not the basis of any recommendation.',
   metric_definitions: {
     hard_negative_auto_changed_recall:
-      'hard negatives the method decided were changed, without a human',
+      'hard negatives the method decided were changed, without a human, over EVERY hard negative in the corpus. Review does not count. This is detection.',
     hard_negative_non_preserved_coverage:
-      'hard negatives the method did not call preserved — changed plus review. Not detection.',
+      'hard negatives the method did not call preserved — changed plus review — over EVERY hard negative in the corpus. Not detection.',
+    hard_negative_total: 'the shared denominator: hard negatives in the corpus, always the same number',
+    valid_vote_unanimous:
+      'among the runs that produced a verdict, every verdict agreed. Says nothing about how many runs that was.',
+    full_run_unanimous:
+      'every requested run produced a verdict and every verdict agreed. The only unanimity an automated decision rests on.',
+    parseable_schema_valid:
+      'a verdict object was recoverable from the reply. This is what invalid means here.',
+    exact_output_contract_valid:
+      'the reply was the object and nothing else. Recorded separately and never used to invalidate a run.',
   },
 };
 
@@ -154,24 +159,46 @@ if (!embedding || embedding.status !== 'OK') {
 // B. LLM rubric, per input variant
 // ---------------------------------------------------------------------------
 
+/** Re-derived from the stored runs, so no analysis depends on a stored flag. */
+function tallyByIdFor(evidence) {
+  const repeats = evidence.request_contract?.repeats ?? null;
+  if (repeats === null) {
+    throw new Error(
+      `${evidence.input_variant} evidence has no request_contract.repeats; full-run unanimity cannot be derived`,
+    );
+  }
+  return new Map(evidence.results.map((r) => [r.id, tallyRuns(r.runs, repeats)]));
+}
+
 function scoreLlm(evidence) {
   if (!evidence || evidence.status !== 'OK') {
     return { status: 'NOT_RUN', reason: 'evidence file absent' };
   }
 
-  const rows = evidence.results.map((r) => ({
-    id: r.id,
-    gold: r.proposed_label,
-    hard_negative: r.hard_negative,
-    predicted: r.majority_label,
-  }));
+  const tallyById = tallyByIdFor(evidence);
+
+  const rows = evidence.results.map((r) => {
+    const tally = tallyById.get(r.id);
+    return {
+      id: r.id,
+      gold: r.proposed_label,
+      hard_negative: r.hard_negative,
+      predicted: tally.majority_label,
+      // A pair with no verdict at all is not an automatic answer; for the
+      // hard-negative metrics it sits where a review would.
+      decision: tally.majority_label ?? 'review',
+    };
+  });
   const decided = rows.filter((r) => r.predicted !== null);
 
-  const totalRuns = evidence.results.reduce((n, r) => n + r.valid_runs + r.invalid_runs, 0);
-  const invalidRuns = evidence.results.reduce((n, r) => n + r.invalid_runs, 0);
+  const tallies = [...tallyById.values()];
+  const totalRuns = tallies.reduce((n, t) => n + t.completed_runs, 0);
+  const invalidRuns = tallies.reduce((n, t) => n + t.invalid_runs, 0);
   const exactRuns = evidence.results.reduce((n, r) => n + r.exact_contract_runs, 0);
-  const unanimous = evidence.results.filter((r) => r.unanimous).length;
+  const validVoteUnanimous = tallies.filter((t) => t.valid_vote_unanimous).length;
+  const fullRunUnanimous = tallies.filter((t) => t.full_run_unanimous).length;
   const byteIdentical = evidence.results.filter((r) => r.byte_identical_responses).length;
+  const pairsWithInvalid = tallies.filter((t) => t.invalid_runs > 0).length;
 
   return {
     status: 'OK',
@@ -186,14 +213,22 @@ function scoreLlm(evidence) {
     parseable_schema_valid_rate: rate(totalRuns - invalidRuns, totalRuns),
     exact_output_contract_rate: rate(exactRuns, totalRuns),
     invalid_runs: invalidRuns,
+    pairs_with_an_invalid_run: pairsWithInvalid,
+    pairs_with_an_invalid_run_ids: [...tallyById.entries()]
+      .filter(([, t]) => t.invalid_runs > 0)
+      .map(([id]) => id),
     unscored_pairs: rows.length - decided.length,
-    unanimous_pairs: unanimous,
-    unanimous_rate: rate(unanimous, evidence.results.length),
-    disagreement_pairs: evidence.results.length - unanimous,
-    disagreement_rate: rate(evidence.results.length - unanimous, evidence.results.length),
+    // Two unanimity levels, never one. The first ignores how many runs there
+    // were; only the second may carry an automated decision.
+    valid_vote_unanimous_pairs: validVoteUnanimous,
+    valid_vote_unanimous_rate: rate(validVoteUnanimous, evidence.results.length),
+    full_run_unanimous_pairs: fullRunUnanimous,
+    full_run_unanimous_rate: rate(fullRunUnanimous, evidence.results.length),
+    valid_vote_split_pairs: evidence.results.length - validVoteUnanimous,
     byte_identical_pairs: byteIdentical,
     byte_identical_rate: rate(byteIdentical, evidence.results.length),
     ...confusion(decided),
+    ...hardNegativeMetrics(rows),
   };
 }
 
@@ -223,65 +258,6 @@ summary.critical_info_signal = {
 // C. Hybrid variants
 // ---------------------------------------------------------------------------
 
-/**
- * H0 — the agreement-gated rule from the first spike round, kept for comparison.
- * H1 — the canonical task baseline: critical vetoes, the rubric decides changed,
- *      the embedding can only send a disagreement to review.
- * H2 — H1 with the critical signal demoted from veto to review trigger.
- * H3 — the safety policy: nothing is ever automatically preserved.
- */
-const HYBRIDS = {
-  H0_agreement_gated: (probe, ctx) => {
-    if (ctx.critical.applicable && ctx.critical.mismatch) return { decision: 'changed', by: 'critical-veto' };
-    if (ctx.llm === null) return { decision: 'review', by: 'llm-unscored' };
-    if (ctx.embeddingSays === ctx.llm) return { decision: ctx.llm, by: 'agreement' };
-    return { decision: 'review', by: 'disagreement' };
-  },
-  H1_canonical_baseline: (probe, ctx) => {
-    if (ctx.critical.applicable && ctx.critical.mismatch) return { decision: 'changed', by: 'critical-veto' };
-    if (ctx.llm === 'changed') return { decision: 'changed', by: 'llm-changed' };
-    if (ctx.llm === null || !ctx.unanimous) return { decision: 'review', by: 'llm-uncertain' };
-    if (ctx.embeddingSays !== ctx.llm) return { decision: 'review', by: 'embedding-conflict' };
-    return { decision: 'preserved', by: 'agreement' };
-  },
-  H2_critical_review_trigger: (probe, ctx) => {
-    if (ctx.critical.applicable && ctx.critical.mismatch) return { decision: 'review', by: 'critical-review' };
-    if (ctx.llm === 'changed') return { decision: 'changed', by: 'llm-changed' };
-    if (ctx.llm === null || !ctx.unanimous) return { decision: 'review', by: 'llm-uncertain' };
-    if (ctx.embeddingSays !== ctx.llm) return { decision: 'review', by: 'embedding-conflict' };
-    return { decision: 'preserved', by: 'agreement' };
-  },
-  H3_no_auto_preserved: (probe, ctx) => {
-    if (ctx.critical.applicable && ctx.critical.mismatch) return { decision: 'changed', by: 'critical-veto' };
-    if (ctx.llm === 'changed' && ctx.unanimous) return { decision: 'changed', by: 'llm-changed' };
-    // Nothing else is decided. `preserved` is never automatic.
-    return { decision: 'review', by: 'no-auto-preserved' };
-  },
-};
-
-function scoreHybrid(rows) {
-  const automatic = rows.filter((r) => r.decision !== 'review');
-  const review = rows.filter((r) => r.decision === 'review');
-  const decided = automatic.map((r) => ({ ...r, predicted: r.decision }));
-  const hard = rows.filter((r) => r.hard_negative);
-  const hardNotPreserved = hard.filter((r) => r.decision !== 'preserved');
-
-  return {
-    auto_changed: rows.filter((r) => r.decision === 'changed').length,
-    auto_preserved: rows.filter((r) => r.decision === 'preserved').length,
-    review_count: review.length,
-    review_rate: rate(review.length, rows.length),
-    review_ids: review.map((r) => r.id),
-    automatic_coverage: rate(automatic.length, rows.length),
-    decided_by: rows.reduce((counts, r) => ({ ...counts, [r.by]: (counts[r.by] ?? 0) + 1 }), {}),
-    ...confusion(decided),
-    hard_negative_non_preserved_coverage: rate(hardNotPreserved.length, hard.length),
-    hard_negative_called_preserved_ids: hard
-      .filter((r) => r.decision === 'preserved')
-      .map((r) => r.id),
-  };
-}
-
 if (summary.embedding.status === 'OK' && summary.llm_rubric.raw.status === 'OK') {
   const embeddingById = new Map(embedding.results.map((r) => [r.id, r]));
   const hybrid = {};
@@ -294,19 +270,20 @@ if (summary.embedding.status === 'OK' && summary.llm_rubric.raw.status === 'OK')
   ].filter((pairing) => pairing.llm && pairing.llm.status === 'OK');
 
   for (const pairing of pairings) {
-    const llmById = new Map(pairing.llm.results.map((r) => [r.id, r]));
+    const tallyById = tallyByIdFor(pairing.llm);
     for (const [name, rule] of Object.entries(HYBRIDS)) {
       for (const threshold of [0.85, 0.9, 0.95]) {
         const rows = probes.map((probe) => {
           const cosine = embeddingById.get(probe.id)[pairing.cosineKey];
-          const llmResult = llmById.get(probe.id);
+          const tally = tallyById.get(probe.id);
           const ctx = {
             critical: criticalById.get(probe.id),
             embeddingSays: cosine >= threshold ? 'preserved' : 'changed',
-            llm: llmResult.majority_label,
-            unanimous: llmResult.unanimous,
+            majorityLabel: tally.majority_label,
+            fullRunUnanimous: tally.full_run_unanimous,
+            validVoteUnanimous: tally.valid_vote_unanimous,
           };
-          const outcome = rule(probe, ctx);
+          const outcome = rule(ctx);
           return {
             id: probe.id,
             gold: probe.gold.label,
@@ -322,13 +299,8 @@ if (summary.embedding.status === 'OK' && summary.llm_rubric.raw.status === 'OK')
 
   summary.hybrid = {
     status: 'OK',
-    rules: {
-      H0_agreement_gated: 'critical veto; else embedding and rubric must agree; else review',
-      H1_canonical_baseline:
-        'critical veto; else rubric changed wins; else rubric uncertain -> review; else embedding conflict -> review; else preserved',
-      H2_critical_review_trigger: 'as H1 but a critical mismatch routes to review instead of vetoing',
-      H3_no_auto_preserved: 'critical veto or unanimous rubric changed -> changed; everything else -> review',
-    },
+    rules: HYBRID_RULE_DESCRIPTIONS,
+    unanimity_used_for_automation: 'full_run_unanimous',
     variants: hybrid,
   };
 } else {
@@ -358,7 +330,7 @@ for (const [variant, data] of Object.entries(summary.llm_rubric)) {
     continue;
   }
   console.log(
-    `llm ${variant.padEnd(8)} acc=${data.provisional_accuracy} FP=${data.false_preserved}${JSON.stringify(data.false_preserved_ids)} FC=${data.false_changed} autoChangedRecall=${data.hard_negative_auto_changed_recall} unanimous=${data.unanimous_rate} schemaValid=${data.parseable_schema_valid_rate} exactContract=${data.exact_output_contract_rate}`,
+    `llm ${variant.padEnd(8)} acc=${data.provisional_accuracy} FP=${data.false_preserved}${JSON.stringify(data.false_preserved_ids)} FC=${data.false_changed} autoChangedRecall=${data.hard_negative_auto_changed_recall} validVoteUnanimous=${data.valid_vote_unanimous_rate} fullRunUnanimous=${data.full_run_unanimous_rate} schemaValid=${data.parseable_schema_valid_rate} exactContract=${data.exact_output_contract_rate}`,
   );
 }
 
@@ -366,7 +338,7 @@ if (summary.hybrid.status === 'OK') {
   console.log('');
   for (const [name, data] of Object.entries(summary.hybrid.variants)) {
     console.log(
-      `${name.padEnd(38)} FP=${data.false_preserved} FC=${data.false_changed} autoChanged=${data.auto_changed} autoPreserved=${data.auto_preserved} review=${data.review_rate} coverage=${data.automatic_coverage} hnAutoChanged=${data.hard_negative_auto_changed_recall} hnNonPreserved=${data.hard_negative_non_preserved_coverage}`,
+      `${name.padEnd(38)} FP=${data.false_preserved} FC=${data.false_changed} autoChanged=${data.auto_changed} autoPreserved=${data.auto_preserved} review=${data.review_rate} coverage=${data.automatic_coverage} hnAutoChanged=${data.hard_negative_auto_changed_recall}(${data.hard_negative_auto_changed_count}/${data.hard_negative_total}) hnNonPreserved=${data.hard_negative_non_preserved_coverage}`,
     );
   }
 }

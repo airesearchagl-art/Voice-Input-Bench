@@ -69,7 +69,6 @@
       "invalid_runs": 0,
       "exact_contract_runs": 3,
       "preserved_votes": 3,
-      "unanimous": true,
       "byte_identical_responses": true,
       "majority_label": "preserved",
       "runs": [
@@ -142,7 +141,11 @@
           },
           "error": null
         }
-      ]
+      ],
+      "requested_runs": 3,
+      "changed_votes": 0,
+      "valid_vote_unanimous": true,
+      "full_run_unanimous": true
     },
     {
       "id": "p02",
@@ -154,7 +157,6 @@
       "invalid_runs": 0,
       "exact_contract_runs": 3,
       "preserved_votes": 3,
-      "unanimous": true,
       "byte_identical_responses": false,
       "majority_label": "preserved",
       "runs": [
@@ -223,7 +225,11 @@
           },
           "error": null
         }
-      ]
+      ],
+      "requested_runs": 3,
+      "changed_votes": 0,
+      "valid_vote_unanimous": true,
+      "full_run_unanimous": true
     },
     {
       "id": "p03",
@@ -235,7 +241,6 @@
       "invalid_runs": 0,
       "exact_contract_runs": 3,
       "preserved_votes": 3,
-      "unanimous": true,
       "byte_identical_responses": false,
       "majority_label": "preserved",
       "runs": [
@@ -302,7 +307,11 @@
           },
           "error": null
         }
-      ]
+      ],
+      "requested_runs": 3,
+      "changed_votes": 0,
+      "valid_vote_unanimous": true,
+      "full_run_unanimous": true
     },
     {
       "id": "p04",
@@ -314,7 +323,6 @@
       "invalid_runs": 0,
       "exact_contract_runs": 3,
       "preserved_votes": 0,
-      "unanimous": true,
       "byte_identical_responses": true,
       "majority_label": "changed",
       "runs": [
@@ -387,7 +395,11 @@
           },
           "error": null
         }
-      ]
+      ],
+      "requested_runs": 3,
+      "changed_votes": 3,
+      "valid_vote_unanimous": true,
+      "full_run_unanimous": true
     },
     {
       "id": "p05",
@@ -399,7 +411,6 @@
       "invalid_runs": 1,
       "exact_contract_runs": 2,
       "preserved_votes": 2,
-      "unanimous": true,
       "byte_identical_responses": false,
       "majority_label": "preserved",
       "runs": [
@@ -456,7 +467,11 @@
           },
           "error": null
         }
-      ]
+      ],
+      "requested_runs": 3,
+      "changed_votes": 0,
+      "valid_vote_unanimous": true,
+      "full_run_unanimous": false
     },
     {
       "id": "p06",
@@ -468,7 +483,6 @@
       "invalid_runs": 1,
       "exact_contract_runs": 2,
       "preserved_votes": 0,
-      "unanimous": true,
       "byte_identical_responses": false,
       "majority_label": "changed",
       "runs": [
@@ -529,7 +543,11 @@
           },
           "error": null
         }
-      ]
+      ],
+      "requested_runs": 3,
+      "changed_votes": 2,
+      "valid_vote_unanimous": true,
+      "full_run_unanimous": false
     },
     {
       "id": "p07",
@@ -541,7 +559,6 @@
       "invalid_runs": 0,
       "exact_contract_runs": 3,
       "preserved_votes": 3,
-      "unanimous": true,
       "byte_identical_responses": true,
       "majority_label": "preserved",
       "runs": [
@@ -608,7 +625,11 @@
           },
           "error": null
         }
-      ]
+      ],
+      "requested_runs": 3,
+      "changed_votes": 0,
+      "valid_vote_unanimous": true,
+      "full_run_unanimous": true
     },
     {
       "id": "p08",
@@ -620,7 +641,6 @@
       "invalid_runs": 1,
       "exact_contract_runs": 2,
       "preserved_votes": 0,
-      "unanimous": true,
       "byte_identical_responses": true,
       "majority_label": "changed",
       "runs": [
@@ -681,7 +701,11 @@
           },
           "error": null
         }
-      ]
+      ],
+      "requested_runs": 3,
+      "changed_votes": 2,
+      "valid_vote_unanimous": true,
+      "full_run_unanimous": false
     },
     {
       "id": "p09",
@@ -693,7 +717,6 @@
       "invalid_runs": 0,
       "exact_contract_runs": 0,
       "preserved_votes": 0,
-      "unanimous": true,
       "byte_identical_responses": true,
       "majority_label": "changed",
       "runs": [
@@ -766,7 +789,11 @@
           },
           "error": null
         }
-      ]
+      ],
+      "requested_runs": 3,
+      "changed_votes": 3,
+      "valid_vote_unanimous": true,
+      "full_run_unanimous": true
     },
     {
       "id": "p10",
@@ -778,7 +805,6 @@
       "invalid_runs": 0,
       "exact_contract_runs": 3,
       "preserved_votes": 0,
-      "unanimous": true,
       "byte_identical_responses": true,
       "majority_label": "changed",
       "runs": [
@@ -851,7 +877,11 @@
           },
           "error": null
         }
-      ]
+      ],
+      "requested_runs": 3,
+      "changed_votes": 3,
+      "valid_vote_unanimous": true,
+      "full_run_unanimous": true
     },
     {
       "id": "p11",
@@ -863,7 +893,6 @@
       "invalid_runs": 0,
       "exact_contract_runs": 3,
       "preserved_votes": 3,
-      "unanimous": true,
       "byte_identical_responses": true,
       "majority_label": "preserved",
       "runs": [
@@ -930,7 +959,11 @@
           },
           "error": null
         }
-      ]
+      ],
+      "requested_runs": 3,
+      "changed_votes": 0,
+      "valid_vote_unanimous": true,
+      "full_run_unanimous": true
     },
     {
       "id": "p12",
@@ -942,7 +975,6 @@
       "invalid_runs": 0,
       "exact_contract_runs": 3,
       "preserved_votes": 0,
-      "unanimous": true,
       "byte_identical_responses": true,
       "majority_label": "changed",
       "runs": [
@@ -1015,7 +1047,11 @@
           },
           "error": null
         }
-      ]
+      ],
+      "requested_runs": 3,
+      "changed_votes": 3,
+      "valid_vote_unanimous": true,
+      "full_run_unanimous": true
     },
     {
       "id": "p13",
@@ -1027,7 +1063,6 @@
       "invalid_runs": 0,
       "exact_contract_runs": 3,
       "preserved_votes": 0,
-      "unanimous": true,
       "byte_identical_responses": true,
       "majority_label": "changed",
       "runs": [
@@ -1100,7 +1135,11 @@
           },
           "error": null
         }
-      ]
+      ],
+      "requested_runs": 3,
+      "changed_votes": 3,
+      "valid_vote_unanimous": true,
+      "full_run_unanimous": true
     },
     {
       "id": "p14",
@@ -1112,7 +1151,6 @@
       "invalid_runs": 0,
       "exact_contract_runs": 3,
       "preserved_votes": 0,
-      "unanimous": true,
       "byte_identical_responses": true,
       "majority_label": "changed",
       "runs": [
@@ -1191,7 +1229,11 @@
           },
           "error": null
         }
-      ]
+      ],
+      "requested_runs": 3,
+      "changed_votes": 3,
+      "valid_vote_unanimous": true,
+      "full_run_unanimous": true
     },
     {
       "id": "p15",
@@ -1203,7 +1245,6 @@
       "invalid_runs": 0,
       "exact_contract_runs": 3,
       "preserved_votes": 0,
-      "unanimous": true,
       "byte_identical_responses": true,
       "majority_label": "changed",
       "runs": [
@@ -1276,7 +1317,11 @@
           },
           "error": null
         }
-      ]
+      ],
+      "requested_runs": 3,
+      "changed_votes": 3,
+      "valid_vote_unanimous": true,
+      "full_run_unanimous": true
     },
     {
       "id": "p16",
@@ -1288,7 +1333,6 @@
       "invalid_runs": 0,
       "exact_contract_runs": 3,
       "preserved_votes": 0,
-      "unanimous": true,
       "byte_identical_responses": true,
       "majority_label": "changed",
       "runs": [
@@ -1364,7 +1408,11 @@
           },
           "error": null
         }
-      ]
+      ],
+      "requested_runs": 3,
+      "changed_votes": 3,
+      "valid_vote_unanimous": true,
+      "full_run_unanimous": true
     },
     {
       "id": "p17",
@@ -1376,7 +1424,6 @@
       "invalid_runs": 0,
       "exact_contract_runs": 3,
       "preserved_votes": 0,
-      "unanimous": true,
       "byte_identical_responses": true,
       "majority_label": "changed",
       "runs": [
@@ -1449,7 +1496,11 @@
           },
           "error": null
         }
-      ]
+      ],
+      "requested_runs": 3,
+      "changed_votes": 3,
+      "valid_vote_unanimous": true,
+      "full_run_unanimous": true
     },
     {
       "id": "p18",
@@ -1461,7 +1512,6 @@
       "invalid_runs": 0,
       "exact_contract_runs": 3,
       "preserved_votes": 0,
-      "unanimous": true,
       "byte_identical_responses": true,
       "majority_label": "changed",
       "runs": [
@@ -1534,7 +1584,11 @@
           },
           "error": null
         }
-      ]
+      ],
+      "requested_runs": 3,
+      "changed_votes": 3,
+      "valid_vote_unanimous": true,
+      "full_run_unanimous": true
     },
     {
       "id": "p19",
@@ -1546,7 +1600,6 @@
       "invalid_runs": 0,
       "exact_contract_runs": 3,
       "preserved_votes": 0,
-      "unanimous": true,
       "byte_identical_responses": true,
       "majority_label": "changed",
       "runs": [
@@ -1622,7 +1675,11 @@
           },
           "error": null
         }
-      ]
+      ],
+      "requested_runs": 3,
+      "changed_votes": 3,
+      "valid_vote_unanimous": true,
+      "full_run_unanimous": true
     },
     {
       "id": "p20",
@@ -1634,7 +1691,6 @@
       "invalid_runs": 0,
       "exact_contract_runs": 3,
       "preserved_votes": 0,
-      "unanimous": true,
       "byte_identical_responses": true,
       "majority_label": "changed",
       "runs": [
@@ -1710,7 +1766,11 @@
           },
           "error": null
         }
-      ]
+      ],
+      "requested_runs": 3,
+      "changed_votes": 3,
+      "valid_vote_unanimous": true,
+      "full_run_unanimous": true
     },
     {
       "id": "p21",
@@ -1722,7 +1782,6 @@
       "invalid_runs": 0,
       "exact_contract_runs": 3,
       "preserved_votes": 3,
-      "unanimous": true,
       "byte_identical_responses": true,
       "majority_label": "preserved",
       "runs": [
@@ -1795,7 +1854,11 @@
           },
           "error": null
         }
-      ]
+      ],
+      "requested_runs": 3,
+      "changed_votes": 0,
+      "valid_vote_unanimous": true,
+      "full_run_unanimous": true
     },
     {
       "id": "p22",
@@ -1807,7 +1870,6 @@
       "invalid_runs": 0,
       "exact_contract_runs": 3,
       "preserved_votes": 0,
-      "unanimous": true,
       "byte_identical_responses": true,
       "majority_label": "changed",
       "runs": [
@@ -1880,7 +1942,11 @@
           },
           "error": null
         }
-      ]
+      ],
+      "requested_runs": 3,
+      "changed_votes": 3,
+      "valid_vote_unanimous": true,
+      "full_run_unanimous": true
     },
     {
       "id": "p23",
@@ -1892,7 +1958,6 @@
       "invalid_runs": 0,
       "exact_contract_runs": 3,
       "preserved_votes": 0,
-      "unanimous": true,
       "byte_identical_responses": true,
       "majority_label": "changed",
       "runs": [
@@ -1968,7 +2033,11 @@
           },
           "error": null
         }
-      ]
+      ],
+      "requested_runs": 3,
+      "changed_votes": 3,
+      "valid_vote_unanimous": true,
+      "full_run_unanimous": true
     },
     {
       "id": "p24",
@@ -1980,7 +2049,6 @@
       "invalid_runs": 0,
       "exact_contract_runs": 3,
       "preserved_votes": 0,
-      "unanimous": true,
       "byte_identical_responses": false,
       "majority_label": "changed",
       "runs": [
@@ -2059,7 +2127,11 @@
           },
           "error": null
         }
-      ]
+      ],
+      "requested_runs": 3,
+      "changed_votes": 3,
+      "valid_vote_unanimous": true,
+      "full_run_unanimous": true
     },
     {
       "id": "p25",
@@ -2071,7 +2143,6 @@
       "invalid_runs": 0,
       "exact_contract_runs": 3,
       "preserved_votes": 0,
-      "unanimous": true,
       "byte_identical_responses": true,
       "majority_label": "changed",
       "runs": [
@@ -2147,7 +2218,11 @@
           },
           "error": null
         }
-      ]
+      ],
+      "requested_runs": 3,
+      "changed_votes": 3,
+      "valid_vote_unanimous": true,
+      "full_run_unanimous": true
     },
     {
       "id": "p26",
@@ -2159,7 +2234,6 @@
       "invalid_runs": 0,
       "exact_contract_runs": 3,
       "preserved_votes": 0,
-      "unanimous": true,
       "byte_identical_responses": true,
       "majority_label": "changed",
       "runs": [
@@ -2235,7 +2309,11 @@
           },
           "error": null
         }
-      ]
+      ],
+      "requested_runs": 3,
+      "changed_votes": 3,
+      "valid_vote_unanimous": true,
+      "full_run_unanimous": true
     },
     {
       "id": "p27",
@@ -2247,7 +2325,6 @@
       "invalid_runs": 0,
       "exact_contract_runs": 3,
       "preserved_votes": 0,
-      "unanimous": true,
       "byte_identical_responses": true,
       "majority_label": "changed",
       "runs": [
@@ -2320,7 +2397,11 @@
           },
           "error": null
         }
-      ]
+      ],
+      "requested_runs": 3,
+      "changed_votes": 3,
+      "valid_vote_unanimous": true,
+      "full_run_unanimous": true
     },
     {
       "id": "p28",
@@ -2332,7 +2413,6 @@
       "invalid_runs": 0,
       "exact_contract_runs": 3,
       "preserved_votes": 0,
-      "unanimous": true,
       "byte_identical_responses": true,
       "majority_label": "changed",
       "runs": [
@@ -2405,7 +2485,16 @@
           },
           "error": null
         }
-      ]
+      ],
+      "requested_runs": 3,
+      "changed_votes": 3,
+      "valid_vote_unanimous": true,
+      "full_run_unanimous": true
     }
-  ]
+  ],
+  "derived_fields": {
+    "backfilled_by": "scripts/backfill-vote-semantics.mjs",
+    "replaced": "unanimous (valid-runs-only) -> valid_vote_unanimous + full_run_unanimous",
+    "note": "Derived fields only. No request was replayed and no run, hash or timestamp was altered."
+  }
 }

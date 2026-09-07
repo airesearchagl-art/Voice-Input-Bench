@@ -1,5 +1,5 @@
 {
-  "analysed_at": "2026-09-07T18:06:16.462Z",
+  "analysed_at": "2026-09-07T22:24:09.533Z",
   "probes_sha256": "5a14302d80732959b5ae249de1daaf731f8e9596fd86042d526b7fafc4475b0a",
   "probe_count": 28,
   "gold_provenance": {
@@ -11,8 +11,13 @@
   "scoring_caveat": "All accuracy figures below are provisional accuracy against proposed labels. No human has confirmed the labels; see HUMAN_GOLD_REVIEW.md.",
   "ranking_metric": "false_preserved (lower is better). Accuracy is reported and is not the basis of any recommendation.",
   "metric_definitions": {
-    "hard_negative_auto_changed_recall": "hard negatives the method decided were changed, without a human",
-    "hard_negative_non_preserved_coverage": "hard negatives the method did not call preserved — changed plus review. Not detection."
+    "hard_negative_auto_changed_recall": "hard negatives the method decided were changed, without a human, over EVERY hard negative in the corpus. Review does not count. This is detection.",
+    "hard_negative_non_preserved_coverage": "hard negatives the method did not call preserved — changed plus review — over EVERY hard negative in the corpus. Not detection.",
+    "hard_negative_total": "the shared denominator: hard negatives in the corpus, always the same number",
+    "valid_vote_unanimous": "among the runs that produced a verdict, every verdict agreed. Says nothing about how many runs that was.",
+    "full_run_unanimous": "every requested run produced a verdict and every verdict agreed. The only unanimity an automated decision rests on.",
+    "parseable_schema_valid": "a verdict object was recoverable from the reply. This is what invalid means here.",
+    "exact_output_contract_valid": "the reply was the object and nothing else. Recorded separately and never used to invalidate a run."
   },
   "embedding": {
     "status": "OK",
@@ -234,11 +239,18 @@
       "parseable_schema_valid_rate": "96.4%",
       "exact_output_contract_rate": "92.9%",
       "invalid_runs": 3,
+      "pairs_with_an_invalid_run": 3,
+      "pairs_with_an_invalid_run_ids": [
+        "p05",
+        "p06",
+        "p08"
+      ],
       "unscored_pairs": 0,
-      "unanimous_pairs": 28,
-      "unanimous_rate": "100.0%",
-      "disagreement_pairs": 0,
-      "disagreement_rate": "0.0%",
+      "valid_vote_unanimous_pairs": 28,
+      "valid_vote_unanimous_rate": "100.0%",
+      "full_run_unanimous_pairs": 25,
+      "full_run_unanimous_rate": "89.3%",
+      "valid_vote_split_pairs": 0,
       "byte_identical_pairs": 23,
       "byte_identical_rate": "82.1%",
       "decided": 28,
@@ -258,7 +270,15 @@
         "p12",
         "p28"
       ],
-      "hard_negative_auto_changed_recall": "92.3%"
+      "hard_negative_total": 13,
+      "hard_negative_auto_changed_count": 12,
+      "hard_negative_review_count": 0,
+      "hard_negative_auto_preserved_count": 1,
+      "hard_negative_auto_changed_recall": "92.3%",
+      "hard_negative_non_preserved_coverage": "92.3%",
+      "hard_negative_called_preserved_ids": [
+        "p21"
+      ]
     },
     "surface": {
       "status": "OK",
@@ -290,11 +310,14 @@
       "parseable_schema_valid_rate": "100.0%",
       "exact_output_contract_rate": "86.9%",
       "invalid_runs": 0,
+      "pairs_with_an_invalid_run": 0,
+      "pairs_with_an_invalid_run_ids": [],
       "unscored_pairs": 0,
-      "unanimous_pairs": 28,
-      "unanimous_rate": "100.0%",
-      "disagreement_pairs": 0,
-      "disagreement_rate": "0.0%",
+      "valid_vote_unanimous_pairs": 28,
+      "valid_vote_unanimous_rate": "100.0%",
+      "full_run_unanimous_pairs": 28,
+      "full_run_unanimous_rate": "100.0%",
+      "valid_vote_split_pairs": 0,
       "byte_identical_pairs": 18,
       "byte_identical_rate": "64.3%",
       "decided": 28,
@@ -312,7 +335,13 @@
         "p12",
         "p28"
       ],
-      "hard_negative_auto_changed_recall": "100.0%"
+      "hard_negative_total": 13,
+      "hard_negative_auto_changed_count": 13,
+      "hard_negative_review_count": 0,
+      "hard_negative_auto_preserved_count": 0,
+      "hard_negative_auto_changed_recall": "100.0%",
+      "hard_negative_non_preserved_coverage": "100.0%",
+      "hard_negative_called_preserved_ids": []
     }
   },
   "critical_info_signal": {
@@ -352,11 +381,12 @@
   "hybrid": {
     "status": "OK",
     "rules": {
-      "H0_agreement_gated": "critical veto; else embedding and rubric must agree; else review",
-      "H1_canonical_baseline": "critical veto; else rubric changed wins; else rubric uncertain -> review; else embedding conflict -> review; else preserved",
+      "H0_agreement_gated": "critical veto; else the embedding and the majority of valid rubric runs must agree; else review. Does not require every run to have parsed — kept as a comparator, not a candidate.",
+      "H1_canonical_baseline": "critical veto; else any invalid run or split vote -> review; else full-run-unanimous rubric changed -> changed; else embedding conflict -> review; else preserved",
       "H2_critical_review_trigger": "as H1 but a critical mismatch routes to review instead of vetoing",
-      "H3_no_auto_preserved": "critical veto or unanimous rubric changed -> changed; everything else -> review"
+      "H3_no_auto_preserved": "critical veto -> changed; else full-run-unanimous rubric changed -> changed; everything else -> review. Never produces an automatic preserved."
     },
+    "unanimity_used_for_automation": "full_run_unanimous",
     "variants": {
       "H0_agreement_gated__raw__t0.85": {
         "auto_changed": 12,
@@ -397,7 +427,11 @@
           "p09",
           "p12"
         ],
-        "hard_negative_auto_changed_recall": "87.5%",
+        "hard_negative_total": 13,
+        "hard_negative_auto_changed_count": 7,
+        "hard_negative_review_count": 5,
+        "hard_negative_auto_preserved_count": 1,
+        "hard_negative_auto_changed_recall": "53.8%",
         "hard_negative_non_preserved_coverage": "92.3%",
         "hard_negative_called_preserved_ids": [
           "p21"
@@ -440,7 +474,11 @@
           "p10",
           "p12"
         ],
-        "hard_negative_auto_changed_recall": "88.9%",
+        "hard_negative_total": 13,
+        "hard_negative_auto_changed_count": 8,
+        "hard_negative_review_count": 4,
+        "hard_negative_auto_preserved_count": 1,
+        "hard_negative_auto_changed_recall": "61.5%",
         "hard_negative_non_preserved_coverage": "92.3%",
         "hard_negative_called_preserved_ids": [
           "p21"
@@ -483,46 +521,55 @@
           "p12",
           "p28"
         ],
-        "hard_negative_auto_changed_recall": "90.9%",
+        "hard_negative_total": 13,
+        "hard_negative_auto_changed_count": 10,
+        "hard_negative_review_count": 2,
+        "hard_negative_auto_preserved_count": 1,
+        "hard_negative_auto_changed_recall": "76.9%",
         "hard_negative_non_preserved_coverage": "92.3%",
         "hard_negative_called_preserved_ids": [
           "p21"
         ]
       },
       "H1_canonical_baseline__raw__t0.85": {
-        "auto_changed": 21,
+        "auto_changed": 19,
         "auto_preserved": 4,
-        "review_count": 3,
-        "review_rate": "10.7%",
+        "review_count": 5,
+        "review_rate": "17.9%",
         "review_ids": [
           "p02",
           "p05",
-          "p07"
+          "p06",
+          "p07",
+          "p08"
         ],
-        "automatic_coverage": "89.3%",
+        "automatic_coverage": "82.1%",
         "decided_by": {
           "agreement": 4,
-          "embedding-conflict": 3,
-          "llm-changed": 13,
+          "embedding-conflict": 2,
+          "llm-changed": 11,
+          "llm-not-full-run-unanimous": 3,
           "critical-veto": 8
         },
-        "decided": 25,
+        "decided": 23,
         "correct": 17,
-        "provisional_accuracy": "68.0%",
+        "provisional_accuracy": "73.9%",
         "false_preserved": 1,
         "false_preserved_ids": [
           "p21"
         ],
-        "false_changed": 7,
+        "false_changed": 5,
         "false_changed_ids": [
           "p04",
-          "p06",
-          "p08",
           "p09",
           "p10",
           "p12",
           "p28"
         ],
+        "hard_negative_total": 13,
+        "hard_negative_auto_changed_count": 12,
+        "hard_negative_review_count": 0,
+        "hard_negative_auto_preserved_count": 1,
         "hard_negative_auto_changed_recall": "92.3%",
         "hard_negative_non_preserved_coverage": "92.3%",
         "hard_negative_called_preserved_ids": [
@@ -530,39 +577,44 @@
         ]
       },
       "H1_canonical_baseline__raw__t0.9": {
-        "auto_changed": 21,
+        "auto_changed": 19,
         "auto_preserved": 4,
-        "review_count": 3,
-        "review_rate": "10.7%",
+        "review_count": 5,
+        "review_rate": "17.9%",
         "review_ids": [
           "p02",
           "p05",
-          "p07"
+          "p06",
+          "p07",
+          "p08"
         ],
-        "automatic_coverage": "89.3%",
+        "automatic_coverage": "82.1%",
         "decided_by": {
           "agreement": 4,
-          "embedding-conflict": 3,
-          "llm-changed": 13,
+          "embedding-conflict": 2,
+          "llm-changed": 11,
+          "llm-not-full-run-unanimous": 3,
           "critical-veto": 8
         },
-        "decided": 25,
+        "decided": 23,
         "correct": 17,
-        "provisional_accuracy": "68.0%",
+        "provisional_accuracy": "73.9%",
         "false_preserved": 1,
         "false_preserved_ids": [
           "p21"
         ],
-        "false_changed": 7,
+        "false_changed": 5,
         "false_changed_ids": [
           "p04",
-          "p06",
-          "p08",
           "p09",
           "p10",
           "p12",
           "p28"
         ],
+        "hard_negative_total": 13,
+        "hard_negative_auto_changed_count": 12,
+        "hard_negative_review_count": 0,
+        "hard_negative_auto_preserved_count": 1,
         "hard_negative_auto_changed_recall": "92.3%",
         "hard_negative_non_preserved_coverage": "92.3%",
         "hard_negative_called_preserved_ids": [
@@ -570,41 +622,46 @@
         ]
       },
       "H1_canonical_baseline__raw__t0.95": {
-        "auto_changed": 21,
+        "auto_changed": 19,
         "auto_preserved": 2,
-        "review_count": 5,
-        "review_rate": "17.9%",
+        "review_count": 7,
+        "review_rate": "25.0%",
         "review_ids": [
           "p02",
           "p03",
           "p05",
+          "p06",
           "p07",
+          "p08",
           "p11"
         ],
-        "automatic_coverage": "82.1%",
+        "automatic_coverage": "75.0%",
         "decided_by": {
           "agreement": 2,
-          "embedding-conflict": 5,
-          "llm-changed": 13,
+          "embedding-conflict": 4,
+          "llm-changed": 11,
+          "llm-not-full-run-unanimous": 3,
           "critical-veto": 8
         },
-        "decided": 23,
+        "decided": 21,
         "correct": 15,
-        "provisional_accuracy": "65.2%",
+        "provisional_accuracy": "71.4%",
         "false_preserved": 1,
         "false_preserved_ids": [
           "p21"
         ],
-        "false_changed": 7,
+        "false_changed": 5,
         "false_changed_ids": [
           "p04",
-          "p06",
-          "p08",
           "p09",
           "p10",
           "p12",
           "p28"
         ],
+        "hard_negative_total": 13,
+        "hard_negative_auto_changed_count": 12,
+        "hard_negative_review_count": 0,
+        "hard_negative_auto_preserved_count": 1,
         "hard_negative_auto_changed_recall": "92.3%",
         "hard_negative_non_preserved_coverage": "92.3%",
         "hard_negative_called_preserved_ids": [
@@ -612,110 +669,16 @@
         ]
       },
       "H2_critical_review_trigger__raw__t0.85": {
-        "auto_changed": 13,
+        "auto_changed": 11,
         "auto_preserved": 4,
-        "review_count": 11,
-        "review_rate": "39.3%",
-        "review_ids": [
-          "p02",
-          "p05",
-          "p07",
-          "p12",
-          "p15",
-          "p16",
-          "p17",
-          "p18",
-          "p22",
-          "p23",
-          "p25"
-        ],
-        "automatic_coverage": "60.7%",
-        "decided_by": {
-          "agreement": 4,
-          "embedding-conflict": 3,
-          "llm-changed": 13,
-          "critical-review": 8
-        },
-        "decided": 17,
-        "correct": 10,
-        "provisional_accuracy": "58.8%",
-        "false_preserved": 1,
-        "false_preserved_ids": [
-          "p21"
-        ],
-        "false_changed": 6,
-        "false_changed_ids": [
-          "p04",
-          "p06",
-          "p08",
-          "p09",
-          "p10",
-          "p28"
-        ],
-        "hard_negative_auto_changed_recall": "85.7%",
-        "hard_negative_non_preserved_coverage": "92.3%",
-        "hard_negative_called_preserved_ids": [
-          "p21"
-        ]
-      },
-      "H2_critical_review_trigger__raw__t0.9": {
-        "auto_changed": 13,
-        "auto_preserved": 4,
-        "review_count": 11,
-        "review_rate": "39.3%",
-        "review_ids": [
-          "p02",
-          "p05",
-          "p07",
-          "p12",
-          "p15",
-          "p16",
-          "p17",
-          "p18",
-          "p22",
-          "p23",
-          "p25"
-        ],
-        "automatic_coverage": "60.7%",
-        "decided_by": {
-          "agreement": 4,
-          "embedding-conflict": 3,
-          "llm-changed": 13,
-          "critical-review": 8
-        },
-        "decided": 17,
-        "correct": 10,
-        "provisional_accuracy": "58.8%",
-        "false_preserved": 1,
-        "false_preserved_ids": [
-          "p21"
-        ],
-        "false_changed": 6,
-        "false_changed_ids": [
-          "p04",
-          "p06",
-          "p08",
-          "p09",
-          "p10",
-          "p28"
-        ],
-        "hard_negative_auto_changed_recall": "85.7%",
-        "hard_negative_non_preserved_coverage": "92.3%",
-        "hard_negative_called_preserved_ids": [
-          "p21"
-        ]
-      },
-      "H2_critical_review_trigger__raw__t0.95": {
-        "auto_changed": 13,
-        "auto_preserved": 2,
         "review_count": 13,
         "review_rate": "46.4%",
         "review_ids": [
           "p02",
-          "p03",
           "p05",
+          "p06",
           "p07",
-          "p11",
+          "p08",
           "p12",
           "p15",
           "p16",
@@ -727,147 +690,268 @@
         ],
         "automatic_coverage": "53.6%",
         "decided_by": {
-          "agreement": 2,
-          "embedding-conflict": 5,
-          "llm-changed": 13,
+          "agreement": 4,
+          "embedding-conflict": 2,
+          "llm-changed": 11,
+          "llm-not-full-run-unanimous": 3,
           "critical-review": 8
         },
         "decided": 15,
-        "correct": 8,
-        "provisional_accuracy": "53.3%",
+        "correct": 10,
+        "provisional_accuracy": "66.7%",
         "false_preserved": 1,
         "false_preserved_ids": [
           "p21"
         ],
-        "false_changed": 6,
+        "false_changed": 4,
         "false_changed_ids": [
           "p04",
-          "p06",
-          "p08",
           "p09",
           "p10",
           "p28"
         ],
-        "hard_negative_auto_changed_recall": "85.7%",
+        "hard_negative_total": 13,
+        "hard_negative_auto_changed_count": 6,
+        "hard_negative_review_count": 6,
+        "hard_negative_auto_preserved_count": 1,
+        "hard_negative_auto_changed_recall": "46.2%",
+        "hard_negative_non_preserved_coverage": "92.3%",
+        "hard_negative_called_preserved_ids": [
+          "p21"
+        ]
+      },
+      "H2_critical_review_trigger__raw__t0.9": {
+        "auto_changed": 11,
+        "auto_preserved": 4,
+        "review_count": 13,
+        "review_rate": "46.4%",
+        "review_ids": [
+          "p02",
+          "p05",
+          "p06",
+          "p07",
+          "p08",
+          "p12",
+          "p15",
+          "p16",
+          "p17",
+          "p18",
+          "p22",
+          "p23",
+          "p25"
+        ],
+        "automatic_coverage": "53.6%",
+        "decided_by": {
+          "agreement": 4,
+          "embedding-conflict": 2,
+          "llm-changed": 11,
+          "llm-not-full-run-unanimous": 3,
+          "critical-review": 8
+        },
+        "decided": 15,
+        "correct": 10,
+        "provisional_accuracy": "66.7%",
+        "false_preserved": 1,
+        "false_preserved_ids": [
+          "p21"
+        ],
+        "false_changed": 4,
+        "false_changed_ids": [
+          "p04",
+          "p09",
+          "p10",
+          "p28"
+        ],
+        "hard_negative_total": 13,
+        "hard_negative_auto_changed_count": 6,
+        "hard_negative_review_count": 6,
+        "hard_negative_auto_preserved_count": 1,
+        "hard_negative_auto_changed_recall": "46.2%",
+        "hard_negative_non_preserved_coverage": "92.3%",
+        "hard_negative_called_preserved_ids": [
+          "p21"
+        ]
+      },
+      "H2_critical_review_trigger__raw__t0.95": {
+        "auto_changed": 11,
+        "auto_preserved": 2,
+        "review_count": 15,
+        "review_rate": "53.6%",
+        "review_ids": [
+          "p02",
+          "p03",
+          "p05",
+          "p06",
+          "p07",
+          "p08",
+          "p11",
+          "p12",
+          "p15",
+          "p16",
+          "p17",
+          "p18",
+          "p22",
+          "p23",
+          "p25"
+        ],
+        "automatic_coverage": "46.4%",
+        "decided_by": {
+          "agreement": 2,
+          "embedding-conflict": 4,
+          "llm-changed": 11,
+          "llm-not-full-run-unanimous": 3,
+          "critical-review": 8
+        },
+        "decided": 13,
+        "correct": 8,
+        "provisional_accuracy": "61.5%",
+        "false_preserved": 1,
+        "false_preserved_ids": [
+          "p21"
+        ],
+        "false_changed": 4,
+        "false_changed_ids": [
+          "p04",
+          "p09",
+          "p10",
+          "p28"
+        ],
+        "hard_negative_total": 13,
+        "hard_negative_auto_changed_count": 6,
+        "hard_negative_review_count": 6,
+        "hard_negative_auto_preserved_count": 1,
+        "hard_negative_auto_changed_recall": "46.2%",
         "hard_negative_non_preserved_coverage": "92.3%",
         "hard_negative_called_preserved_ids": [
           "p21"
         ]
       },
       "H3_no_auto_preserved__raw__t0.85": {
-        "auto_changed": 21,
+        "auto_changed": 19,
         "auto_preserved": 0,
-        "review_count": 7,
-        "review_rate": "25.0%",
+        "review_count": 9,
+        "review_rate": "32.1%",
         "review_ids": [
           "p01",
           "p02",
           "p03",
           "p05",
+          "p06",
           "p07",
+          "p08",
           "p11",
           "p21"
         ],
-        "automatic_coverage": "75.0%",
+        "automatic_coverage": "67.9%",
         "decided_by": {
-          "no-auto-preserved": 7,
-          "llm-changed": 13,
+          "no-auto-preserved": 9,
+          "llm-changed": 11,
           "critical-veto": 8
         },
-        "decided": 21,
+        "decided": 19,
         "correct": 14,
-        "provisional_accuracy": "66.7%",
+        "provisional_accuracy": "73.7%",
         "false_preserved": 0,
         "false_preserved_ids": [],
-        "false_changed": 7,
+        "false_changed": 5,
         "false_changed_ids": [
           "p04",
-          "p06",
-          "p08",
           "p09",
           "p10",
           "p12",
           "p28"
         ],
-        "hard_negative_auto_changed_recall": "100.0%",
+        "hard_negative_total": 13,
+        "hard_negative_auto_changed_count": 12,
+        "hard_negative_review_count": 1,
+        "hard_negative_auto_preserved_count": 0,
+        "hard_negative_auto_changed_recall": "92.3%",
         "hard_negative_non_preserved_coverage": "100.0%",
         "hard_negative_called_preserved_ids": []
       },
       "H3_no_auto_preserved__raw__t0.9": {
-        "auto_changed": 21,
+        "auto_changed": 19,
         "auto_preserved": 0,
-        "review_count": 7,
-        "review_rate": "25.0%",
+        "review_count": 9,
+        "review_rate": "32.1%",
         "review_ids": [
           "p01",
           "p02",
           "p03",
           "p05",
+          "p06",
           "p07",
+          "p08",
           "p11",
           "p21"
         ],
-        "automatic_coverage": "75.0%",
+        "automatic_coverage": "67.9%",
         "decided_by": {
-          "no-auto-preserved": 7,
-          "llm-changed": 13,
+          "no-auto-preserved": 9,
+          "llm-changed": 11,
           "critical-veto": 8
         },
-        "decided": 21,
+        "decided": 19,
         "correct": 14,
-        "provisional_accuracy": "66.7%",
+        "provisional_accuracy": "73.7%",
         "false_preserved": 0,
         "false_preserved_ids": [],
-        "false_changed": 7,
+        "false_changed": 5,
         "false_changed_ids": [
           "p04",
-          "p06",
-          "p08",
           "p09",
           "p10",
           "p12",
           "p28"
         ],
-        "hard_negative_auto_changed_recall": "100.0%",
+        "hard_negative_total": 13,
+        "hard_negative_auto_changed_count": 12,
+        "hard_negative_review_count": 1,
+        "hard_negative_auto_preserved_count": 0,
+        "hard_negative_auto_changed_recall": "92.3%",
         "hard_negative_non_preserved_coverage": "100.0%",
         "hard_negative_called_preserved_ids": []
       },
       "H3_no_auto_preserved__raw__t0.95": {
-        "auto_changed": 21,
+        "auto_changed": 19,
         "auto_preserved": 0,
-        "review_count": 7,
-        "review_rate": "25.0%",
+        "review_count": 9,
+        "review_rate": "32.1%",
         "review_ids": [
           "p01",
           "p02",
           "p03",
           "p05",
+          "p06",
           "p07",
+          "p08",
           "p11",
           "p21"
         ],
-        "automatic_coverage": "75.0%",
+        "automatic_coverage": "67.9%",
         "decided_by": {
-          "no-auto-preserved": 7,
-          "llm-changed": 13,
+          "no-auto-preserved": 9,
+          "llm-changed": 11,
           "critical-veto": 8
         },
-        "decided": 21,
+        "decided": 19,
         "correct": 14,
-        "provisional_accuracy": "66.7%",
+        "provisional_accuracy": "73.7%",
         "false_preserved": 0,
         "false_preserved_ids": [],
-        "false_changed": 7,
+        "false_changed": 5,
         "false_changed_ids": [
           "p04",
-          "p06",
-          "p08",
           "p09",
           "p10",
           "p12",
           "p28"
         ],
-        "hard_negative_auto_changed_recall": "100.0%",
+        "hard_negative_total": 13,
+        "hard_negative_auto_changed_count": 12,
+        "hard_negative_review_count": 1,
+        "hard_negative_auto_preserved_count": 0,
+        "hard_negative_auto_changed_recall": "92.3%",
         "hard_negative_non_preserved_coverage": "100.0%",
         "hard_negative_called_preserved_ids": []
       },
@@ -908,7 +992,11 @@
           "p09",
           "p12"
         ],
-        "hard_negative_auto_changed_recall": "100.0%",
+        "hard_negative_total": 13,
+        "hard_negative_auto_changed_count": 7,
+        "hard_negative_review_count": 6,
+        "hard_negative_auto_preserved_count": 0,
+        "hard_negative_auto_changed_recall": "53.8%",
         "hard_negative_non_preserved_coverage": "100.0%",
         "hard_negative_called_preserved_ids": []
       },
@@ -947,7 +1035,11 @@
           "p10",
           "p12"
         ],
-        "hard_negative_auto_changed_recall": "100.0%",
+        "hard_negative_total": 13,
+        "hard_negative_auto_changed_count": 8,
+        "hard_negative_review_count": 5,
+        "hard_negative_auto_preserved_count": 0,
+        "hard_negative_auto_changed_recall": "61.5%",
         "hard_negative_non_preserved_coverage": "100.0%",
         "hard_negative_called_preserved_ids": []
       },
@@ -987,7 +1079,11 @@
           "p12",
           "p28"
         ],
-        "hard_negative_auto_changed_recall": "100.0%",
+        "hard_negative_total": 13,
+        "hard_negative_auto_changed_count": 9,
+        "hard_negative_review_count": 4,
+        "hard_negative_auto_preserved_count": 0,
+        "hard_negative_auto_changed_recall": "69.2%",
         "hard_negative_non_preserved_coverage": "100.0%",
         "hard_negative_called_preserved_ids": []
       },
@@ -1022,6 +1118,10 @@
           "p12",
           "p28"
         ],
+        "hard_negative_total": 13,
+        "hard_negative_auto_changed_count": 13,
+        "hard_negative_review_count": 0,
+        "hard_negative_auto_preserved_count": 0,
         "hard_negative_auto_changed_recall": "100.0%",
         "hard_negative_non_preserved_coverage": "100.0%",
         "hard_negative_called_preserved_ids": []
@@ -1057,6 +1157,10 @@
           "p12",
           "p28"
         ],
+        "hard_negative_total": 13,
+        "hard_negative_auto_changed_count": 13,
+        "hard_negative_review_count": 0,
+        "hard_negative_auto_preserved_count": 0,
         "hard_negative_auto_changed_recall": "100.0%",
         "hard_negative_non_preserved_coverage": "100.0%",
         "hard_negative_called_preserved_ids": []
@@ -1094,6 +1198,10 @@
           "p12",
           "p28"
         ],
+        "hard_negative_total": 13,
+        "hard_negative_auto_changed_count": 13,
+        "hard_negative_review_count": 0,
+        "hard_negative_auto_preserved_count": 0,
         "hard_negative_auto_changed_recall": "100.0%",
         "hard_negative_non_preserved_coverage": "100.0%",
         "hard_negative_called_preserved_ids": []
@@ -1136,7 +1244,11 @@
           "p10",
           "p28"
         ],
-        "hard_negative_auto_changed_recall": "100.0%",
+        "hard_negative_total": 13,
+        "hard_negative_auto_changed_count": 7,
+        "hard_negative_review_count": 6,
+        "hard_negative_auto_preserved_count": 0,
+        "hard_negative_auto_changed_recall": "53.8%",
         "hard_negative_non_preserved_coverage": "100.0%",
         "hard_negative_called_preserved_ids": []
       },
@@ -1178,7 +1290,11 @@
           "p10",
           "p28"
         ],
-        "hard_negative_auto_changed_recall": "100.0%",
+        "hard_negative_total": 13,
+        "hard_negative_auto_changed_count": 7,
+        "hard_negative_review_count": 6,
+        "hard_negative_auto_preserved_count": 0,
+        "hard_negative_auto_changed_recall": "53.8%",
         "hard_negative_non_preserved_coverage": "100.0%",
         "hard_negative_called_preserved_ids": []
       },
@@ -1222,7 +1338,11 @@
           "p10",
           "p28"
         ],
-        "hard_negative_auto_changed_recall": "100.0%",
+        "hard_negative_total": 13,
+        "hard_negative_auto_changed_count": 7,
+        "hard_negative_review_count": 6,
+        "hard_negative_auto_preserved_count": 0,
+        "hard_negative_auto_changed_recall": "53.8%",
         "hard_negative_non_preserved_coverage": "100.0%",
         "hard_negative_called_preserved_ids": []
       },
@@ -1260,6 +1380,10 @@
           "p12",
           "p28"
         ],
+        "hard_negative_total": 13,
+        "hard_negative_auto_changed_count": 13,
+        "hard_negative_review_count": 0,
+        "hard_negative_auto_preserved_count": 0,
         "hard_negative_auto_changed_recall": "100.0%",
         "hard_negative_non_preserved_coverage": "100.0%",
         "hard_negative_called_preserved_ids": []
@@ -1298,6 +1422,10 @@
           "p12",
           "p28"
         ],
+        "hard_negative_total": 13,
+        "hard_negative_auto_changed_count": 13,
+        "hard_negative_review_count": 0,
+        "hard_negative_auto_preserved_count": 0,
         "hard_negative_auto_changed_recall": "100.0%",
         "hard_negative_non_preserved_coverage": "100.0%",
         "hard_negative_called_preserved_ids": []
@@ -1336,6 +1464,10 @@
           "p12",
           "p28"
         ],
+        "hard_negative_total": 13,
+        "hard_negative_auto_changed_count": 13,
+        "hard_negative_review_count": 0,
+        "hard_negative_auto_preserved_count": 0,
         "hard_negative_auto_changed_recall": "100.0%",
         "hard_negative_non_preserved_coverage": "100.0%",
         "hard_negative_called_preserved_ids": []

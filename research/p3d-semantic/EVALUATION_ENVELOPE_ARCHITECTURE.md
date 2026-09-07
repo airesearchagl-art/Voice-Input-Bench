@@ -1,4 +1,4 @@
-# Evaluation Envelope Architecture — P3-D-A (R1)
+# Evaluation Envelope Architecture — P3-D-A (R1.1)
 
 **Design study. No schema v4 is implemented here, and nothing in `src/` changes.**
 
@@ -69,7 +69,8 @@ execution      : { provider_protocol, endpoint_class,
                      prompt_sha256, params, repeats,
                      runs[ { request_sha256, response_sha256,
                              parseable_schema_valid,
-                             exact_output_contract_valid, latency_ms } ] }
+                             exact_output_contract_valid, latency_ms } ],
+                     agreement { valid_vote_unanimous, full_run_unanimous } }
 output         : { verdict, metrics, working }          ← evaluator-defined, sealed
 integrity      : { algorithm, semantic_sha256 }
 ```
@@ -132,6 +133,20 @@ R1 sharpened the problem rather than changing its shape. Four findings bear on i
    (96.4–100%) from `exact_output_contract_valid` (86.9–92.9%). A single "valid"
    flag hid the fact that roughly one reply in eight did not follow the format it
    was asked for. Whatever schema arrives needs both, recorded per run.
+5. **Agreement across repeats is also two fields, and only one may be trusted.**
+   R1.1 found that a single `unanimous` flag computed over the replies that
+   parsed reported three of twenty-eight raw pairs as unanimous when one of their
+   three runs produced no verdict at all. The envelope needs
+   `valid_vote_unanimous` and `full_run_unanimous` side by side, and the record
+   of which one an automated outcome rested on — an artifact that says
+   `changed` without saying what agreement that rested on cannot be audited
+   after the fact.
+6. **A derived summary must be recomputable from what sits beside it.** R1.1
+   corrected both faults without replaying a single request, because `runs[]`
+   held enough to re-derive every summary field. That is only true by accident
+   today; an envelope should make it a property. Summary fields that cannot be
+   re-derived from the stored runs are fields that go stale silently when the
+   scoring is corrected.
 
 The second point is the real architectural break. Every schema so far has been
 verifiable by re-deriving it. A semantic schema cannot be, and pretending
@@ -166,10 +181,10 @@ better supported than it was.
 
 - **v1/v2/v3 stay unmigrated and read-only.** Unchanged. R1 strengthens the
   reason: a semantic artifact needs an `execution` block whose fields are
-  sometimes `null` with a status string, and two separate validity flags per
-  run. None of that has any meaning for a character distance, and housing them
-  together would put unfillable fields on three schemas that are currently
-  complete.
+  sometimes `null` with a status string, two separate validity flags per run,
+  and — after R1.1 — two separate agreement flags per pair. None of that has any
+  meaning for a character distance, and housing them together would put
+  unfillable fields on three schemas that are currently complete.
 - **Freezing the envelope stays deferred.** Also unchanged, and now for a
   measured reason rather than a suspected one. R1 showed the method is still
   moving in ways that change the artifact: the input variant turned out to
@@ -177,3 +192,23 @@ better supported than it was.
   between H1 and H3 changes whether `preserved` is a value the schema can even
   carry automatically. An envelope designed before that choice would be
   designed for the wrong output.
+
+## R1.1 — what a scoring correction says about schema design
+
+R1.1 changed no model output and no conclusion about which method to use. It
+changed two derived measurements, and both had been reporting a tri-state more
+favourably than the evidence supported: hard-negative recall was divided by the
+pairs a rule chose to answer rather than by the corpus, and agreement was computed
+over the replies that happened to parse.
+
+The architectural point is what it took to fix them: **nothing but the stored
+runs**. No request was replayed, no hash changed, and the corrected numbers are
+derivable from files written before the fault was known. A schema that stores only
+a verdict and a rolled-up metric would have needed a full re-run — on a model that
+may no longer be installed at the same digest — to answer the same question.
+
+That is an argument for the `execution` block carrying its `runs[]` in full, and
+against treating a summary field as the record. It also suggests the envelope
+should distinguish, explicitly, between fields the artifact **stores** and fields
+it **derives**: R1's `unanimous` was a derived field that outlived the definition
+it was derived under, and nothing in the file said so.

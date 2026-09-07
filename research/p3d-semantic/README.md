@@ -1,4 +1,4 @@
-# P3-D-A — Semantic Evaluation Architecture Spike (R1)
+# P3-D-A — Semantic Evaluation Architecture Spike (R1.1)
 
 **Research only.** Nothing in this directory is production code. No evaluator was
 added to `src/evaluation/`, no schema v4 was implemented, no existing artifact
@@ -33,6 +33,9 @@ scripts/capture-environment.mjs   ask both runtimes what they are, nulls include
 scripts/run-embedding.mjs         method A — local embedding cosine
 scripts/run-llm-rubric.mjs        method B — local LLM rubric, 3 runs per pair
 scripts/analyze-results.mjs       score both methods and four hybrid rules
+scripts/backfill-vote-semantics.mjs  re-derive stored vote flags, runs untouched
+scripts/lib/scoring.mjs           the rules and the metrics, tested directly
+scripts/lib/voteSemantics.mjs     what a set of repeated runs actually agreed on
 scripts/lib/                      loopback guard, corpus loader, runtime probe, mirrors
 evidence/                         every result file, with the conditions that produced it
 ```
@@ -68,7 +71,7 @@ result is reported as PARTIAL rather than filled in.
 
 These are not conventions, they are tests. `npm.cmd test` runs them alongside the
 production suite (`scripts/lib/researchGuards.test.mjs`,
-`scripts/lib/mirrors.test.mjs`).
+`scripts/lib/mirrors.test.mjs`, `scripts/lib/scoring.test.mjs`).
 
 **1. The corpus is the frozen one.** Every run recomputes the digest of
 `probes-v1.json` and refuses to proceed if it does not match `probes-v1.sha256`.
@@ -115,6 +118,36 @@ Those are two different questions and R1 records them separately per run:
 
 A single "valid" flag would have reported the first number and implied the
 second. They differ by about ten points.
+
+## How the numbers avoid flattering themselves
+
+Two measurements in R1 gave a tri-state credit for not answering. Both are fixed
+in R1.1 and both are pinned by `scripts/lib/scoring.test.mjs`.
+
+**Hard-negative recall divides by the corpus, not by what a rule answered.**
+`hard_negative_auto_changed_recall` is auto-`changed` hard negatives over **all 13
+hard negatives**, every time. R1 divided by the hard negatives a rule had decided,
+so routing one to a human removed it from the measurement — a rule that reviewed
+twelve of thirteen and caught one scored 100%. The companion metric,
+`hard_negative_non_preserved_coverage`, is the one that counts review, and it
+answers a different question: *did the method avoid telling anyone this was fine?*
+A rule that reviews everything scores 0% on the first and 100% on the second, and
+reporting both under one name would have hidden exactly that.
+
+**Automation rests on `full_run_unanimous`.** Repeated runs are summarised at two
+levels, and they are not interchangeable:
+
+- `valid_vote_unanimous` — every reply that produced a verdict agreed. It says
+  nothing about how many replies that was.
+- `full_run_unanimous` — every requested run produced a verdict, **and** they all
+  agreed.
+
+R1 recorded only the first, called it `unanimous`, and let hybrid rules act on it,
+so two agreeing replies and one unparseable one drove an automatic decision. On
+raw input three of twenty-eight pairs are in exactly that state. They now route to
+review. Note that `exact_output_contract_valid` never invalidates a run — a reply
+wrapped in a code fence is a formatting habit, and discarding it would throw away
+an answer the model got right.
 
 ## The corpus
 
@@ -202,7 +235,13 @@ digest would be worse than an absent one, because it looks checked. Every
 Per run, `evidence/llm-rubric-results.{raw,surface}.json` records the prompt
 digest, the temperature, the repeat count, the input variant, and for each
 individual call a `request_sha256`, a `raw_response_sha256`, a `latency_ms` and
-the two validity flags.
+the two validity flags. Per pair it records both unanimity levels.
+
+`backfill-vote-semantics.mjs` brought R1's stored files up to those semantics. It
+recomputes the derived flags from the `runs[]` already in the file and Fails
+Closed if the recomputation disagrees with the counts stored beside them; it
+replays no request, and leaves every run entry, hash and timestamp exactly as the
+run wrote them.
 
 That is enough to say *what produced these numbers*. It is not enough to say
 another machine would produce the same ones: a different quantization, a

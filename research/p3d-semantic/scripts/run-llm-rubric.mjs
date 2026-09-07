@@ -21,6 +21,16 @@
  * Reporting only the first would let "0% invalid" describe a model that never
  * once followed the format.
  *
+ * Agreement across repeats is recorded at two levels for the same reason, and
+ * only the strict one may carry an automated decision:
+ *
+ *   - `valid_vote_unanimous` — the runs that produced a verdict all agreed.
+ *   - `full_run_unanimous` — every requested run produced a verdict, and they
+ *     all agreed.
+ *
+ * Two agreeing runs and one unparseable reply satisfies the first and not the
+ * second. See `lib/voteSemantics.mjs`.
+ *
  * Fail Closed on a malformed response: an unrecoverable reply is recorded as
  * `invalid` and counted, never coerced into a `preserved` or repaired into
  * something the model did not say.
@@ -43,6 +53,7 @@ import { RESEARCH_ROOT, loadProbes, sha256OfFile, sha256OfText, textsFor } from 
 import { environmentSnapshot, mean, median, writeEvidence } from './lib/evidence.mjs';
 import { surfaceNormalizeMirror } from './lib/surfaceNormalizeMirror.mjs';
 import { lmStudioRuntimeInfo, ollamaRuntimeInfo } from './lib/runtimeInfo.mjs';
+import { tallyRuns } from './lib/voteSemantics.mjs';
 
 const DEFAULT_ENDPOINT = 'http://127.0.0.1:11434';
 const DEFAULT_MODEL = 'llama3.1:8b';
@@ -267,12 +278,7 @@ async function main() {
       });
     }
 
-    const valid = runs.filter((run) => run.parseable_schema_valid);
-    const preservedVotes = valid.filter((run) => run.verdict.meaning_preserved).length;
-    const unanimous = valid.length > 0 && (preservedVotes === 0 || preservedVotes === valid.length);
-    // Majority of the *valid* runs. An invalid run is not a vote for anything.
-    const majority =
-      valid.length === 0 ? null : preservedVotes * 2 > valid.length ? 'preserved' : 'changed';
+    const tally = tallyRuns(runs, repeats);
     const identicalBytes =
       new Set(runs.map((run) => run.raw_response_sha256).filter(Boolean)).size <= 1;
 
@@ -283,18 +289,22 @@ async function main() {
       hard_negative: probe.hard_negative,
       proposed_label: probe.gold.label,
       proposed_reason_code: probe.gold.reason_code,
-      valid_runs: valid.length,
-      invalid_runs: runs.length - valid.length,
+      requested_runs: tally.requested_runs,
+      valid_runs: tally.valid_runs,
+      invalid_runs: tally.invalid_runs,
       exact_contract_runs: runs.filter((run) => run.exact_output_contract_valid).length,
-      preserved_votes: preservedVotes,
-      unanimous,
+      preserved_votes: tally.preserved_votes,
+      changed_votes: tally.changed_votes,
+      // Two levels, never one. Only full_run_unanimous may drive automation.
+      valid_vote_unanimous: tally.valid_vote_unanimous,
+      full_run_unanimous: tally.full_run_unanimous,
       byte_identical_responses: identicalBytes,
-      majority_label: majority,
+      majority_label: tally.majority_label,
       runs,
     });
 
     console.log(
-      `${probe.id.padEnd(4)} proposed=${probe.gold.label.padEnd(9)} majority=${String(majority).padEnd(9)} votes=${preservedVotes}/${valid.length} ${unanimous ? 'unanimous' : 'SPLIT    '} exact=${results.at(-1).exact_contract_runs}/${runs.length}`,
+      `${probe.id.padEnd(4)} proposed=${probe.gold.label.padEnd(9)} majority=${String(tally.majority_label).padEnd(9)} votes=${tally.preserved_votes}/${tally.valid_runs} ${tally.full_run_unanimous ? 'full-unanimous' : tally.valid_vote_unanimous ? 'valid-unanimous' : 'SPLIT          '} invalid=${tally.invalid_runs} exact=${results.at(-1).exact_contract_runs}/${runs.length}`,
     );
   }
 
