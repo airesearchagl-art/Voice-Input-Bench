@@ -3,6 +3,7 @@ import { AivisSpeechProvider } from '@/tts/AivisSpeechProvider';
 import { LocalRunStore } from '@/storage/LocalRunStore';
 import { LocalResultStore } from '@/storage/LocalResultStore';
 import { LocalSessionStore } from '@/storage/LocalSessionStore';
+import { LocalEvaluationStore } from '@/storage/LocalEvaluationStore';
 
 /**
  * Local-first default: AivisSpeech Engine listens on 10101 out of the box, so
@@ -64,6 +65,21 @@ export function getSessionsDir(env: EnvLike = process.env): string {
 
 export function createSessionStore(): LocalSessionStore {
   return new LocalSessionStore(getSessionsDir());
+}
+
+/**
+ * Evaluations root. A fourth separate tree: an Evaluation is derived from a Run
+ * and a Result and must never be able to write inside either, nor inside the
+ * Session tree. `VIB_EVALUATIONS_DIR` overrides it (tests point it at a temp
+ * directory).
+ */
+export function getEvaluationsDir(env: EnvLike = process.env): string {
+  const raw = env.VIB_EVALUATIONS_DIR?.trim();
+  return raw && raw.length > 0 ? raw : path.join(process.cwd(), 'data', 'evaluations');
+}
+
+export function createEvaluationStore(): LocalEvaluationStore {
+  return new LocalEvaluationStore(getEvaluationsDir());
 }
 
 /**

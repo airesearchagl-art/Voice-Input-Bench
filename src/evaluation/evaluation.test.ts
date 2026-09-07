@@ -1,0 +1,672 @@
+import { createHash } from 'node:crypto';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { LocalRunStore } from '@/storage/LocalRunStore';
+import { LocalResultStore } from '@/storage/LocalResultStore';
+import { LocalSessionStore } from '@/storage/LocalSessionStore';
+import { LocalEvaluationStore, EvaluationStoreError } from '@/storage/LocalEvaluationStore';
+import { StorageBoundaryError } from '@/storage/rootIsolation';
+import { saveManualSttResult } from '@/results/saveResult';
+import { BUILT_IN_TOOL_NAMES } from '@/results/tools';
+import {
+  createRawCharEvaluation,
+  listEvaluationsForRun,
+  loadVerifiedEvaluation,
+  type EvaluationDeps,
+} from './createEvaluation';
+import { computeEvaluationSemanticSha256, type EvaluationPayloadV1 } from './evaluationSchema';
+import { EvaluationSubjectError } from './evaluationSubject';
+import { evaluateRawChar } from './rawChar';
+
+/**
+ * Raw character Evaluation against real Runs and Results on disk.
+ *
+ * The Run tree and the Result tree are written with the same stores Phase 1 and
+ * P2-A use, then read and cited — never modified.
+ */
+
+const RUN_ID = '20260907T030000000Z-aaaaaaaa';
+const OTHER_RUN_ID = '20260907T030001000Z-bbbbbbbb';
+const RESULT_ID = '20260907T040000000Z-cccccccc';
+const RESULT_ID_2 = '20260907T040001000Z-dddddddd';
+const EVALUATION_ID = '20260907T050000000Z-eeeeeeee';
+const EVALUATION_ID_2 = '20260907T050001000Z-ffffffff';
+const NOW = new Date('2026-09-07T05:00:00.000Z');
+
+const SOURCE_TEXT = '基準階の会議室は north side に寄せて、天井高は二千七百ミリを確保してください。';
+const WINDOWS_TRANSCRIPT =
+  '基準階の会議室はノースサイドに寄せて、天井高は2700ミリを確保してください。';
+const AQUA_TRANSCRIPT =
+  '基準階の会議室は north side に寄せて、天井高は二千七百ミリを確保してください。';
+
+const AUDIO = new Uint8Array([0x52, 0x49, 0x46, 0x46, 1, 2, 3, 4, 0x57, 0x41, 0x56, 0x45, 9, 9]);
+const PROVIDER_QUERY = Buffer.from('{"schema_version":1,"segments":[]}\n', 'utf8');
+
+function sha(bytes: Uint8Array | string): string {
+  return createHash('sha256')
+    .update(typeof bytes === 'string' ? Buffer.from(bytes, 'utf8') : bytes)
+    .digest('hex');
+}
+
+function manifestFor(runId: string, testId = 'architecture-short-001'): Record<string, unknown> {
+  return {
+    schema_version: 2,
+    run_id: runId,
+    test_id: testId,
+    generated_at: NOW.toISOString(),
+    source: { file: 'source.txt', encoding: 'utf-8', line_endings: 'lf', sha256: sha(SOURCE_TEXT) },
+    provider: {
+      id: 'aivisspeech',
+      engine_name: 'AivisSpeech',
+      engine_version: '1.1.0-dev',
+      engine_url: 'http://127.0.0.1:10101',
+    },
+    model: { uuid: 'model-1', name: 'まお', version: '1.2.0' },
+    voice: {
+      speaker_uuid: 'speaker-1',
+      speaker_name: 'まお',
+      style_id: 888753760,
+      style_name: 'ノーマル',
+    },
+    settings: { speed_scale: 1, volume_scale: 1, sample_rate: 44100, stereo: false },
+    segmentation: { strategy: 'none', target_max_chars: 450, segment_count: 1 },
+    provider_query: { file: 'provider-query.json', sha256: sha(PROVIDER_QUERY) },
+    audio: {
+      file: 'audio.wav',
+      content_type: 'audio/wav',
+      sha256: sha(AUDIO),
+      bytes: AUDIO.byteLength,
+    },
+    reproducibility: { canonical_artifact: true, bit_exact_regeneration_expected: false },
+  };
+}
+
+let runsRoot: string;
+let resultsRoot: string;
+let sessionsRoot: string;
+let evaluationsRoot: string;
+let runStore: LocalRunStore;
+let resultStore: LocalResultStore;
+let sessionStore: LocalSessionStore;
+let evaluationStore: LocalEvaluationStore;
+
+function deps(overrides: Partial<EvaluationDeps> = {}): EvaluationDeps {
+  return {
+    runStore,
+    resultStore,
+    sessionStore,
+    evaluationStore,
+    now: () => NOW,
+    ...overrides,
+  };
+}
+
+async function writeRun(runId = RUN_ID, testId?: string): Promise<void> {
+  await runStore.saveRun(runId, {
+    sourceText: SOURCE_TEXT,
+    audio: AUDIO,
+    providerQueryJson: PROVIDER_QUERY,
+    manifestJson: Buffer.from(`${JSON.stringify(manifestFor(runId, testId), null, 2)}\n`, 'utf8'),
+  });
+}
+
+async function saveSealedResult(
+  resultId = RESULT_ID,
+  toolId = 'windows-standard-voice-input',
+  rawTranscript = WINDOWS_TRANSCRIPT,
+  runId = RUN_ID,
+) {
+  return saveManualSttResult(
+    { runId, toolId, deliveryPath: 'speaker-to-mic', rawTranscript },
+    { runStore, resultStore, now: () => NOW, resultId },
+  );
+}
+
+/** A P2-A Result, written the way P2-A wrote them: no integrity record. */
+async function saveLegacyV1Result(resultId: string, transcript = WINDOWS_TRANSCRIPT) {
+  const legacy = {
+    schema_version: 1,
+    result_id: resultId,
+    run_id: RUN_ID,
+    captured_at: NOW.toISOString(),
+    tool: {
+      id: 'windows-standard-voice-input',
+      name: BUILT_IN_TOOL_NAMES['windows-standard-voice-input'],
+      version: null,
+    },
+    capture: { method: 'manual-paste', delivery_path: 'speaker-to-mic' },
+    run_evidence: {
+      manifest_schema_version: 2,
+      test_id: 'architecture-short-001',
+      source_sha256: sha(SOURCE_TEXT),
+      audio_sha256: sha(AUDIO),
+    },
+    transcript: {
+      file: 'transcript.txt',
+      encoding: 'utf-8',
+      line_endings: 'lf',
+      sha256: sha(transcript),
+      bytes: Buffer.byteLength(transcript, 'utf8'),
+    },
+  };
+  return resultStore.saveResult(resultId, {
+    transcriptText: transcript,
+    resultJson: Buffer.from(`${JSON.stringify(legacy, null, 2)}\n`, 'utf8'),
+  });
+}
+
+/** Every file under a root with its current hash, for before/after comparison. */
+async function treeFingerprint(root: string): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  const walk = async (dir: string, base: string): Promise<void> => {
+    for (const entry of (await readdir(dir, { withFileTypes: true })).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    )) {
+      const full = path.join(dir, entry.name);
+      const key = base ? `${base}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) await walk(full, key);
+      else out[key] = sha(new Uint8Array(await readFile(full)));
+    }
+  };
+  await walk(root, '').catch(() => {});
+  return out;
+}
+
+async function tempResidue(root: string): Promise<string[]> {
+  const entries = await readdir(root).catch(() => [] as string[]);
+  return entries.filter((entry) => entry.startsWith('.tmp-'));
+}
+
+async function patchEvaluation(
+  evaluationId: string,
+  mutate: (evaluation: Record<string, unknown>) => void,
+  reseal = false,
+) {
+  const file = evaluationStore.resolveEvaluationFile(evaluationId);
+  const evaluation = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+  mutate(evaluation);
+  if (reseal) {
+    delete evaluation.integrity;
+    evaluation.integrity = {
+      algorithm: 'sha256',
+      semantic_sha256: computeEvaluationSemanticSha256(
+        evaluation as unknown as EvaluationPayloadV1,
+      ),
+    };
+  }
+  await writeFile(file, `${JSON.stringify(evaluation, null, 2)}\n`);
+}
+
+beforeEach(async () => {
+  runsRoot = await mkdtemp(path.join(tmpdir(), 'vib-e-runs-'));
+  resultsRoot = await mkdtemp(path.join(tmpdir(), 'vib-e-results-'));
+  sessionsRoot = await mkdtemp(path.join(tmpdir(), 'vib-e-sessions-'));
+  evaluationsRoot = await mkdtemp(path.join(tmpdir(), 'vib-e-evaluations-'));
+  runStore = new LocalRunStore(runsRoot);
+  resultStore = new LocalResultStore(resultsRoot);
+  sessionStore = new LocalSessionStore(sessionsRoot);
+  evaluationStore = new LocalEvaluationStore(evaluationsRoot);
+});
+
+afterEach(async () => {
+  for (const root of [runsRoot, resultsRoot, sessionsRoot, evaluationsRoot]) {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+describe('creating a raw character Evaluation', () => {
+  it('measures a sealed Result against its Run’s canonical text', async () => {
+    await writeRun();
+    await saveSealedResult();
+
+    const outcome = await createRawCharEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationId: EVALUATION_ID }),
+    );
+
+    const expected = evaluateRawChar(SOURCE_TEXT, WINDOWS_TRANSCRIPT);
+    expect(outcome.evaluation).toMatchObject({
+      schema_version: 1,
+      evaluation_id: EVALUATION_ID,
+      algorithm: 'raw-char-v1',
+      run_id: RUN_ID,
+      result_id: RESULT_ID,
+      metrics: expected,
+    });
+    expect(outcome.evaluation.integrity.algorithm).toBe('sha256');
+    expect(outcome.evaluation.integrity.semantic_sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(outcome.referenceText).toBe(SOURCE_TEXT);
+    expect(outcome.hypothesisText).toBe(WINDOWS_TRANSCRIPT);
+  });
+
+  it('resolves the Run and the tool from the Result, not from the caller', async () => {
+    await writeRun();
+    await saveSealedResult(RESULT_ID, 'aqua-voice', AQUA_TRANSCRIPT);
+
+    const outcome = await createRawCharEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationId: EVALUATION_ID }),
+    );
+
+    expect(outcome.evaluation.run_id).toBe(RUN_ID);
+    expect(outcome.evaluation.subject.tool.id).toBe('aqua-voice');
+    expect(outcome.evaluation.subject.tool.name).toBe(BUILT_IN_TOOL_NAMES['aqua-voice']);
+    expect(outcome.evaluation.subject.capture.delivery_path).toBe('speaker-to-mic');
+    expect(outcome.evaluation.run_evidence).toEqual({
+      manifest_schema_version: 2,
+      test_id: 'architecture-short-001',
+      source_sha256: sha(SOURCE_TEXT),
+      audio_sha256: sha(AUDIO),
+    });
+  });
+
+  it('reports an exact transcript as an exact match', async () => {
+    await writeRun();
+    await saveSealedResult(RESULT_ID, 'aqua-voice', SOURCE_TEXT);
+
+    const outcome = await createRawCharEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationId: EVALUATION_ID }),
+    );
+
+    expect(outcome.evaluation.metrics.exact_match).toBe(true);
+    expect(outcome.evaluation.metrics.edit_distance).toBe(0);
+    expect(outcome.evaluation.metrics.cer).toBe(0);
+  });
+
+  it('writes the file as one immutable directory with no temp residue', async () => {
+    await writeRun();
+    await saveSealedResult();
+    await createRawCharEvaluation({ resultId: RESULT_ID }, deps({ evaluationId: EVALUATION_ID }));
+
+    expect(await evaluationStore.listEvaluationIds()).toEqual([EVALUATION_ID]);
+    expect(await readdir(evaluationStore.resolveEvaluationDir(EVALUATION_ID))).toEqual([
+      'evaluation.json',
+    ]);
+    expect(await tempResidue(evaluationsRoot)).toEqual([]);
+  });
+
+  it('never overwrites an Evaluation', async () => {
+    await writeRun();
+    await saveSealedResult();
+    await createRawCharEvaluation({ resultId: RESULT_ID }, deps({ evaluationId: EVALUATION_ID }));
+
+    const error = await createRawCharEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationId: EVALUATION_ID }),
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(EvaluationStoreError);
+    expect((error as EvaluationStoreError).kind).toBe('EVALUATION_ALREADY_EXISTS');
+  });
+
+  it('leaves the Run, Result and Session trees exactly as they were', async () => {
+    await writeRun();
+    await saveSealedResult();
+
+    const before = {
+      runs: await treeFingerprint(runsRoot),
+      results: await treeFingerprint(resultsRoot),
+      sessions: await treeFingerprint(sessionsRoot),
+    };
+
+    await createRawCharEvaluation({ resultId: RESULT_ID }, deps({ evaluationId: EVALUATION_ID }));
+    await listEvaluationsForRun(deps(), RUN_ID);
+    await loadVerifiedEvaluation(deps(), EVALUATION_ID);
+
+    expect(await treeFingerprint(runsRoot)).toEqual(before.runs);
+    expect(await treeFingerprint(resultsRoot)).toEqual(before.results);
+    expect(await treeFingerprint(sessionsRoot)).toEqual(before.sessions);
+  });
+});
+
+describe('only sealed Result v2 is evaluated', () => {
+  it('refuses a legacy v1 Result and writes nothing', async () => {
+    await writeRun();
+    await saveLegacyV1Result(RESULT_ID);
+
+    const error = await createRawCharEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationId: EVALUATION_ID }),
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(EvaluationSubjectError);
+    expect((error as EvaluationSubjectError).kind).toBe('EVALUATION_RESULT_NOT_SEALED');
+    expect(await evaluationStore.listEvaluationIds()).toEqual([]);
+    expect(await tempResidue(evaluationsRoot)).toEqual([]);
+  });
+
+  it('leaves a legacy v1 Result exactly as it was written', async () => {
+    await writeRun();
+    await saveLegacyV1Result(RESULT_ID);
+    const before = await treeFingerprint(resultsRoot);
+
+    await createRawCharEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationId: EVALUATION_ID }),
+    ).catch(() => undefined);
+
+    expect(await treeFingerprint(resultsRoot)).toEqual(before);
+    const stored = JSON.parse(
+      await readFile(resultStore.resolveResultFile(RESULT_ID, 'result.json'), 'utf8'),
+    ) as Record<string, unknown>;
+    expect(stored.schema_version).toBe(1);
+    expect(stored.integrity).toBeUndefined();
+  });
+
+  it('refuses a Result that does not exist', async () => {
+    await writeRun();
+    const error = await createRawCharEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationId: EVALUATION_ID }),
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(EvaluationSubjectError);
+    expect((error as EvaluationSubjectError).kind).toBe('EVALUATION_RESULT_UNREADABLE');
+  });
+
+  it('refuses a malformed result id before it touches a path', async () => {
+    await writeRun();
+    const error = await createRawCharEvaluation(
+      { resultId: '../../etc/passwd' },
+      deps({ evaluationId: EVALUATION_ID }),
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(EvaluationSubjectError);
+    expect((error as EvaluationSubjectError).kind).toBe('EVALUATION_RESULT_UNREADABLE');
+  });
+});
+
+describe('stored Evaluations are re-derived on read', () => {
+  async function seed() {
+    await writeRun();
+    await saveSealedResult();
+    return createRawCharEvaluation({ resultId: RESULT_ID }, deps({ evaluationId: EVALUATION_ID }));
+  }
+
+  async function listOne() {
+    const entries = await listEvaluationsForRun(deps(), RUN_ID);
+    expect(entries).toHaveLength(1);
+    return entries[0]!;
+  }
+
+  it('returns a verified entry for an untouched Evaluation', async () => {
+    await seed();
+    const entry = await listOne();
+    expect(entry.status).toBe('verified');
+    if (entry.status === 'verified') {
+      expect(entry.evaluation.evaluation_id).toBe(EVALUATION_ID);
+      expect(entry.referenceText).toBe(SOURCE_TEXT);
+      expect(entry.hypothesisText).toBe(WINDOWS_TRANSCRIPT);
+    }
+  });
+
+  it('accepts a reformatted evaluation.json with reordered keys', async () => {
+    await seed();
+    const file = evaluationStore.resolveEvaluationFile(EVALUATION_ID);
+    const original = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    const reordered: Record<string, unknown> = {};
+    for (const key of Object.keys(original).reverse()) reordered[key] = original[key];
+    await writeFile(file, JSON.stringify(reordered, null, 4));
+
+    expect((await listOne()).status).toBe('verified');
+  });
+
+  it('rejects an edited CER', async () => {
+    await seed();
+    await patchEvaluation(EVALUATION_ID, (evaluation) => {
+      (evaluation.metrics as Record<string, unknown>).cer = 0;
+    });
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_INTEGRITY_MISMATCH');
+  });
+
+  it('rejects an edited CER even when the Evaluation is re-sealed', async () => {
+    await seed();
+    // Someone who knows the hashing scheme can re-seal. The recomputation is
+    // what stops them: the numbers still have to come out of the actual bytes.
+    await patchEvaluation(
+      EVALUATION_ID,
+      (evaluation) => {
+        const metrics = evaluation.metrics as Record<string, unknown>;
+        metrics.cer = 0;
+        metrics.edit_distance = 0;
+        metrics.substitutions = 0;
+        metrics.deletions = 0;
+        metrics.insertions = 0;
+        metrics.exact_match = true;
+      },
+      true,
+    );
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_METRICS_MISMATCH');
+  });
+
+  it('rejects a re-sealed Evaluation pointed at a different Result', async () => {
+    await seed();
+    await saveSealedResult(RESULT_ID_2, 'aqua-voice', AQUA_TRANSCRIPT);
+    await patchEvaluation(
+      EVALUATION_ID,
+      (evaluation) => {
+        evaluation.result_id = RESULT_ID_2;
+      },
+      true,
+    );
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_SUBJECT_MISMATCH');
+  });
+
+  it('rejects an Evaluation with no readable integrity record', async () => {
+    await seed();
+    await patchEvaluation(EVALUATION_ID, (evaluation) => {
+      delete evaluation.integrity;
+    });
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_INTEGRITY_MISSING');
+  });
+
+  it('rejects an unsupported schema version', async () => {
+    await seed();
+    await patchEvaluation(EVALUATION_ID, (evaluation) => {
+      evaluation.schema_version = 2;
+    });
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_SCHEMA_UNSUPPORTED');
+  });
+
+  it('rejects an algorithm this milestone does not implement', async () => {
+    await seed();
+    await patchEvaluation(
+      EVALUATION_ID,
+      (evaluation) => {
+        evaluation.algorithm = 'normalized-char-v1';
+      },
+      true,
+    );
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') {
+      expect(entry.reason).toBe('EVALUATION_ALGORITHM_UNSUPPORTED');
+    }
+  });
+
+  it('rejects an evaluation_id that does not match its directory', async () => {
+    await seed();
+    await patchEvaluation(
+      EVALUATION_ID,
+      (evaluation) => {
+        evaluation.evaluation_id = EVALUATION_ID_2;
+      },
+      true,
+    );
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_ID_MISMATCH');
+  });
+
+  it('rejects an Evaluation whose transcript changed underneath it', async () => {
+    await seed();
+    await writeFile(
+      resultStore.resolveResultFile(RESULT_ID, 'transcript.txt'),
+      '書き換えられた書き起こし',
+    );
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') {
+      expect(entry.reason).toBe('RESULT_TRANSCRIPT_HASH_MISMATCH');
+    }
+  });
+
+  it('rejects an Evaluation whose Result metadata was edited valid-to-valid', async () => {
+    await seed();
+    const file = resultStore.resolveResultFile(RESULT_ID, 'result.json');
+    const stored = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    const tool = stored.tool as Record<string, unknown>;
+    tool.id = 'aqua-voice';
+    tool.name = BUILT_IN_TOOL_NAMES['aqua-voice'];
+    await writeFile(file, `${JSON.stringify(stored, null, 2)}\n`);
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('RESULT_INTEGRITY_MISMATCH');
+  });
+
+  it('loadVerifiedEvaluation throws rather than returning something partial', async () => {
+    await seed();
+    await patchEvaluation(EVALUATION_ID, (evaluation) => {
+      (evaluation.metrics as Record<string, unknown>).cer = 0;
+    });
+
+    await expect(loadVerifiedEvaluation(deps(), EVALUATION_ID)).rejects.toThrow(
+      /semantic hash と一致しません/,
+    );
+  });
+
+  it('loadVerifiedEvaluation returns both texts for side-by-side reading', async () => {
+    await seed();
+    const verified = await loadVerifiedEvaluation(deps(), EVALUATION_ID);
+    expect(verified.referenceText).toBe(SOURCE_TEXT);
+    expect(verified.hypothesisText).toBe(WINDOWS_TRANSCRIPT);
+    expect(verified.evaluation.evaluation_id).toBe(EVALUATION_ID);
+  });
+});
+
+describe('listing is scoped to one Run', () => {
+  it('lists only Evaluations that name the requested Run', async () => {
+    await writeRun();
+    await writeRun(OTHER_RUN_ID, 'numbers-units-001');
+    await saveSealedResult();
+    await saveSealedResult(RESULT_ID_2, 'aqua-voice', AQUA_TRANSCRIPT, OTHER_RUN_ID);
+
+    await createRawCharEvaluation({ resultId: RESULT_ID }, deps({ evaluationId: EVALUATION_ID }));
+    await createRawCharEvaluation(
+      { resultId: RESULT_ID_2 },
+      deps({ evaluationId: EVALUATION_ID_2 }),
+    );
+
+    const forRun = await listEvaluationsForRun(deps(), RUN_ID);
+    expect(forRun.map((entry) => entry.evaluationId)).toEqual([EVALUATION_ID]);
+
+    const forOther = await listEvaluationsForRun(deps(), OTHER_RUN_ID);
+    expect(forOther.map((entry) => entry.evaluationId)).toEqual([EVALUATION_ID_2]);
+  });
+
+  it('fails closed when the Run itself no longer verifies', async () => {
+    await writeRun();
+    await saveSealedResult();
+    await createRawCharEvaluation({ resultId: RESULT_ID }, deps({ evaluationId: EVALUATION_ID }));
+
+    await writeFile(runStore.resolveRunFile(RUN_ID, 'source.txt'), '書き換えられた原文');
+
+    await expect(listEvaluationsForRun(deps(), RUN_ID)).rejects.toThrow();
+  });
+
+  it('returns an empty list for a Run with no Evaluations', async () => {
+    await writeRun();
+    expect(await listEvaluationsForRun(deps(), RUN_ID)).toEqual([]);
+  });
+});
+
+describe('four-root isolation', () => {
+  async function expectViolation(promise: Promise<unknown>) {
+    const error = await promise.catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(StorageBoundaryError);
+    expect((error as StorageBoundaryError).kind).toBe('ROOT_ISOLATION_VIOLATED');
+  }
+
+  const NESTED_CASES: Array<[string, () => EvaluationDeps]> = [
+    [
+      'evaluations inside runs',
+      () => deps({ evaluationStore: new LocalEvaluationStore(path.join(runsRoot, 'nested')) }),
+    ],
+    [
+      'evaluations inside results',
+      () => deps({ evaluationStore: new LocalEvaluationStore(path.join(resultsRoot, 'nested')) }),
+    ],
+    [
+      'evaluations inside sessions',
+      () => deps({ evaluationStore: new LocalEvaluationStore(path.join(sessionsRoot, 'nested')) }),
+    ],
+    [
+      'evaluations equal to runs',
+      () => deps({ evaluationStore: new LocalEvaluationStore(runsRoot) }),
+    ],
+    [
+      'runs inside evaluations',
+      () => deps({ runStore: new LocalRunStore(path.join(evaluationsRoot, 'nested')) }),
+    ],
+    [
+      'results inside evaluations',
+      () => deps({ resultStore: new LocalResultStore(path.join(evaluationsRoot, 'nested')) }),
+    ],
+    [
+      'sessions inside evaluations',
+      () => deps({ sessionStore: new LocalSessionStore(path.join(evaluationsRoot, 'nested')) }),
+    ],
+  ];
+
+  for (const [label, build] of NESTED_CASES) {
+    it(`refuses ${label} on the write path`, async () => {
+      await writeRun();
+      await saveSealedResult();
+      await expectViolation(
+        createRawCharEvaluation({ resultId: RESULT_ID }, { ...build(), evaluationId: EVALUATION_ID }),
+      );
+    });
+  }
+
+  it('refuses the same violation on the read path', async () => {
+    await writeRun();
+    await expectViolation(
+      listEvaluationsForRun(
+        deps({ evaluationStore: new LocalEvaluationStore(path.join(runsRoot, 'nested')) }),
+        RUN_ID,
+      ),
+    );
+  });
+
+  it('accepts four sibling roots', async () => {
+    await writeRun();
+    await saveSealedResult();
+    const outcome = await createRawCharEvaluation(
+      { resultId: RESULT_ID },
+      deps({ evaluationId: EVALUATION_ID }),
+    );
+    expect(outcome.evaluationId).toBe(EVALUATION_ID);
+  });
+});

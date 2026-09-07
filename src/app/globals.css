@@ -391,3 +391,37 @@ td.coverage.rejected-only {
   font-size: 11px;
   color: var(--warn);
 }
+
+.raw-eval {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.raw-eval h4 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.raw-eval-card {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.raw-eval-texts {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+@media (min-width: 900px) {
+  .raw-eval-texts {
+    grid-template-columns: 1fr 1fr;
+  }
+}

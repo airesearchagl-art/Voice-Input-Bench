@@ -7,6 +7,9 @@ data/results/
 # Benchmark sessions (experiment plans recorded locally, never committed)
 data/sessions/
 
+# Raw character evaluations (measurements recorded locally, never committed)
+data/evaluations/
+
 # Environment
 .env
 .env.local

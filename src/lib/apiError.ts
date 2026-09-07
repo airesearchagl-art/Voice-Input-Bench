@@ -28,6 +28,19 @@ import {
   SessionVerificationError,
   type SessionVerificationErrorKind,
 } from '@/sessions/verifyStoredSession';
+import {
+  EvaluationStoreError,
+  type EvaluationStoreErrorKind,
+} from '@/storage/LocalEvaluationStore';
+import {
+  EvaluationSubjectError,
+  type EvaluationSubjectErrorKind,
+} from '@/evaluation/evaluationSubject';
+import {
+  EvaluationVerificationError,
+  type EvaluationVerificationErrorKind,
+} from '@/evaluation/verifyStoredEvaluation';
+import { RawCharError, type RawCharErrorKind } from '@/evaluation/rawChar';
 
 /**
  * HTTP status per error cause.
@@ -80,6 +93,24 @@ const STATUS_BY_SESSION_STORE_KIND: Record<SessionStoreErrorKind, number> = {
   SESSION_NOT_FOUND: 404,
   SESSION_WRITE_FAILED: 500,
   SESSION_UNREADABLE: 500,
+};
+
+const STATUS_BY_EVALUATION_STORE_KIND: Record<EvaluationStoreErrorKind, number> = {
+  EVALUATION_ALREADY_EXISTS: 409,
+  INVALID_EVALUATION_ID: 400,
+  EVALUATION_PATH_ESCAPES_ROOT: 400,
+  EVALUATION_NOT_FOUND: 404,
+  EVALUATION_WRITE_FAILED: 500,
+  EVALUATION_UNREADABLE: 500,
+};
+
+const STATUS_BY_EVALUATION_SUBJECT_KIND: Record<EvaluationSubjectErrorKind, number> = {
+  EVALUATION_RESULT_UNREADABLE: 404,
+  // Not a server fault and not malformed input: the Result exists and is
+  // readable, it just is not something raw-char-v1 will measure.
+  EVALUATION_RESULT_NOT_SEALED: 409,
+  EVALUATION_SOURCE_UNREADABLE: 409,
+  EVALUATION_SOURCE_HASH_MISMATCH: 409,
 };
 
 const STATUS_BY_RESULT_STORE_KIND: Record<ResultStoreErrorKind, number> = {
@@ -135,6 +166,10 @@ export interface ApiErrorBody {
       | SessionVerificationErrorKind
       | ToolResolutionErrorKind
       | SaveResultErrorKind
+      | EvaluationStoreErrorKind
+      | EvaluationSubjectErrorKind
+      | EvaluationVerificationErrorKind
+      | RawCharErrorKind
       | 'BAD_REQUEST'
       | 'UNEXPECTED';
     message: string;
@@ -220,6 +255,47 @@ export function toErrorResponse(caught: unknown): NextResponse<ApiErrorBody> {
         error: { kind: caught.kind, message: caught.message, detail: caught.detail },
       } as const,
       { status: 409 },
+    );
+  }
+
+  if (caught instanceof EvaluationVerificationError) {
+    // The stored Evaluation no longer reproduces from its own inputs. Not a
+    // server fault, and not a number to display.
+    return NextResponse.json(
+      {
+        ok: false,
+        error: { kind: caught.kind, message: caught.message, detail: caught.detail },
+      } as const,
+      { status: 409 },
+    );
+  }
+
+  if (caught instanceof EvaluationSubjectError) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: { kind: caught.kind, message: caught.message, detail: caught.detail },
+      } as const,
+      { status: STATUS_BY_EVALUATION_SUBJECT_KIND[caught.kind] },
+    );
+  }
+
+  if (caught instanceof EvaluationStoreError) {
+    return NextResponse.json(
+      { ok: false, error: { kind: caught.kind, message: caught.message } } as const,
+      { status: STATUS_BY_EVALUATION_STORE_KIND[caught.kind] },
+    );
+  }
+
+  if (caught instanceof RawCharError) {
+    // A property of the texts themselves — an empty reference has no CER —
+    // rather than a failed request.
+    return NextResponse.json(
+      {
+        ok: false,
+        error: { kind: caught.kind, message: caught.message, detail: caught.detail },
+      } as const,
+      { status: 422 },
     );
   }
 

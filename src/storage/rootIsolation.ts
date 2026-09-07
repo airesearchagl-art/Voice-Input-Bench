@@ -10,8 +10,8 @@ import path from 'node:path';
  *
  * The inverse nesting is refused for the same reason from the other side: a
  * runs root inside the results root means generating a Run writes into the
- * Result tree. The Session tree joins the same rule: every pair of roots must
- * be disjoint, in both directions.
+ * Result tree. The Session and Evaluation trees join the same rule: every pair
+ * of roots must be disjoint, in both directions.
  *
  * This is a configuration error, not a request error, so it is checked before
  * any write rather than reported per-request after the fact.
@@ -85,18 +85,26 @@ export function assertRootIsolation(runsRoot: string, resultsRoot: string): void
   );
 }
 
-/** The three artifact trees the app writes to. */
+/**
+ * The artifact trees the app writes to.
+ *
+ * `evaluations` is optional only because the Session flow has no evaluation
+ * store to hand: it cannot write there, so it has nothing to check. Every
+ * caller that reads or writes an Evaluation passes all four, which is where the
+ * fourth root could actually do damage.
+ */
 export interface StorageRoots {
   runs: string;
   results: string;
   sessions: string;
+  evaluations?: string;
 }
 
 /**
- * Refuse a configuration where any two of the three roots share a tree.
+ * Refuse a configuration where any two roots share a tree.
  *
- * Checked pairwise in both directions, so a Session root inside `data/runs/`
- * fails just as a runs root inside `data/sessions/` does.
+ * Checked pairwise in both directions, so an Evaluation root inside
+ * `data/runs/` fails just as a runs root inside `data/evaluations/` does.
  */
 export function assertStorageRootsIsolated(roots: StorageRoots): void {
   const named: NamedRoot[] = [
@@ -104,6 +112,9 @@ export function assertStorageRootsIsolated(roots: StorageRoots): void {
     { label: 'results', dir: path.resolve(roots.results) },
     { label: 'sessions', dir: path.resolve(roots.sessions) },
   ];
+  if (roots.evaluations !== undefined) {
+    named.push({ label: 'evaluations', dir: path.resolve(roots.evaluations) });
+  }
 
   for (let i = 0; i < named.length; i += 1) {
     for (let j = i + 1; j < named.length; j += 1) {
