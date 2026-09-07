@@ -10,7 +10,8 @@ import path from 'node:path';
  *
  * The inverse nesting is refused for the same reason from the other side: a
  * runs root inside the results root means generating a Run writes into the
- * Result tree.
+ * Result tree. The Session tree joins the same rule: every pair of roots must
+ * be disjoint, in both directions.
  *
  * This is a configuration error, not a request error, so it is checked before
  * any write rather than reported per-request after the fact.
@@ -40,35 +41,73 @@ export function isSameOrInside(inner: string, outer: string): boolean {
   return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
 }
 
+/** One named storage root. */
+interface NamedRoot {
+  label: string;
+  dir: string;
+}
+
+/** Refuse one pair of roots that are the same tree, or nested either way. */
+function assertPairIsolated(a: NamedRoot, b: NamedRoot): void {
+  const detail = `${a.label}=${a.dir} ${b.label}=${b.dir}`;
+
+  if (a.dir === b.dir) {
+    throw new StorageBoundaryError(
+      'ROOT_ISOLATION_VIOLATED',
+      `${a.label} root と ${b.label} root が同じディレクトリです。別々の tree でなければなりません。`,
+      detail,
+    );
+  }
+  if (isSameOrInside(b.dir, a.dir)) {
+    throw new StorageBoundaryError(
+      'ROOT_ISOLATION_VIOLATED',
+      `${b.label} root が ${a.label} root の内側にあります。別々の tree でなければなりません。`,
+      detail,
+    );
+  }
+  if (isSameOrInside(a.dir, b.dir)) {
+    throw new StorageBoundaryError(
+      'ROOT_ISOLATION_VIOLATED',
+      `${a.label} root が ${b.label} root の内側にあります。別々の tree でなければなりません。`,
+      detail,
+    );
+  }
+}
+
 /**
  * Refuse a configuration where the two roots are the same tree, or one contains
  * the other. Throws before anything is written.
  */
 export function assertRootIsolation(runsRoot: string, resultsRoot: string): void {
-  const runs = path.resolve(runsRoot);
-  const results = path.resolve(resultsRoot);
+  assertPairIsolated(
+    { label: 'runs', dir: path.resolve(runsRoot) },
+    { label: 'results', dir: path.resolve(resultsRoot) },
+  );
+}
 
-  if (runs === results) {
-    throw new StorageBoundaryError(
-      'ROOT_ISOLATION_VIOLATED',
-      'runs root と results root が同じディレクトリです。Result は Run tree の中に置けません。',
-      `runs=${runs} results=${results}`,
-    );
-  }
+/** The three artifact trees the app writes to. */
+export interface StorageRoots {
+  runs: string;
+  results: string;
+  sessions: string;
+}
 
-  if (isSameOrInside(results, runs)) {
-    throw new StorageBoundaryError(
-      'ROOT_ISOLATION_VIOLATED',
-      'results root が runs root の内側にあります。Result は Run tree の中に置けません。',
-      `runs=${runs} results=${results}`,
-    );
-  }
+/**
+ * Refuse a configuration where any two of the three roots share a tree.
+ *
+ * Checked pairwise in both directions, so a Session root inside `data/runs/`
+ * fails just as a runs root inside `data/sessions/` does.
+ */
+export function assertStorageRootsIsolated(roots: StorageRoots): void {
+  const named: NamedRoot[] = [
+    { label: 'runs', dir: path.resolve(roots.runs) },
+    { label: 'results', dir: path.resolve(roots.results) },
+    { label: 'sessions', dir: path.resolve(roots.sessions) },
+  ];
 
-  if (isSameOrInside(runs, results)) {
-    throw new StorageBoundaryError(
-      'ROOT_ISOLATION_VIOLATED',
-      'runs root が results root の内側にあります。Run は Result tree の中に置けません。',
-      `runs=${runs} results=${results}`,
-    );
+  for (let i = 0; i < named.length; i += 1) {
+    for (let j = i + 1; j < named.length; j += 1) {
+      assertPairIsolated(named[i]!, named[j]!);
+    }
   }
 }

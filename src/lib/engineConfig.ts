@@ -2,6 +2,7 @@ import path from 'node:path';
 import { AivisSpeechProvider } from '@/tts/AivisSpeechProvider';
 import { LocalRunStore } from '@/storage/LocalRunStore';
 import { LocalResultStore } from '@/storage/LocalResultStore';
+import { LocalSessionStore } from '@/storage/LocalSessionStore';
 
 /**
  * Local-first default: AivisSpeech Engine listens on 10101 out of the box, so
@@ -49,6 +50,20 @@ export function getResultsDir(env: EnvLike = process.env): string {
 
 export function createResultStore(): LocalResultStore {
   return new LocalResultStore(getResultsDir());
+}
+
+/**
+ * Sessions root. A third separate tree: a Benchmark Session references Runs and
+ * Results by ID and must never be able to write inside either of them.
+ * `VIB_SESSIONS_DIR` overrides it (tests point it at a temp directory).
+ */
+export function getSessionsDir(env: EnvLike = process.env): string {
+  const raw = env.VIB_SESSIONS_DIR?.trim();
+  return raw && raw.length > 0 ? raw : path.join(process.cwd(), 'data', 'sessions');
+}
+
+export function createSessionStore(): LocalSessionStore {
+  return new LocalSessionStore(getSessionsDir());
 }
 
 /**

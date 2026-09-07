@@ -4,6 +4,9 @@ data/runs/
 # Manual STT results (observations recorded locally, never committed)
 data/results/
 
+# Benchmark sessions (experiment plans recorded locally, never committed)
+data/sessions/
+
 # Environment
 .env
 .env.local

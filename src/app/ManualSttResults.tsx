@@ -1,9 +1,17 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RunCatalogEntry } from '@/results/runEvidence';
-import type { ResultV1 } from '@/results/resultSchema';
+import type { IntegrityTrust, StoredResult } from '@/results/resultSchema';
 import { DELIVERY_PATHS, STT_TOOL_IDS, type DeliveryPath, type SttToolId } from '@/results/tools';
+import {
+  applyFailed,
+  applyLoaded,
+  idleSelection,
+  isStillSelected,
+  selectTarget,
+  type SelectionLoadState,
+} from '@/lib/selectionLoad';
 
 /**
  * Manual STT Results.
@@ -21,8 +29,21 @@ interface ApiErrorShape {
 }
 
 type ResultEntry =
-  | { status: 'verified'; resultId: string; result: ResultV1; transcript: string }
-  | { status: 'rejected'; resultId: string; reason: string; message: string; detail?: string };
+  | {
+      status: 'verified';
+      resultId: string;
+      result: StoredResult;
+      transcript: string;
+      integrityTrust: IntegrityTrust;
+    }
+  | {
+      status: 'rejected';
+      resultId: string;
+      reason: string;
+      message: string;
+      detail?: string;
+      integrityTrust?: IntegrityTrust;
+    };
 
 const DELIVERY_PATH_LABELS: Record<DeliveryPath, string> = {
   'speaker-to-mic': 'スピーカー → マイク（実音響）',
@@ -67,13 +88,25 @@ function ErrorBox({ title, error }: { title: string; error: ApiErrorShape }) {
   );
 }
 
+type ResultsState = SelectionLoadState<ResultEntry[], ApiErrorShape>;
+
 export default function ManualSttResults({ latestRunId }: { latestRunId: string | null }) {
   const [runs, setRuns] = useState<RunCatalogEntry[]>([]);
   const [runsError, setRunsError] = useState<ApiErrorShape | null>(null);
-  const [selectedRunId, setSelectedRunId] = useState<string>('');
 
-  const [results, setResults] = useState<ResultEntry[]>([]);
-  const [resultsError, setResultsError] = useState<ApiErrorShape | null>(null);
+  /**
+   * The selected Run and its Results, as one piece of state.
+   *
+   * Keeping them together is the point: a Result list is only meaningful next
+   * to the Run it was read for, so the two can never drift apart while a fetch
+   * is in flight.
+   */
+  const [results, setResults] = useState<ResultsState>(() =>
+    idleSelection<ResultEntry[], ApiErrorShape>(),
+  );
+  /** Mirrors `results` for the synchronous reads that mint a new generation. */
+  const resultsRef = useRef<ResultsState>(results);
+  const inFlight = useRef<AbortController | null>(null);
 
   const [toolId, setToolId] = useState<SttToolId>('windows-standard-voice-input');
   const [customToolName, setCustomToolName] = useState('');
@@ -82,7 +115,8 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
   const [rawTranscript, setRawTranscript] = useState('');
 
   const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<ApiErrorShape | null>(null);
+  /** Carries the Run it belongs to, so a late failure is never read as another Run's. */
+  const [saveError, setSaveError] = useState<{ runId: string; error: ApiErrorShape } | null>(null);
 
   const loadRuns = useCallback(async () => {
     // Clear first: a failed reload must not leave a stale Run list that the
@@ -105,26 +139,59 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
     }
   }, []);
 
-  const loadResults = useCallback(async (runId: string) => {
-    setResultsError(null);
-    setResults([]);
-    if (!runId) return;
-    try {
-      const response = await fetch(`/api/results?runId=${encodeURIComponent(runId)}`, {
-        cache: 'no-store',
-      });
-      if (!response.ok) {
-        setResultsError(await readApiError(response));
-        return;
+  /**
+   * Select a Run and load its Results, or clear the selection with `''`.
+   *
+   * Switching Runs mints a new generation and drops the old view immediately.
+   * The in-flight request is aborted, and if its response arrives anyway —
+   * abort is a request to stop, not a guarantee — it carries the old generation
+   * and `applyLoaded` / `applyFailed` refuse it. Without that, Run A's
+   * transcripts could land on screen under Run B's name and audio hash, which
+   * is exactly the misattribution this whole page exists to avoid.
+   *
+   * Re-selecting the same Run is a reload: same guard, new generation.
+   */
+  const selectRun = useCallback((runId: string) => {
+    inFlight.current?.abort();
+    const controller = new AbortController();
+    inFlight.current = controller;
+
+    const next = selectTarget(resultsRef.current, runId === '' ? null : runId);
+    resultsRef.current = next;
+    setResults(next);
+    // The save form belongs to the Run that is on screen.
+    setSaveError(null);
+
+    const { requestId, selected } = next;
+    if (selected === null) return;
+
+    void (async () => {
+      try {
+        const response = await fetch(`/api/results?runId=${encodeURIComponent(selected)}`, {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          const error = await readApiError(response);
+          setResults((state) => applyFailed(state, { requestId, selected, error }));
+          return;
+        }
+        const body = (await response.json()) as { results: ResultEntry[] };
+        setResults((state) => applyLoaded(state, { requestId, selected, value: body.results }));
+      } catch (caught) {
+        if (caught instanceof DOMException && caught.name === 'AbortError') return;
+        setResults((state) =>
+          applyFailed(state, {
+            requestId,
+            selected,
+            error: {
+              kind: 'UNEXPECTED',
+              message: caught instanceof Error ? caught.message : String(caught),
+            },
+          }),
+        );
       }
-      const body = (await response.json()) as { results: ResultEntry[] };
-      setResults(body.results);
-    } catch (caught) {
-      setResultsError({
-        kind: 'UNEXPECTED',
-        message: caught instanceof Error ? caught.message : String(caught),
-      });
-    }
+    })();
   }, []);
 
   useEffect(() => {
@@ -133,16 +200,16 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
 
   // A newly generated Run is the one the operator is about to test.
   useEffect(() => {
-    if (latestRunId && runs.some((entry) => entry.runId === latestRunId)) {
-      setSelectedRunId(latestRunId);
-    }
-  }, [latestRunId, runs]);
+    if (!latestRunId) return;
+    if (resultsRef.current.selected === latestRunId) return;
+    if (!runs.some((entry) => entry.runId === latestRunId)) return;
+    selectRun(latestRunId);
+  }, [latestRunId, runs, selectRun]);
 
-  useEffect(() => {
-    void loadResults(selectedRunId);
-  }, [loadResults, selectedRunId]);
-
+  const selectedRunId = results.selected ?? '';
   const selectedRun = runs.find((entry) => entry.runId === selectedRunId);
+  const resultEntries = results.value ?? [];
+  const resultsError = results.status === 'failed' ? results.error : null;
   // Matches the server: whitespace-only is a real observation, an empty box is
   // not. Trimming here would refuse to record "the tool returned only spaces".
   const canSave =
@@ -153,6 +220,7 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
 
   const save = useCallback(async () => {
     if (!selectedRun) return;
+    const runId = selectedRun.runId;
     setSaving(true);
     setSaveError(null);
     try {
@@ -160,7 +228,7 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          runId: selectedRun.runId,
+          runId,
           toolId,
           customToolName: toolId === 'other' ? customToolName : null,
           toolVersion,
@@ -169,20 +237,29 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
         }),
       });
       if (!response.ok) {
-        setSaveError(await readApiError(response));
+        setSaveError({ runId, error: await readApiError(response) });
         return;
       }
+      // The Result is written. Everything after this point is about what the
+      // operator is looking at now, which may no longer be the Run that was
+      // saved — a POST can outlive the selection that started it. Reloading
+      // regardless would replace the current Run's Results with this one's, and
+      // clearing the box would throw away a transcript typed for another Run.
+      if (!isStillSelected(resultsRef.current, runId)) return;
       setRawTranscript('');
-      await loadResults(selectedRun.runId);
+      selectRun(runId);
     } catch (caught) {
       setSaveError({
-        kind: 'UNEXPECTED',
-        message: caught instanceof Error ? caught.message : String(caught),
+        runId,
+        error: {
+          kind: 'UNEXPECTED',
+          message: caught instanceof Error ? caught.message : String(caught),
+        },
       });
     } finally {
       setSaving(false);
     }
-  }, [customToolName, deliveryPath, loadResults, rawTranscript, selectedRun, toolId, toolVersion]);
+  }, [customToolName, deliveryPath, rawTranscript, selectRun, selectedRun, toolId, toolVersion]);
 
   return (
     <section className="panel">
@@ -201,7 +278,7 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
         <select
           id="resultRun"
           value={selectedRunId}
-          onChange={(event) => setSelectedRunId(event.target.value)}
+          onChange={(event) => selectRun(event.target.value)}
           disabled={runs.length === 0}
         >
           <option value="">
@@ -317,26 +394,40 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
           {saveError && (
             <>
               <div style={{ height: 12 }} />
-              <ErrorBox title="Save Result" error={saveError} />
+              <ErrorBox
+                title={
+                  saveError.runId === selectedRunId
+                    ? 'Save Result'
+                    : `Save Result（${saveError.runId}）`
+                }
+                error={saveError.error}
+              />
             </>
           )}
         </>
       )}
 
       <div style={{ height: 20 }} />
-      <h2>Saved Results{selectedRun ? `（${results.length} 件）` : ''}</h2>
+      <h2>
+        Saved Results
+        {selectedRun && results.status === 'loaded' ? `（${resultEntries.length} 件）` : ''}
+      </h2>
 
       {resultsError && <ErrorBox title="Results" error={resultsError} />}
 
-      {!selectedRun && <p className="fixed-note">Run を選択すると Result が表示されます。</p>}
+      {results.status === 'idle' && (
+        <p className="fixed-note">Run を選択すると Result が表示されます。</p>
+      )}
 
-      {selectedRun && results.length === 0 && !resultsError && (
+      {results.status === 'loading' && <p className="fixed-note">読み込み中…</p>}
+
+      {results.status === 'loaded' && resultEntries.length === 0 && (
         <p className="fixed-note">この Run にはまだ Result がありません。</p>
       )}
 
-      {results.length > 0 && (
+      {resultEntries.length > 0 && (
         <div className="transcripts">
-          {results.map((entry) =>
+          {resultEntries.map((entry) =>
             entry.status === 'verified' ? (
               <article key={entry.resultId} className="transcript-card">
                 <h3>{entry.result.tool.name}</h3>
@@ -356,6 +447,12 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
                   <dd>{entry.result.transcript.sha256}</dd>
                   <dt>Audio SHA-256</dt>
                   <dd>{entry.result.run_evidence.audio_sha256}</dd>
+                  <dt>Integrity</dt>
+                  <dd>
+                    {entry.integrityTrust === 'sealed'
+                      ? `sealed (schema v${entry.result.schema_version})`
+                      : `未署名 / legacy (schema v${entry.result.schema_version})`}
+                  </dd>
                 </dl>
                 <pre className="transcript">{entry.transcript}</pre>
               </article>
