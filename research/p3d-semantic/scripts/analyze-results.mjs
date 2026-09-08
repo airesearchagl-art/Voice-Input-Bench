@@ -45,6 +45,7 @@ import { goldStatus } from './lib/goldStatus.mjs';
 import {
   HYBRIDS,
   HYBRID_RULE_DESCRIPTIONS,
+  THRESHOLD_INDEPENDENT_RULES,
   confusion,
   hardNegativeMetrics,
   scoreHybrid,
@@ -73,6 +74,8 @@ const summary = {
   ranking_metric:
     'false_preserved (lower is better). Accuracy is reported and is not the basis of any recommendation.',
   metric_definitions: {
+    accuracy:
+      'correct decisions over decisions made. What it is worth depends on whether the corpus is human-reviewed; that standing is recorded once in gold_status, not in this field name.',
     hard_negative_auto_changed_recall:
       'hard negatives the method decided were changed, without a human, over EVERY hard negative in the corpus. Review does not count. This is detection.',
     hard_negative_non_preserved_coverage:
@@ -306,6 +309,14 @@ if (summary.embedding.status === 'OK' && summary.llm_rubric.raw.status === 'OK')
     status: 'OK',
     rules: HYBRID_RULE_DESCRIPTIONS,
     unanimity_used_for_automation: 'full_run_unanimous',
+    threshold_independent_rules: THRESHOLD_INDEPENDENT_RULES,
+    adoption_axes: {
+      axis_1_automatic_preserved:
+        'May the bench emit preserved without a person? yes -> H1. no -> H3 or H4.',
+      axis_2_critical_mismatch:
+        'What does a critical-information mismatch mean on its own? decisive -> H3 (and H1). needs a person -> H4 (and H2).',
+      note: 'The two axes are independent. H3 and H4 differ only on axis 2, which is what makes the cost of each critical policy readable on its own.',
+    },
     variants: hybrid,
   };
 } else {
@@ -335,7 +346,7 @@ for (const [variant, data] of Object.entries(summary.llm_rubric)) {
     continue;
   }
   console.log(
-    `llm ${variant.padEnd(8)} acc=${data.provisional_accuracy} FP=${data.false_preserved}${JSON.stringify(data.false_preserved_ids)} FC=${data.false_changed} autoChangedRecall=${data.hard_negative_auto_changed_recall} validVoteUnanimous=${data.valid_vote_unanimous_rate} fullRunUnanimous=${data.full_run_unanimous_rate} schemaValid=${data.parseable_schema_valid_rate} exactContract=${data.exact_output_contract_rate}`,
+    `llm ${variant.padEnd(8)} acc=${data.accuracy} FP=${data.false_preserved}${JSON.stringify(data.false_preserved_ids)} FC=${data.false_changed} autoChangedRecall=${data.hard_negative_auto_changed_recall} validVoteUnanimous=${data.valid_vote_unanimous_rate} fullRunUnanimous=${data.full_run_unanimous_rate} schemaValid=${data.parseable_schema_valid_rate} exactContract=${data.exact_output_contract_rate}`,
   );
 }
 

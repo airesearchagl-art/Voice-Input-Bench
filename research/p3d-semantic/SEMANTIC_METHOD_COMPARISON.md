@@ -113,10 +113,9 @@ Same model, same prompt, same parameters, 3 runs per pair, 84 runs each.
 | full-run unanimous | **100.0%** (28/28) | **100.0%** (28/28) |
 | pairs with an unparseable reply | **0** | **0** |
 | valid votes that disagreed | 0 | 0 |
-| byte-identical replies across runs | 82.1% | 64.3% |
 | `parseable_schema_valid` | **100.0%** | **100.0%** |
 | `exact_output_contract_valid` | **96.4%** | 86.9% |
-| byte-identical replies across runs | 89.3% | 64.3% |
+| byte-identical replies across runs | 89.3% (25/28) | 64.3% (18/28) |
 | latency per request (median) | 586 ms | 600 ms |
 
 **The invalid-run rate is not stable between runs, and that is itself a result.**
@@ -196,6 +195,13 @@ and surface/surface so a variant is compared against itself.
 | **H1** | critical veto; else **any invalid run or split vote → review**; else full-run-unanimous rubric `changed` → `changed`; else embedding conflict → review; else `preserved` |
 | **H2** | as H1, but a critical mismatch **routes to review** instead of vetoing |
 | **H3** | critical veto → `changed`; else full-run-unanimous rubric `changed` → `changed`; **everything else → review** |
+| **H4** | **H3 with the critical veto demoted to a review trigger, and nothing else changed.** critical mismatch → review; else full-run-unanimous rubric `changed` → `changed`; everything else → review |
+
+H3 and H4 read no embedding at all, so their figures are **threshold-independent**
+— the three columns of 0.85 / 0.90 / 0.95 produce one answer, and a test asserts
+it. They exist as a pair because **H3 and H4 differ in exactly one step**: what a
+critical-information mismatch means on its own. Measuring them apart is what makes
+that policy's cost readable instead of bundled with the auto-preserved policy.
 
 H1, H2 and H3 all place the missing-evidence check **before** they read the
 rubric's label. That ordering is the point: an invalid run is not a quieter
@@ -210,6 +216,7 @@ computed from the two texts, not from the model — decides ahead of it.
 | H1 @ 0.90 | 1 | 7 | 21 | 4 | 10.7% | 89.3% | 92.3% (12/13) | 92.3% |
 | H2 @ 0.90 | 1 | 6 | 13 | 4 | 39.3% | 60.7% | 46.2% (6/13) | 92.3% |
 | **H3 @ any** | **0** | 7 | 21 | **0** | 25.0% | 75.0% | 92.3% (12/13) | **100.0%** |
+| **H4 @ any** | **0** | **6** | 13 | **0** | 53.6% | 46.4% | 46.2% (6/13) | **100.0%** |
 
 H1 and H3 recover the coverage they lost in R1.1 — 89.3% and 75.0% — because this
 run has no unparseable replies to route away. **The rule did not change; the run
@@ -224,8 +231,9 @@ the behaviour that was wanted.
 | **H1 @ 0.90** | **0** | 7 | 22 | 4 | **7.1%** | **92.9%** | **100.0%** (13/13) | 100.0% |
 | H2 @ 0.90 | **0** | 6 | 14 | 4 | 35.7% | 64.3% | 53.8% (7/13) | 100.0% |
 | **H3 @ any** | **0** | 7 | 22 | **0** | 21.4% | 78.6% | **100.0%** (13/13) | 100.0% |
+| **H4 @ any** | **0** | **6** | 14 | **0** | 50.0% | 50.0% | 53.8% (7/13) | 100.0% |
 
-Both surface tables are **identical to R1.1's**, to the pair. Surface input had no
+Both surface tables are **identical to R1.1's** for H0–H3, to the pair. Surface input had no
 invalid runs in either acquisition, so nothing the corrections touched applied to
 it — and the human review changed no label, so nothing it could have moved moved.
 Two independent acquisitions agreeing exactly is the strongest repeatability
@@ -281,15 +289,43 @@ denominator the trade is not close.
 
 **The human review settles the one thing that could have reversed this.** p12's
 proposed `preserved` was on the list of labels most worth a second opinion — if a
-reviewer had called it `changed`, the critical guard would have been right and H2
-would have been buying nothing at all. The review kept `preserved`, so the veto
-genuinely does cost one false changed, and it is still the better trade by a wide
-margin.
+reviewer had called it `changed`, the critical guard would have been right and the
+demotion would have been buying nothing at all. The review kept `preserved`.
 
-Keep the veto, and record p12's shape as a known limitation: a correctly handled
-self-correction is auto-flagged `changed` because the retracted value is a real
-entity in the reference. That is a **confirmed** limitation now, not a suspected
-one.
+That makes p12 a **deterministic false changed** under any rule that keeps the
+veto. No model is involved and no threshold moves it: the reference names both the
+retracted and the corrected value, the hypothesis names one, the entity multiset
+does not match, and the pair is flagged. **A correctly handled self-correction is
+auto-flagged `changed`, always.** That is a confirmed limitation now, not a
+suspected one.
+
+#### H3 vs H4 — the critical policy on its own
+
+H2 measured the demotion while also carrying H1's auto-preserve behaviour, so its
+cost was never separable. **H4 is H3 with only that one step changed**, which
+isolates it. Surface input:
+
+| | H3 (hard veto) | H4 (review trigger) |
+| --- | --- | --- |
+| false preserved | 0 | 0 |
+| **false changed** | 7 | **6** — p12 no longer auto-flagged |
+| auto changed | 22 | 14 |
+| auto preserved | **0** | **0** |
+| review rate | **21.4%** | 50.0% |
+| automatic coverage | **78.6%** | 50.0% |
+| hard-negative auto-changed recall | **100.0%** (13/13) | 53.8% (7/13) |
+| hard-negative non-preserved coverage | 100.0% | 100.0% |
+
+**H4 buys exactly p12 — one false changed — for 28.6 points of automatic coverage
+and 46.2 points of hard-negative detection.** Both rules reach zero false
+preserved and both route every hard negative away from `preserved`; they differ in
+how many of them a person has to look at.
+
+This spike does not resolve it. The veto is the better trade on these numbers, but
+"a correctly handled self-correction is always flagged" is a user-visible
+behaviour, and how much review load is worth avoiding it is a judgement about the
+people doing the reviewing. **It goes to the adoption decision, not to a
+recommendation here.**
 
 ## Side by side
 
@@ -323,14 +359,41 @@ the reason is given.
   *meaning-level* mechanism for p21 is still not understood — `surface-normalize-v1`
   does not touch Japanese verb morphology — so this is an empirical choice on this
   corpus, not a principle.
-- **Critical mismatch: hard veto.** Demoting it to a review trigger buys exactly
-  one false changed (p12) for 28.6 points of automatic coverage and 46.2 points
-  of hard-negative detection. The human review confirmed p12 as `preserved`, so
-  that cost is real rather than a labelling artefact — and the trade is still
-  badly one-sided.
-- **Candidate hybrid: H1 or H3, on surface input. Not H0, not H2.** H0 and H2
-  detect 53.8–61.5% of hard negatives by themselves against H1/H3's 100%; neither
-  survives the corpus denominator.
+- **Critical mismatch: not settled here — H3 or H4.** Keeping it as a hard veto
+  is the better trade on these numbers (28.6 points of coverage and 46.2 of
+  hard-negative detection, against one false changed). But the one false changed
+  is p12, a *correctly handled self-correction*, confirmed `preserved` by the
+  human review and flagged deterministically. Whether that behaviour is
+  acceptable is a policy question about the people doing the reviewing, and this
+  document should not pre-empt it.
+- **Candidate hybrid: H1, H3 or H4, on surface input. Not H0, not H2.** H0 and H2
+  detect 53.8–61.5% of hard negatives by themselves; H2 is additionally
+  superseded by H4, which measures the same critical policy without also changing
+  the auto-preserve behaviour.
+
+### The decision, as two independent axes
+
+The three candidates are not a ranking. They are the corners of a two-axis
+choice, and each axis has a cost that is now measured:
+
+**Axis 1 — may the bench say `preserved` without a person?**
+
+| | rule | cost |
+| --- | --- | --- |
+| yes | **H1** | `preserved` becomes model-backed: 4 automatic preserves resting on an 8B model at uncontrolled seed. Buys review load down to **7.1%**. |
+| no | **H3 / H4** | Review load **21.4%** (H3) or **50.0%** (H4). Zero false preserved holds without depending on the model. |
+
+**Axis 2 — what does a critical-information mismatch mean on its own?**
+
+| | rule | cost |
+| --- | --- | --- |
+| decisive | **H3** (and H1) | p12 is a deterministic false changed. A correctly handled self-correction is always flagged. |
+| needs a person | **H4** | One fewer false changed, at **+28.6 points of review** and **−46.2 points of hard-negative detection**. |
+
+Every combination reaches **zero false preserved on surface input** and routes
+every hard negative away from `preserved`. The axes trade review load against
+two different things — model trust on the first, a known false-flag on the
+second — and neither is a research question.
 
 ### E. Can H1 be allowed to auto-preserve?
 
@@ -345,22 +408,24 @@ What would change the answer: a materially larger corpus, a controlled seed, and
 a false-preserved rate that stays at zero across repeated acquisitions rather
 than within one.
 
-### F. Should H3's `preserved` require human review?
+### F. Should `preserved` require human review?
 
-**Yes — that is what H3 is.** H3 never emits an automatic `preserved`; every pair
-that is not vetoed or unanimously called `changed` goes to a person. On surface
-input that costs **21.4% review** against H1's 7.1%, and buys a false-preserved
-rate of zero that **does not depend on the model being right about anything**.
+**Under H3 and H4, yes — that is what they are.** Neither emits an automatic
+`preserved`; every pair not vetoed or unanimously called `changed` goes to a
+person. On surface input that costs **21.4% review** (H3) or **50.0%** (H4)
+against H1's 7.1%, and buys a false-preserved rate of zero that **does not depend
+on the model being right about anything**.
 
-The two rules differ by 14.3 points of review load. That is the entire price of
-the guarantee, and it is small.
+H1 and H3 differ by 14.3 points of review load. That is the entire price of the
+guarantee on axis 1, and it is small.
 
-**The choice between H1 and H3 is not a research question.** H1's zero depends on
-an 8B model; H3's does not depend on the model at all. That is a decision about
-how much model behaviour a bench is willing to put behind the word "preserved",
-and it belongs to a person. **This spike's own reading: H3.** The bench's stated
-purpose is reproducibility, every other evaluator in it is exactly recomputable,
-and H1 would make `preserved` the one verdict that is not.
+**Neither axis is a research question.** H1's zero depends on an 8B model; H3's
+and H4's do not depend on the model at all. **This spike's own reading is H3** —
+the bench's stated purpose is reproducibility, every other evaluator in it is
+exactly recomputable, and H1 would make `preserved` the one verdict that is not.
+On axis 2 the spike has **no reading**: 28.6 points of review load against never
+auto-flagging a correct self-correction is a trade only the people doing the
+reviewing can price.
 
 ## Evidence limitations
 

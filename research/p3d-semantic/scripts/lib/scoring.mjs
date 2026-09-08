@@ -30,7 +30,11 @@ export function confusion(rows) {
   return {
     decided: rows.length,
     correct: correct.length,
-    provisional_accuracy: rate(correct.length, rows.length),
+    // Named `accuracy`, not `provisional_accuracy`. What the figure is worth
+    // depends on whether the corpus has been reviewed, and that standing is
+    // recorded once in `gold_status` rather than baked into a field name that
+    // would then be wrong after a review. See lib/goldStatus.mjs.
+    accuracy: rate(correct.length, rows.length),
     false_preserved: falsePreserved.length,
     false_preserved_ids: falsePreserved.map((r) => r.id),
     false_changed: falseChanged.length,
@@ -84,6 +88,15 @@ export function hardNegativeMetrics(rows) {
  * H0 is the first round's rule, kept only as a comparator. It decides on the
  * majority of the valid runs and never asks whether a run was missing, which is
  * one of the reasons it is not a candidate.
+ *
+ * H3 and H4 differ in exactly one step and separate two policies that were
+ * previously entangled. Both refuse to emit an automatic `preserved`. H3 lets a
+ * critical-information mismatch decide `changed` outright; H4 routes it to a
+ * person. The human review confirmed p12 — a correctly handled self-correction —
+ * as `preserved` while the critical signal reports a mismatch on it, so under H3
+ * that pair is a **deterministic** false changed: no model is involved and no
+ * threshold moves it. Whether that is acceptable is a policy question, so the two
+ * are measured apart rather than bundled.
  */
 export const HYBRIDS = {
   H0_agreement_gated: (ctx) => {
@@ -132,6 +145,18 @@ export const HYBRIDS = {
     // `preserved` is never automatic under H3.
     return { decision: 'review', by: 'no-auto-preserved' };
   },
+
+  H4_no_auto_preserved_critical_review: (ctx) => {
+    // H3 with the critical mismatch demoted to a review trigger, and nothing
+    // else changed. Uses no embedding, so it is threshold-independent.
+    if (ctx.critical.applicable && ctx.critical.mismatch) {
+      return { decision: 'review', by: 'critical-review' };
+    }
+    if (ctx.fullRunUnanimous && ctx.majorityLabel === 'changed') {
+      return { decision: 'changed', by: 'llm-changed' };
+    }
+    return { decision: 'review', by: 'no-auto-preserved' };
+  },
 };
 
 export const HYBRID_RULE_DESCRIPTIONS = {
@@ -142,8 +167,13 @@ export const HYBRID_RULE_DESCRIPTIONS = {
   H2_critical_review_trigger:
     'as H1 but a critical mismatch routes to review instead of vetoing',
   H3_no_auto_preserved:
-    'critical veto -> changed; else full-run-unanimous rubric changed -> changed; everything else -> review. Never produces an automatic preserved.',
+    'critical veto -> changed; else full-run-unanimous rubric changed -> changed; everything else -> review. Never produces an automatic preserved. Uses no embedding, so it is threshold-independent.',
+  H4_no_auto_preserved_critical_review:
+    'critical mismatch -> review; else full-run-unanimous rubric changed -> changed; everything else -> review. H3 with the critical veto demoted to a review trigger, and nothing else changed. Never produces an automatic preserved. Uses no embedding, so it is threshold-independent.',
 };
+
+/** The rules that use no embedding, and whose figures therefore cannot move with the threshold. */
+export const THRESHOLD_INDEPENDENT_RULES = ['H3_no_auto_preserved', 'H4_no_auto_preserved_critical_review'];
 
 /**
  * Score one tri-state run over the whole corpus.

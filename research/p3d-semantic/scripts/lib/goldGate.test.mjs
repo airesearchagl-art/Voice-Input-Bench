@@ -95,6 +95,45 @@ describe('how accuracy may be described is derived from the corpus', () => {
     }
   });
 
+  it('no current artifact carries a provisional field name', () => {
+    // The corpus is reviewed, so nothing produced from it may be *called*
+    // provisional. `gold_provenance.historical` is the one place the word still
+    // belongs: it records what R0, R1 and R1.1 were measured against, and
+    // deleting that would make those rounds unreadable rather than accurate.
+    for (const file of evidenceFiles()) {
+      const withoutHistory = { ...file.body };
+      if (withoutHistory.gold_provenance) {
+        withoutHistory.gold_provenance = { ...withoutHistory.gold_provenance };
+        delete withoutHistory.gold_provenance.historical;
+      }
+      const serialized = JSON.stringify(withoutHistory);
+
+      expect(serialized, file.name).not.toContain('provisional_accuracy');
+      expect(serialized, file.name).not.toContain('provisional accuracy');
+      // And the history that is kept says it is history.
+      if (file.body.gold_provenance?.historical) {
+        expect(file.body.gold_provenance.historical.previous_human_review_status, file.name).toBe(
+          'pending',
+        );
+      }
+    }
+  });
+
+  it('accuracy is reported under a name that survives a review', () => {
+    const summary = JSON.parse(
+      readFileSync(path.join(EVIDENCE_DIR, 'analysis-summary.json'), 'utf8'),
+    );
+    for (const variant of Object.values(summary.llm_rubric)) {
+      if (variant.status !== 'OK') continue;
+      expect(variant.accuracy).toMatch(/^\d+\.\d%$/);
+      expect(variant).not.toHaveProperty('provisional_accuracy');
+    }
+    for (const [name, data] of Object.entries(summary.hybrid.variants)) {
+      expect(data.accuracy, name).toMatch(/^\d+\.\d%$/);
+      expect(data, name).not.toHaveProperty('provisional_accuracy');
+    }
+  });
+
   it('the summary still names who wrote the labels', () => {
     const summary = JSON.parse(
       readFileSync(path.join(EVIDENCE_DIR, 'analysis-summary.json'), 'utf8'),

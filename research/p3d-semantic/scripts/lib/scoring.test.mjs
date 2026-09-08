@@ -118,6 +118,18 @@ describe('hard-negative metrics use the whole corpus as the denominator', () => 
     expect(metrics.hard_negative_called_preserved_ids).toEqual(['h13']);
   });
 
+  it('confusion() reports accuracy without a standing claim in the name', () => {
+    // `provisional_accuracy` baked the corpus's review status into a field name,
+    // so the name became wrong the moment a human approved the labels. The
+    // standing lives in `gold_status` instead, computed from the provenance.
+    const scored = confusion([
+      { id: 'a', gold: 'changed', predicted: 'changed', hard_negative: false },
+      { id: 'b', gold: 'preserved', predicted: 'changed', hard_negative: false },
+    ]);
+    expect(scored.accuracy).toBe('50.0%');
+    expect(scored).not.toHaveProperty('provisional_accuracy');
+  });
+
   it('confusion() carries no hard-negative metric at all', () => {
     // It only ever sees the automatic rows, so any hard-negative number it
     // produced would have the shrinking denominator built in.
@@ -350,6 +362,148 @@ describe('hybrid routing rests on full-run unanimity', () => {
       embeddingSays: 'changed',
     });
     expect(HYBRIDS.H1_canonical_baseline(embeddingDisagrees).decision).toBe('review');
+  });
+});
+
+// --- H4: the critical policy, measured on its own ---------------------------
+
+describe('H4 separates the critical policy from the auto-preserved policy', () => {
+  // H3 and H4 differ in one step and nothing else, which is what makes the cost
+  // of each critical policy readable rather than bundled with the rest.
+  function ctx({ runs = runsOf('changed', 'changed', 'changed'), critical = NO_CRITICAL } = {}) {
+    const tally = tallyRuns(runs, 3);
+    return {
+      critical,
+      // H4 reads no embedding. Supplying a hostile value proves it.
+      embeddingSays: 'preserved',
+      majorityLabel: tally.majority_label,
+      fullRunUnanimous: tally.full_run_unanimous,
+      validVoteUnanimous: tally.valid_vote_unanimous,
+    };
+  }
+
+  it('routes a critical mismatch to review where H3 decides changed', () => {
+    const mismatch = ctx({ critical: CRITICAL_MISMATCH });
+    expect(HYBRIDS.H3_no_auto_preserved(mismatch).decision).toBe('changed');
+    expect(HYBRIDS.H4_no_auto_preserved_critical_review(mismatch).decision).toBe('review');
+    expect(HYBRIDS.H4_no_auto_preserved_critical_review(mismatch).by).toBe('critical-review');
+  });
+
+  it('routes a critical mismatch to review even when the pair really did change', () => {
+    // The demotion is unconditional: H4 does not get to keep the vetoes that
+    // happen to be right. That is the cost being measured.
+    const mismatch = ctx({
+      critical: CRITICAL_MISMATCH,
+      runs: runsOf('changed', 'changed', 'changed'),
+    });
+    expect(HYBRIDS.H4_no_auto_preserved_critical_review(mismatch).decision).toBe('review');
+  });
+
+  it('decides changed on a full-run-unanimous rubric changed with no critical signal', () => {
+    const outcome = HYBRIDS.H4_no_auto_preserved_critical_review(ctx());
+    expect(outcome.decision).toBe('changed');
+    expect(outcome.by).toBe('llm-changed');
+  });
+
+  it('sends a preserved rubric result to review, never to preserved', () => {
+    const preserved = ctx({ runs: runsOf('preserved', 'preserved', 'preserved') });
+    expect(HYBRIDS.H4_no_auto_preserved_critical_review(preserved).decision).toBe('review');
+  });
+
+  it('sends missing or split evidence to review', () => {
+    for (const runs of [
+      runsOf('changed', 'changed', null), // an invalid run
+      runsOf('changed', 'preserved', 'changed'), // a split vote
+      runsOf('changed', 'changed'), // a run that never happened
+      runsOf(null, null, null), // nothing usable at all
+    ]) {
+      expect(HYBRIDS.H4_no_auto_preserved_critical_review(ctx({ runs })).decision).toBe('review');
+    }
+  });
+
+  it('never emits an automatic preserved, whatever it is given', () => {
+    for (const critical of [NO_CRITICAL, CRITICAL_MISMATCH]) {
+      for (const runs of [
+        runsOf('preserved', 'preserved', 'preserved'),
+        runsOf('changed', 'changed', 'changed'),
+        runsOf('preserved', 'changed', 'preserved'),
+        runsOf('preserved', 'preserved', null),
+      ]) {
+        expect(
+          HYBRIDS.H4_no_auto_preserved_critical_review(ctx({ runs, critical })).decision,
+        ).not.toBe('preserved');
+      }
+    }
+  });
+});
+
+describe('H4 in the published evidence', () => {
+  const summary = JSON.parse(
+    readFileSync(path.join(EVIDENCE_DIR, 'analysis-summary.json'), 'utf8'),
+  );
+  const variants = Object.entries(summary.hybrid.variants).filter(([name]) =>
+    name.startsWith('H4_no_auto_preserved_critical_review'),
+  );
+
+  it('is scored at every threshold and input, and auto-preserves nothing', () => {
+    expect(variants.length).toBe(6); // 2 input variants x 3 thresholds
+    for (const [name, data] of variants) {
+      expect(data.auto_preserved, name).toBe(0);
+      expect(data.hard_negative_auto_preserved_count, name).toBe(0);
+      expect(data.false_preserved, name).toBe(0);
+    }
+  });
+
+  it('does not move with the embedding threshold', () => {
+    // H4 reads no embedding, so three thresholds must produce one answer. If
+    // this ever fails, the rule has picked up a dependency it should not have.
+    for (const input of ['raw', 'surface']) {
+      const answers = ['0.85', '0.9', '0.95'].map((t) =>
+        JSON.stringify(
+          summary.hybrid.variants[
+            'H4_no_auto_preserved_critical_review__' + input + '__t' + t
+          ],
+        ),
+      );
+      expect(new Set(answers).size, input).toBe(1);
+    }
+    expect(summary.hybrid.threshold_independent_rules).toContain(
+      'H4_no_auto_preserved_critical_review',
+    );
+  });
+
+  it('keeps the corpus denominator and does not conflate the two hard-negative metrics', () => {
+    for (const [name, data] of variants) {
+      expect(data.hard_negative_total, name).toBe(13);
+      // Every hard negative is either detected or reviewed; none is preserved.
+      expect(data.hard_negative_auto_changed_count + data.hard_negative_review_count, name).toBe(13);
+      expect(data.hard_negative_non_preserved_coverage, name).toBe('100.0%');
+      // Coverage is 100% because nothing is auto-preserved. Detection is not,
+      // because reviewing is not detecting — the whole point of two names.
+      expect(data.hard_negative_auto_changed_recall, name).not.toBe('100.0%');
+      expect(data.hard_negative_auto_changed_recall, name).toBe(
+        `${((data.hard_negative_auto_changed_count / 13) * 100).toFixed(1)}%`,
+      );
+    }
+  });
+
+  it('p12 is the pair the two rules disagree about', () => {
+    // The human review confirmed p12 as `preserved` while the critical signal
+    // reports a mismatch on it. Under H3 that is a deterministic false changed —
+    // no model involved, no threshold that moves it. Under H4 it reaches a
+    // person. This is the trade the adoption decision turns on.
+    const h3 = summary.hybrid.variants['H3_no_auto_preserved__surface__t0.9'];
+    const h4 = summary.hybrid.variants['H4_no_auto_preserved_critical_review__surface__t0.9'];
+
+    expect(h3.false_changed_ids).toContain('p12');
+    expect(h3.review_ids).not.toContain('p12');
+
+    expect(h4.false_changed_ids).not.toContain('p12');
+    expect(h4.review_ids).toContain('p12');
+
+    // And it costs exactly one false changed, paid for in review load.
+    expect(h4.false_changed).toBe(h3.false_changed - 1);
+    expect(h4.review_count).toBeGreaterThan(h3.review_count);
   });
 });
 
