@@ -42,6 +42,10 @@ import {
 } from '@/evaluation/verifyStoredEvaluation';
 import { RawCharError, type RawCharErrorKind } from '@/evaluation/rawChar';
 import { CriticalInfoError, type CriticalInfoErrorKind } from '@/evaluation/criticalInfo';
+import {
+  SemanticProviderError,
+  type SemanticProviderErrorKind,
+} from '@/evaluation/semanticProvider';
 
 /**
  * HTTP status per error cause.
@@ -103,6 +107,28 @@ const STATUS_BY_EVALUATION_STORE_KIND: Record<EvaluationStoreErrorKind, number> 
   EVALUATION_NOT_FOUND: 404,
   EVALUATION_WRITE_FAILED: 500,
   EVALUATION_UNREADABLE: 500,
+};
+
+/**
+ * A local model that does not match the approved contract.
+ *
+ * Not a bad request: the client sent a Result id and an evaluator name, and
+ * both were fine. What is wrong is the runtime on this machine. In every one of
+ * these cases preflight refused before anything was written, so no Evaluation
+ * exists that was graded under an unapproved contract.
+ */
+const STATUS_BY_SEMANTIC_PROVIDER_KIND: Record<SemanticProviderErrorKind, number> = {
+  // A misconfigured endpoint, or one that tried to redirect off the machine.
+  // Either way this server's own configuration is the problem.
+  SEMANTIC_ENDPOINT_NOT_LOOPBACK: 500,
+  SEMANTIC_RUNTIME_UNAVAILABLE: 503,
+  // The runtime answered, but it is not the one the Human Gate approved.
+  SEMANTIC_RUNTIME_VERSION_MISMATCH: 409,
+  SEMANTIC_MODEL_NOT_FOUND: 409,
+  SEMANTIC_MODEL_DIGEST_MISMATCH: 409,
+  SEMANTIC_MODEL_QUANTIZATION_MISMATCH: 409,
+  // The prompt constant in this build drifted from the approved rubric.
+  SEMANTIC_PROMPT_MISMATCH: 500,
 };
 
 const STATUS_BY_EVALUATION_SUBJECT_KIND: Record<EvaluationSubjectErrorKind, number> = {
@@ -172,6 +198,7 @@ export interface ApiErrorBody {
       | EvaluationVerificationErrorKind
       | RawCharErrorKind
       | CriticalInfoErrorKind
+      | SemanticProviderErrorKind
       | 'BAD_REQUEST'
       | 'UNEXPECTED';
     message: string;
@@ -257,6 +284,17 @@ export function toErrorResponse(caught: unknown): NextResponse<ApiErrorBody> {
         error: { kind: caught.kind, message: caught.message, detail: caught.detail },
       } as const,
       { status: 409 },
+    );
+  }
+
+  if (caught instanceof SemanticProviderError) {
+    // Preflight refused. Nothing partial exists to clean up.
+    return NextResponse.json(
+      {
+        ok: false,
+        error: { kind: caught.kind, message: caught.message, detail: caught.detail },
+      } as const,
+      { status: STATUS_BY_SEMANTIC_PROVIDER_KIND[caught.kind] },
     );
   }
 

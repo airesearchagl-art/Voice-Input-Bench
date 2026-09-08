@@ -535,3 +535,91 @@ describe('a surface-normalized evaluation POST that finishes after the operator 
     expect(state.value?.evaluations).toHaveLength(2);
   });
 });
+
+/**
+ * P3-D adds a fourth evaluator behind its own button.
+ *
+ * This one takes seconds rather than milliseconds: three model runs happen
+ * before the response comes back, so the operator has far more time to move to
+ * another Run while it is in flight. The guard is the same guard — a semantic
+ * verdict shown under the wrong Run's canonical text would be a claim about a
+ * comparison nobody made, and a CHANGED read against the wrong text is worse
+ * than no verdict at all.
+ */
+describe('a semantic evaluation POST that finishes after the operator moved on', () => {
+  it('does not reload the evaluated Run over the Run now on screen', () => {
+    let state = idlePanel();
+    const a = issuePanel(state, RUN_A);
+    state = applyLoaded(a.state, { requestId: a.requestId, selected: a.selected, value: PANEL_A });
+
+    // "Semantic評価を作成" pressed on a Result of Run A.
+    const evaluatedRunId = RUN_A;
+
+    const b = issuePanel(state, RUN_B);
+    state = applyLoaded(b.state, { requestId: b.requestId, selected: b.selected, value: PANEL_B });
+
+    expect(isStillSelected(state, evaluatedRunId)).toBe(false);
+    expect(state.selected).toBe(RUN_B);
+  });
+
+  it('ignores a late semantic panel load from the Run the operator left', () => {
+    let state = idlePanel();
+    const a = issuePanel(state, RUN_A);
+    const b = issuePanel(a.state, RUN_B);
+
+    state = applyLoaded(b.state, { requestId: b.requestId, selected: b.selected, value: PANEL_B });
+    state = applyLoaded(state, {
+      requestId: a.requestId,
+      selected: a.selected,
+      value: PANEL_A,
+    });
+
+    expect(state.value).toEqual(PANEL_B);
+    expect(state.selected).toBe(RUN_B);
+  });
+
+  it('ignores a late preflight refusal from the Run the operator left', () => {
+    // A model contract refusal is attributed to the Run it was raised for. It
+    // must not surface under a Run whose evaluation was never attempted.
+    let state = idlePanel();
+    const a = issuePanel(state, RUN_A);
+    const b = issuePanel(a.state, RUN_B);
+
+    state = applyLoaded(b.state, { requestId: b.requestId, selected: b.selected, value: PANEL_B });
+    state = applyFailed(state, {
+      requestId: a.requestId,
+      selected: a.selected,
+      error: {
+        kind: 'SEMANTIC_MODEL_DIGEST_MISMATCH',
+        message: 'llama3.1:8b が承認された build ではありません。',
+      },
+    });
+
+    expect(state.status).toBe('loaded');
+    expect(state.value).toEqual(PANEL_B);
+    expect(state.error).toBeNull();
+  });
+
+  it('does reload when the operator never left the evaluated Run', () => {
+    let state = idlePanel();
+    const a = issuePanel(state, RUN_A);
+    state = applyLoaded(a.state, { requestId: a.requestId, selected: a.selected, value: PANEL_A });
+
+    expect(isStillSelected(state, RUN_A)).toBe(true);
+
+    const reload = issuePanel(state, RUN_A);
+    state = applyLoaded(reload.state, {
+      requestId: reload.requestId,
+      selected: reload.selected,
+      value: {
+        results: PANEL_A.results,
+        evaluations: [
+          ...PANEL_A.evaluations,
+          { evaluationId: 'eval-a-semantic', resultId: 'result-a' },
+        ],
+      },
+    });
+
+    expect(state.value?.evaluations).toHaveLength(2);
+  });
+});

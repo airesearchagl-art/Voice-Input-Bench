@@ -10,6 +10,7 @@ import type {
 } from '@/evaluation/criticalEvaluationSchema';
 import type { EvaluationV1 } from '@/evaluation/evaluationSchema';
 import type { SurfaceEvaluationV3 } from '@/evaluation/surfaceEvaluationSchema';
+import type { SemanticEvaluationV4 } from '@/evaluation/semanticEvaluationSchema';
 import { DELIVERY_PATHS, STT_TOOL_IDS, type DeliveryPath, type SttToolId } from '@/results/tools';
 import {
   applyFailed,
@@ -144,6 +145,10 @@ interface SurfaceEntry extends VerifiedEvaluationEntry {
   evaluation: SurfaceEvaluationV3;
 }
 
+interface SemanticEntry extends VerifiedEvaluationEntry {
+  evaluation: SemanticEvaluationV4;
+}
+
 function isVerified(entry: EvaluationEntry): entry is VerifiedEvaluationEntry {
   return entry.status === 'verified';
 }
@@ -158,6 +163,10 @@ function isSurface(entry: VerifiedEvaluationEntry): entry is SurfaceEntry {
 
 function isRawChar(entry: VerifiedEvaluationEntry): entry is RawCharEntry {
   return entry.evaluation.schema_version === 1;
+}
+
+function isSemantic(entry: VerifiedEvaluationEntry): entry is SemanticEntry {
+  return entry.evaluation.schema_version === 4;
 }
 
 /**
@@ -465,6 +474,132 @@ function CriticalEvaluationSection({
   );
 }
 
+/** A hash is unreadable in full and useless truncated too far. */
+function shortHash(value: string): string {
+  return value.length <= 16 ? value : `${value.slice(0, 12)}…`;
+}
+
+/** How the three runs came back, in one line. */
+function runSummary(evaluation: SemanticEvaluationV4): string {
+  const runs = evaluation.execution.runs;
+  if (runs.length === 0) return 'モデル実行なし';
+  const valid = runs.filter((run) => run.parseable_schema_valid).length;
+  const exact = runs.filter((run) => run.exact_output_contract_valid).length;
+  const changed = runs.filter(
+    (run) => run.parsed_output !== null && run.parsed_output.meaning_preserved === false,
+  ).length;
+  const preserved = valid - changed;
+  return `${valid}/${runs.length} parseable・${exact}/${runs.length} exact format・changed ${changed} / preserved ${preserved}`;
+}
+
+/**
+ * semantic-h3-v1 for one Result.
+ *
+ * The verdict is deliberately only ever CHANGED or REVIEW REQUIRED. There is no
+ * PRESERVED, no SAFE and no PASS on this screen, because the pipeline cannot
+ * earn any of those words: three agreeing answers from a local 8B model are not
+ * evidence that meaning survived, and a green label would be read as if they
+ * were. Semantic sits beside Raw, Surface and Critical — it does not replace
+ * them and does not overrule them.
+ */
+function SemanticEvaluationSection({
+  entries,
+  busy,
+  disabled,
+  onCreate,
+}: {
+  entries: SemanticEntry[];
+  busy: boolean;
+  disabled: boolean;
+  onCreate: () => void;
+}) {
+  return (
+    <div className="raw-eval">
+      <h4>Semantic Evaluation</h4>
+      <button type="button" className="secondary" onClick={onCreate} disabled={disabled}>
+        {busy ? '評価中…' : 'Semantic評価を作成'}
+      </button>
+
+      {entries.length === 0 && (
+        <p className="fixed-note">この Result にはまだ semantic-h3-v1 の評価がありません。</p>
+      )}
+
+      {entries.map((entry) => (
+        <div key={entry.evaluationId} className="raw-eval-card">
+          <dl className="kv compact">
+            <EvaluatorRows evaluation={entry.evaluation} />
+            <dt>Decision</dt>
+            <dd>
+              <strong>
+                {entry.evaluation.decision.value === 'changed' ? 'CHANGED' : 'REVIEW REQUIRED'}
+              </strong>
+            </dd>
+            <dt>Decision source</dt>
+            <dd>{entry.evaluation.decision.by}</dd>
+            <dt>Critical guard</dt>
+            <dd>
+              {entry.evaluation.critical.status}
+              {entry.evaluation.critical.applicable
+                ? entry.evaluation.critical.mismatch
+                  ? '（mismatch → veto）'
+                  : '（mismatch なし）'
+                : '（適用対象外）'}
+            </dd>
+            <dt>Execution</dt>
+            <dd>{entry.evaluation.execution.status}</dd>
+            <dt>Ollama version</dt>
+            <dd>{entry.evaluation.execution.runtime?.version ?? '—'}</dd>
+            <dt>Model</dt>
+            <dd>{entry.evaluation.execution.model?.id ?? '—'}</dd>
+            <dt>Model digest</dt>
+            <dd className="mono">
+              {entry.evaluation.execution.model
+                ? shortHash(entry.evaluation.execution.model.digest)
+                : '—'}
+            </dd>
+            <dt>Prompt SHA</dt>
+            <dd className="mono">
+              {entry.evaluation.execution.prompt
+                ? shortHash(entry.evaluation.execution.prompt.sha256)
+                : '—'}
+            </dd>
+            <dt>Runs</dt>
+            <dd>{runSummary(entry.evaluation)}</dd>
+            <dt>Created At</dt>
+            <dd>{entry.evaluation.created_at}</dd>
+          </dl>
+
+          <p className="fixed-note">
+            semantic-h3-v1 は <strong>PRESERVED を出しません</strong>。
+            3 回すべてが読み取れて全会一致で changed のときだけ CHANGED、
+            それ以外はすべて REVIEW REQUIRED です。Raw / Surface / Critical を
+            置き換えるものではなく、4 つ目の層として並びます。
+          </p>
+
+          <p className="fixed-note">
+            <strong>Known Limitation（自己訂正）</strong>：
+            「二千六百、あ、すみません、二千七百」のような自己訂正は、最終的な意図としては
+            保持されていても、critical-info-v1 からは数値の multiset 不一致に見えます。
+            そのため p12 型の事例は決定的に CHANGED になります。これは既知の限界であり、
+            例外規則は入れていません。
+          </p>
+
+          <div className="raw-eval-texts">
+            <div>
+              <span className="hint">normalized source（reference）</span>
+              <pre className="transcript">{entry.normalized?.reference ?? ''}</pre>
+            </div>
+            <div>
+              <span className="hint">normalized transcript（hypothesis）</span>
+              <pre className="transcript">{entry.normalized?.hypothesis ?? ''}</pre>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /**
  * Both evaluators for one Result, plus anything that failed to verify.
  *
@@ -482,6 +617,7 @@ function EvaluationSections({
   onCreateRawChar,
   onCreateSurface,
   onCreateCritical,
+  onCreateSemantic,
 }: {
   resultId: string;
   sealed: boolean;
@@ -492,6 +628,7 @@ function EvaluationSections({
   onCreateRawChar: () => void;
   onCreateSurface: () => void;
   onCreateCritical: () => void;
+  onCreateSemantic: () => void;
 }) {
   if (!sealed) {
     return (
@@ -499,8 +636,8 @@ function EvaluationSections({
         <h4>Evaluation</h4>
         <p className="fixed-note">
           この Result は integrity 署名を持たない legacy (schema v1) のため、
-          <strong>raw-char-v1 / surface-normalized-char-v1 / critical-info-v1 いずれの strict
-          evaluation も対象外</strong>
+          <strong>raw-char-v1 / surface-normalized-char-v1 / critical-info-v1 /
+          semantic-h3-v1 いずれの strict evaluation も対象外</strong>
           です。観測としては読めますが、tool identity が保存後に編集されていないことを
           証明できません。
         </p>
@@ -534,6 +671,13 @@ function EvaluationSections({
         busy={busyEvaluator === 'critical-info-v1'}
         disabled={disabled}
         onCreate={onCreateCritical}
+      />
+
+      <SemanticEvaluationSection
+        entries={verified.filter(isSemantic)}
+        busy={busyEvaluator === 'semantic-h3-v1'}
+        disabled={disabled}
+        onCreate={onCreateSemantic}
       />
 
       {rejected.length > 0 && (
@@ -1035,6 +1179,9 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
                   }
                   onCreateCritical={() =>
                     void createEvaluation(entry.resultId, selectedRunId, 'critical-info-v1')
+                  }
+                  onCreateSemantic={() =>
+                    void createEvaluation(entry.resultId, selectedRunId, 'semantic-h3-v1')
                   }
                 />
               </article>

@@ -1,5 +1,6 @@
 import { sha256OfText } from '@/lib/hash';
 import { createEvaluationId } from '@/lib/evaluationId';
+import { getSemanticEndpoint, getSemanticTimeoutMs } from '@/lib/engineConfig';
 import { computeResultSemanticSha256, resultPayloadOf } from '@/results/resultSchema';
 import { verifyRunEvidence } from '@/results/runEvidence';
 import type { LocalEvaluationStore } from '@/storage/LocalEvaluationStore';
@@ -45,6 +46,31 @@ import {
 } from './surfaceEvaluationSchema';
 import { SURFACE_CHAR_ALGORITHM, surfaceNormalize } from './surfaceNormalize';
 import { verifyStoredSurfaceEvaluation } from './verifyStoredSurfaceEvaluation';
+import {
+  SEMANTIC_EVALUATION_SCHEMA_VERSION,
+  SEMANTIC_H3_ALGORITHM,
+  SEMANTIC_H3_EVALUATOR,
+  SEMANTIC_REQUEST_CONTRACT,
+  computeSemanticEvaluationSemanticSha256,
+  type SemanticEvaluationPayloadV4,
+  type SemanticEvaluationV4,
+  type SemanticExecutionV4,
+  type SemanticRunV4,
+} from './semanticEvaluationSchema';
+import {
+  SEMANTIC_REQUEST_REPEATS,
+  preflightSemanticProvider,
+  semanticChat,
+  type SemanticRuntimeFacts,
+} from './semanticProvider';
+import { normalizeSemanticInput, runSemanticCriticalGuard } from './semanticGuard';
+import {
+  buildSemanticRequestBody,
+  parseSemanticVerdict,
+  renderSemanticPrompt,
+} from './semanticRubric';
+import { deriveSemanticDecision, tallySemanticRuns } from './semanticDecision';
+import { verifyStoredSemanticEvaluation } from './verifyStoredSemanticEvaluation';
 
 /**
  * Creating and reading raw character Evaluations.
@@ -63,6 +89,20 @@ export interface EvaluationDeps {
   /** Injected in tests so evaluation IDs and timestamps are deterministic. */
   now?: () => Date;
   evaluationId?: string;
+  /**
+   * The local model, injected so tests never reach a socket.
+   *
+   * Only semantic-h3-v1 uses it. Left out, it is the pinned Ollama provider
+   * reading its endpoint from the environment — the client never gets to name
+   * a runtime, a model or a prompt, here or anywhere else.
+   */
+  semanticRunner?: SemanticRunner;
+}
+
+/** The two calls semantic-h3-v1 makes, in the order it makes them. */
+export interface SemanticRunner {
+  preflight(): Promise<SemanticRuntimeFacts>;
+  chat(requestBody: string): Promise<string>;
 }
 
 /**
@@ -134,13 +174,18 @@ function buildPayload(
 }
 
 /** Either shape, as written and as read back. Told apart by `schema_version`. */
-export type StoredEvaluation = EvaluationV1 | CriticalEvaluationV2 | SurfaceEvaluationV3;
+export type StoredEvaluation =
+  | EvaluationV1
+  | CriticalEvaluationV2
+  | SurfaceEvaluationV3
+  | SemanticEvaluationV4;
 
 /** The evaluators a caller may ask for by name. */
 export const EVALUATOR_IDS = [
   RAW_CHAR_ALGORITHM,
   SURFACE_CHAR_ALGORITHM,
   CRITICAL_INFO_ALGORITHM,
+  SEMANTIC_H3_ALGORITHM,
 ] as const;
 export type EvaluatorId = (typeof EVALUATOR_IDS)[number];
 
@@ -167,6 +212,10 @@ export interface CreateCriticalEvaluationOutcome extends CreateEvaluationOutcome
 
 export interface CreateSurfaceEvaluationOutcome extends CreateEvaluationOutcome {
   evaluation: SurfaceEvaluationV3;
+}
+
+export interface CreateSemanticEvaluationOutcome extends CreateEvaluationOutcome {
+  evaluation: SemanticEvaluationV4;
 }
 
 /**
@@ -384,6 +433,194 @@ export async function createSurfaceCharEvaluation(
   };
 }
 
+/** The pinned Ollama provider, used whenever no runner was injected. */
+const DEFAULT_SEMANTIC_RUNNER: SemanticRunner = {
+  preflight: () =>
+    preflightSemanticProvider({
+      endpoint: getSemanticEndpoint(),
+      timeoutMs: getSemanticTimeoutMs(),
+    }),
+  chat: (requestBody) =>
+    semanticChat(requestBody, {
+      endpoint: getSemanticEndpoint(),
+      timeoutMs: getSemanticTimeoutMs(),
+    }),
+};
+
+/** An empty execution record. Nothing was contacted, and it says so. */
+const SKIPPED_BY_CRITICAL_VETO: SemanticExecutionV4 = {
+  status: 'skipped_by_critical_veto',
+  endpoint_class: null,
+  provider_protocol: null,
+  runtime: null,
+  model: null,
+  prompt: null,
+  request_contract: null,
+  runs: [],
+};
+
+/**
+ * Ask the model the same question three times, recording each answer whole.
+ *
+ * A call that fails after preflight becomes an invalid run rather than an
+ * exception: the failure is evidence about this evaluation, and dropping it
+ * would leave two answers looking like a complete set. Three runs are always
+ * attempted, because a run that was never made and a run that came back
+ * unreadable have to be told apart by the record, not by its length.
+ */
+async function runSemanticModel(
+  runner: SemanticRunner,
+  facts: SemanticRuntimeFacts,
+  normalizedReference: string,
+  normalizedHypothesis: string,
+): Promise<SemanticExecutionV4> {
+  const requestBody = buildSemanticRequestBody(
+    renderSemanticPrompt(normalizedReference, normalizedHypothesis),
+  );
+  const requestSha = sha256OfText(requestBody);
+  const runs: SemanticRunV4[] = [];
+
+  for (let runIndex = 1; runIndex <= SEMANTIC_REQUEST_REPEATS; runIndex += 1) {
+    const startedAt = performance.now();
+    let rawResponse = '';
+    let transportError: string | null = null;
+    try {
+      rawResponse = await runner.chat(requestBody);
+    } catch (caught) {
+      transportError = caught instanceof Error ? caught.message : String(caught);
+    }
+    const latencyMs = Math.round(performance.now() - startedAt);
+
+    const parsed = parseSemanticVerdict(rawResponse);
+    runs.push({
+      run_index: runIndex,
+      latency_ms: latencyMs,
+      request_sha256: requestSha,
+      raw_response: rawResponse,
+      raw_response_sha256: sha256OfText(rawResponse),
+      raw_response_chars: toCodePoints(rawResponse).length,
+      parseable_schema_valid: parsed.parseable_schema_valid,
+      exact_output_contract_valid: parsed.exact_output_contract_valid,
+      parsed_output: parsed.parsed_output,
+      error: transportError ?? parsed.error,
+    });
+  }
+
+  return {
+    status: 'completed',
+    endpoint_class: facts.endpoint_class,
+    provider_protocol: facts.provider_protocol,
+    runtime: facts.runtime,
+    model: facts.model,
+    prompt: facts.prompt,
+    request_contract: SEMANTIC_REQUEST_CONTRACT,
+    runs,
+  };
+}
+
+/**
+ * Evaluate whether a transcript still means what the source said.
+ *
+ * The order is the policy. Both texts are surface-normalized first, so the
+ * guard and the model read the same thing. critical-info-v1 then runs as a hard
+ * veto: a supported numeric mismatch is a change no rubric gets to argue with,
+ * and it ends the evaluation before a single token is generated. Only if the
+ * guard has nothing to say is the model asked, three times, and only three
+ * parseable answers that all say the meaning changed produce `changed`.
+ *
+ * Everything else produces `review`. There is no path to `preserved`: the
+ * decision type does not have one. A local 8B model agreeing with itself is not
+ * evidence that meaning survived, and a bench that quietly said "fine" on that
+ * basis would be worse than no bench at all.
+ *
+ * Preflight runs before anything is written, so a runtime or model that does
+ * not match the approved contract produces an error and no artifact.
+ */
+export async function createSemanticEvaluation(
+  input: { resultId: string },
+  deps: EvaluationDeps,
+): Promise<CreateSemanticEvaluationOutcome> {
+  const now = deps.now ?? (() => new Date());
+
+  assertIsolated(deps);
+
+  const subject = await resolveEvaluationSubject(
+    { runStore: deps.runStore, resultStore: deps.resultStore },
+    input.resultId,
+  );
+
+  const normalizedReference = normalizeSemanticInput(subject.referenceText);
+  const normalizedHypothesis = normalizeSemanticInput(subject.hypothesisText);
+  const critical = runSemanticCriticalGuard(normalizedReference.text, normalizedHypothesis.text);
+
+  let execution = SKIPPED_BY_CRITICAL_VETO;
+  if (!critical.mismatch) {
+    const runner = deps.semanticRunner ?? DEFAULT_SEMANTIC_RUNNER;
+    // Fail Closed: a contract mismatch throws out of here, and no Evaluation
+    // is written at all.
+    const facts = await runner.preflight();
+    execution = await runSemanticModel(
+      runner,
+      facts,
+      normalizedReference.text,
+      normalizedHypothesis.text,
+    );
+  }
+
+  const decision = deriveSemanticDecision(
+    critical.mismatch,
+    critical.mismatch ? null : tallySemanticRuns(execution.runs, SEMANTIC_REQUEST_REPEATS),
+  );
+
+  const createdAt = now().toISOString();
+  const evaluationId = deps.evaluationId ?? createEvaluationId(now());
+  const rawChar = buildPayload(evaluationId, createdAt, subject);
+
+  const payload: SemanticEvaluationPayloadV4 = {
+    schema_version: SEMANTIC_EVALUATION_SCHEMA_VERSION,
+    evaluation_id: evaluationId,
+    created_at: createdAt,
+    // Server-fixed, never from the request.
+    evaluator: { ...SEMANTIC_H3_EVALUATOR },
+    run_id: subject.runId,
+    result_id: subject.resultId,
+    // The subject and the raw input hashes are resolved identically for every
+    // evaluator; only the reading differs.
+    subject: rawChar.subject,
+    reference: rawChar.reference,
+    hypothesis: rawChar.hypothesis,
+    run_evidence: rawChar.run_evidence,
+    normalized: {
+      reference: normalizedReference.side,
+      hypothesis: normalizedHypothesis.side,
+    },
+    critical,
+    execution,
+    decision,
+  };
+
+  const evaluation: SemanticEvaluationV4 = {
+    ...payload,
+    integrity: {
+      algorithm: 'sha256',
+      semantic_sha256: computeSemanticEvaluationSemanticSha256(payload),
+    },
+  };
+
+  const stored = await deps.evaluationStore.saveEvaluation(
+    evaluationId,
+    Buffer.from(`${JSON.stringify(evaluation, null, 2)}\n`, 'utf8'),
+  );
+
+  return {
+    evaluationId: stored.evaluationId,
+    evaluationDir: stored.evaluationDir,
+    evaluation,
+    referenceText: subject.referenceText,
+    hypothesisText: subject.hypothesisText,
+  };
+}
+
 /**
  * Evaluate one sealed Result with the named evaluator.
  *
@@ -400,6 +637,9 @@ export async function createEvaluation(
   }
   if (input.evaluatorId === SURFACE_CHAR_ALGORITHM) {
     return createSurfaceCharEvaluation({ resultId: input.resultId }, deps);
+  }
+  if (input.evaluatorId === SEMANTIC_H3_ALGORITHM) {
+    return createSemanticEvaluation({ resultId: input.resultId }, deps);
   }
   return createRawCharEvaluation({ resultId: input.resultId }, deps);
 }
@@ -486,6 +726,9 @@ function verifyByStoredSchema(input: {
   if (input.stored.schema_version === SURFACE_EVALUATION_SCHEMA_VERSION) {
     return verifyStoredSurfaceEvaluation(input);
   }
+  if (input.stored.schema_version === SEMANTIC_EVALUATION_SCHEMA_VERSION) {
+    return verifyStoredSemanticEvaluation(input);
+  }
   return verifyStoredEvaluation(input);
 }
 
@@ -563,7 +806,14 @@ function normalizedTextsFor(
   evaluation: StoredEvaluation,
   subject: EvaluationSubject,
 ): NormalizedTexts | undefined {
-  if (evaluation.schema_version !== SURFACE_EVALUATION_SCHEMA_VERSION) return undefined;
+  // v3 measures the normalized pair and v4 shows the model the same pair, so
+  // both need it on screen. v1 and v2 read the raw text and have none.
+  if (
+    evaluation.schema_version !== SURFACE_EVALUATION_SCHEMA_VERSION &&
+    evaluation.schema_version !== SEMANTIC_EVALUATION_SCHEMA_VERSION
+  ) {
+    return undefined;
+  }
   return {
     reference: surfaceNormalize(subject.referenceText),
     hypothesis: surfaceNormalize(subject.hypothesisText),
