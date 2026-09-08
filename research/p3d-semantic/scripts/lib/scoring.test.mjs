@@ -160,14 +160,30 @@ describe('the published evidence uses the corpus denominator', () => {
     }
   });
 
-  it('a rule that reviews hard negatives no longer reports perfect detection', () => {
-    // H3 raw reviews one of the thirteen. Before the fix it read 100.0%.
-    const h3raw = summary.hybrid.variants['H3_no_auto_preserved__raw__t0.9'];
-    expect(h3raw.hard_negative_review_count).toBeGreaterThan(0);
-    expect(h3raw.hard_negative_auto_changed_recall).not.toBe('100.0%');
-    expect(h3raw.hard_negative_auto_changed_recall).toBe('92.3%');
-    // It still routed every one of them away from `preserved`.
-    expect(h3raw.hard_negative_non_preserved_coverage).toBe('100.0%');
+  it('review never counts towards detection in the published numbers', () => {
+    // The invariant, not a frozen figure: whenever a rule reviews a hard
+    // negative, detection must be short of 100% by exactly that much. Before
+    // the fix, reviewing one of thirteen still read 100.0%.
+    for (const [name, data] of Object.entries(summary.hybrid.variants)) {
+      const expected = `${((data.hard_negative_auto_changed_count / 13) * 100).toFixed(1)}%`;
+      expect(data.hard_negative_auto_changed_recall, name).toBe(expected);
+      if (data.hard_negative_review_count > 0) {
+        expect(data.hard_negative_auto_changed_recall, name).not.toBe('100.0%');
+      }
+    }
+  });
+
+  it('H3 never auto-preserves anything, at any threshold or input', () => {
+    const h3 = Object.entries(summary.hybrid.variants).filter(([name]) =>
+      name.startsWith('H3_no_auto_preserved'),
+    );
+    expect(h3.length).toBe(6); // 2 input variants x 3 thresholds
+    for (const [name, data] of h3) {
+      expect(data.auto_preserved, name).toBe(0);
+      expect(data.hard_negative_auto_preserved_count, name).toBe(0);
+      expect(data.false_preserved, name).toBe(0);
+      expect(data.hard_negative_non_preserved_coverage, name).toBe('100.0%');
+    }
   });
 
   it('detection is never reported above coverage', () => {
@@ -355,16 +371,23 @@ describe('the published LLM evidence separates the two unanimity levels', () => 
     }
   });
 
-  it('the raw run is 100% valid-vote unanimous and less than that full-run', () => {
-    // This is the claim R1's report made as a flat "unanimous 100%". Three of
-    // the twenty-eight pairs had a reply that could not be parsed.
-    const raw = summary.llm_rubric.raw;
-    expect(raw.valid_vote_unanimous_rate).toBe('100.0%');
-    expect(raw.full_run_unanimous_rate).not.toBe('100.0%');
-    expect(raw.pairs_with_an_invalid_run).toBeGreaterThan(0);
-    expect(raw.pairs_with_an_invalid_run).toBe(
-      raw.valid_vote_unanimous_pairs - raw.full_run_unanimous_pairs,
-    );
+  it('the gap between the two levels is exactly the pairs missing a reply', () => {
+    // R1's report made a flat "unanimous 100%" claim that hid three pairs with
+    // an unparseable reply. Whether any given run has such pairs varies — this
+    // run has none — so the invariant is pinned rather than the count: the two
+    // levels may only differ by pairs that are actually missing a reply.
+    for (const [variant, data] of Object.entries(summary.llm_rubric)) {
+      if (data.status !== 'OK') continue;
+      expect(data.pairs_with_an_invalid_run, variant).toBe(
+        data.valid_vote_unanimous_pairs - data.full_run_unanimous_pairs,
+      );
+      expect(data.pairs_with_an_invalid_run_ids, variant).toHaveLength(
+        data.pairs_with_an_invalid_run,
+      );
+      if (data.invalid_runs === 0) {
+        expect(data.full_run_unanimous_rate, variant).toBe(data.valid_vote_unanimous_rate);
+      }
+    }
   });
 
   it('the stored evidence carries both flags per pair', () => {

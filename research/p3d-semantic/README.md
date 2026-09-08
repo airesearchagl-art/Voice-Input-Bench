@@ -1,4 +1,4 @@
-# P3-D-A — Semantic Evaluation Architecture Spike (R1.1)
+# P3-D-A — Semantic Evaluation Architecture Spike (Final)
 
 **Research only.** Nothing in this directory is production code. No evaluator was
 added to `src/evaluation/`, no schema v4 was implemented, no existing artifact
@@ -14,18 +14,19 @@ Two questions:
 The answers are in [`SEMANTIC_METHOD_COMPARISON.md`](./SEMANTIC_METHOD_COMPARISON.md)
 and [`EVALUATION_ENVELOPE_ARCHITECTURE.md`](./EVALUATION_ENVELOPE_ARCHITECTURE.md).
 
-> **The labels these methods are scored against are proposals, not ground truth.**
-> They were written by the research agent that built this spike and no person has
-> confirmed them — see [`HUMAN_GOLD_REVIEW.md`](./HUMAN_GOLD_REVIEW.md), where all
-> 28 rows are `pending`. Every accuracy figure in this directory is *provisional
-> accuracy against proposed labels*.
+> **The labels are human-reviewed.** They were proposed by the research agent that
+> built this spike, reviewed by the project owner on **2026-09-08**, and approved
+> unchanged — **28/28 approved, 0 rejected, 0 label changes**. See
+> [`HUMAN_GOLD_REVIEW.md`](./HUMAN_GOLD_REVIEW.md). Current figures are *accuracy
+> against human-reviewed labels*; the R0/R1/R1.1 history sections predate the
+> review and stay labelled *provisional*.
 
 ## Layout
 
 ```
-probes-v1.json                    28 frozen probe pairs with proposed labels
+probes-v1.json                    28 frozen probe pairs with human-reviewed labels
 probes-v1.sha256                  the digest every run records
-HUMAN_GOLD_REVIEW.md              the per-probe sheet a human fills in; all rows pending
+HUMAN_GOLD_REVIEW.md              the per-probe review sheet; 28/28 approved
 prompts/semantic-rubric-v1.md     the frozen rubric prompt (R1: no worked examples)
 prompts/semantic-rubric-v1.sha256 its digest
 scripts/verify-probes.mjs         check the corpus before trusting any result
@@ -36,6 +37,7 @@ scripts/analyze-results.mjs       score both methods and four hybrid rules
 scripts/backfill-vote-semantics.mjs  re-derive stored vote flags, runs untouched
 scripts/lib/scoring.mjs           the rules and the metrics, tested directly
 scripts/lib/voteSemantics.mjs     what a set of repeated runs actually agreed on
+scripts/lib/goldStatus.mjs        how a figure may be described, derived from provenance
 scripts/lib/                      loopback guard, corpus loader, runtime probe, mirrors
 evidence/                         every result file, with the conditions that produced it
 ```
@@ -71,7 +73,8 @@ result is reported as PARTIAL rather than filled in.
 
 These are not conventions, they are tests. `npm.cmd test` runs them alongside the
 production suite (`scripts/lib/researchGuards.test.mjs`,
-`scripts/lib/mirrors.test.mjs`, `scripts/lib/scoring.test.mjs`).
+`scripts/lib/mirrors.test.mjs`, `scripts/lib/scoring.test.mjs`,
+`scripts/lib/goldGate.test.mjs`).
 
 **1. The corpus is the frozen one.** Every run recomputes the digest of
 `probes-v1.json` and refuses to proceed if it does not match `probes-v1.sha256`.
@@ -172,18 +175,30 @@ The labels below are proposals awaiting review, not confirmed ground truth:
 `changed` means they would do something different, or would be missing something
 they needed.
 
-### Who wrote these labels
+### Who wrote these labels, and who confirmed them
 
-The research agent that built this spike did. `probes-v1.json` records that in
-`gold_provenance`: `authoring: "research-agent"`,
-`human_review_status: "pending"`. [`HUMAN_GOLD_REVIEW.md`](./HUMAN_GOLD_REVIEW.md)
-holds one row per probe for a person to confirm or overturn, and every row is
-currently `☐ pending`.
+Two different parties, and `probes-v1.json` records both separately:
 
-Claude Code must not tick those boxes. An agent approving the labels it wrote
-would turn a proposal into ground truth by assertion, and every accuracy figure
-downstream would inherit that. A test asserts no row is ticked and that
-`gold_provenance.authoring` does not say `human`.
+- `authoring: "research-agent"` — the spike proposed the labels. Still true, and
+  the promotion did not overwrite it.
+- `human_review_status: "approved"`, `human_reviewed_pair_count: 28`,
+  `human_label_change_count: 0`, `human_reviewed_at: "2026-09-08"` — the project
+  owner reviewed all 28 and approved them unchanged.
+
+The review happened **outside this repository** and was transcribed here;
+`approval_recorded_by` says so in as many words. Claude Code did not tick a single
+box on its own authority, and tests assert the provenance still names the agent as
+author, that the reviewer role is not an agent, and that the artifact and the
+corpus agree on the counts.
+
+For the whole of R0, R1 and R1.1 the rule was that the agent must not fill in the
+review column. Those rounds are kept, and their figures are still labelled
+*provisional accuracy against proposed labels*, because that is what they were.
+
+**The promotion changed the corpus digest** — from `5a14302d…5b0a` to
+`40715f82…b092` — which invalidated every stored result by design. All evidence
+was re-acquired on real runtimes rather than having a digest rewritten. A test
+asserts no evidence file still references the pre-review digest.
 
 ## The production mirrors
 

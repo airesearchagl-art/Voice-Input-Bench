@@ -26,8 +26,12 @@
  * from a stored flag, so a change to what counts as agreement is a change to one
  * function and not to a set of files that were written months apart.
  *
- * Every accuracy figure is provisional: the labels have not been confirmed by a
- * human. See HUMAN_GOLD_REVIEW.md.
+ * How an accuracy figure may be described is derived from `gold_provenance`,
+ * never written by hand — see `lib/goldStatus.mjs`. While the labels were
+ * proposals, every figure said so. They were reviewed and approved unchanged on
+ * 2026-09-08, so the same figures are now accuracy against human-reviewed
+ * labels. Rounds R0, R1 and R1.1 were measured before that review and keep their
+ * provisional wording.
  *
  * Usage: node scripts/analyze-results.mjs
  */
@@ -37,6 +41,7 @@ import path from 'node:path';
 import { EVIDENCE_DIR, rate, writeEvidence } from './lib/evidence.mjs';
 import { loadProbes } from './lib/probes.mjs';
 import { criticalSignal } from './lib/criticalInfoMirror.mjs';
+import { goldStatus } from './lib/goldStatus.mjs';
 import {
   HYBRIDS,
   HYBRID_RULE_DESCRIPTIONS,
@@ -63,8 +68,8 @@ const summary = {
   probes_sha256: sha256,
   probe_count: probes.length,
   gold_provenance: corpus.gold_provenance,
-  scoring_caveat:
-    'All accuracy figures below are provisional accuracy against proposed labels. No human has confirmed the labels; see HUMAN_GOLD_REVIEW.md.',
+  gold_status: goldStatus(corpus.gold_provenance),
+  scoring_caveat: goldStatus(corpus.gold_provenance).caveat,
   ranking_metric:
     'false_preserved (lower is better). Accuracy is reported and is not the basis of any recommendation.',
   metric_definitions: {
@@ -314,7 +319,7 @@ const file = writeEvidence('analysis-summary.json', summary);
 // ---------------------------------------------------------------------------
 
 console.log(`probes ${probes.length} (sha ${sha256.slice(0, 16)}…)  labels: ${corpus.gold_provenance.authoring} / human review ${corpus.gold_provenance.human_review_status}`);
-console.log('all accuracy below is provisional against proposed labels\n');
+console.log(`all accuracy below is ${summary.gold_status.accuracy_label}\n`);
 
 if (summary.embedding.status === 'OK') {
   for (const [variant, data] of Object.entries(summary.embedding.variants)) {

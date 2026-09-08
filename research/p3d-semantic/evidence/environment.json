@@ -1,5 +1,5 @@
 {
-  "captured_at": "2026-09-07T18:15:57.315Z",
+  "captured_at": "2026-09-08T14:46:41.174Z",
   "captured_by": "scripts/capture-environment.mjs",
   "note": "Recorded so a rerun can be compared to this one. Nothing here was downloaded by the spike: both runtimes and every model listed were already installed on this machine. Fields the runtime does not expose are null next to the reason, never omitted and never filled with a placeholder.",
   "machine": {
@@ -66,19 +66,6 @@
       "version": null,
       "version_status": "unavailable_from_runtime: the local HTTP API exposes no version endpoint (/v1 and /api/v0 have no version route)",
       "models_present": [
-        {
-          "id": "text-embedding-nomic-embed-text-v1.5",
-          "digest": null,
-          "digest_status": "unavailable_from_runtime: LM Studio reports no artifact digest or checksum for a model",
-          "quantization": "Q4_K_M",
-          "arch": "nomic-bert",
-          "publisher": "nomic-ai",
-          "compatibility_type": "gguf",
-          "max_context_length": 2048,
-          "state": "loaded",
-          "revision": null,
-          "revision_status": "unavailable_from_runtime: LM Studio reports no upstream model revision"
-        },
         {
           "id": "qwen/qwen3.5-9b",
           "digest": null,
@@ -153,6 +140,19 @@
           "publisher": "qwen",
           "compatibility_type": "gguf",
           "max_context_length": 262144,
+          "state": "not-loaded",
+          "revision": null,
+          "revision_status": "unavailable_from_runtime: LM Studio reports no upstream model revision"
+        },
+        {
+          "id": "text-embedding-nomic-embed-text-v1.5",
+          "digest": null,
+          "digest_status": "unavailable_from_runtime: LM Studio reports no artifact digest or checksum for a model",
+          "quantization": "Q4_K_M",
+          "arch": "nomic-bert",
+          "publisher": "nomic-ai",
+          "compatibility_type": "gguf",
+          "max_context_length": 2048,
           "state": "not-loaded",
           "revision": null,
           "revision_status": "unavailable_from_runtime: LM Studio reports no upstream model revision"

@@ -2,11 +2,23 @@
   "corpus_id": "probes-v1",
   "gold_provenance": {
     "authoring": "research-agent",
-    "human_review_status": "pending",
+    "human_review_status": "approved",
     "human_review_artifact": "HUMAN_GOLD_REVIEW.md",
-    "note": "These labels were proposed by the research agent that built this spike. No human has independently confirmed them yet, so every number scored against them is provisional. Do not describe them as human-authored or human-reviewed until HUMAN_GOLD_REVIEW.md records an approval, and Claude Code must not record that approval itself."
+    "human_reviewed_pair_count": 28,
+    "human_label_change_count": 0,
+    "human_rejected_pair_count": 0,
+    "human_reviewed_at": "2026-09-08",
+    "human_reviewer_role": "project owner",
+    "human_review_channel": "reviewed outside this repository via ChatGPT orchestration; the result was transcribed here",
+    "approval_recorded_by": "claude-code (transcription only; the agent did not decide any label)",
+    "note": "The research agent that built this spike proposed these labels; the project owner reviewed all 28 and approved them unchanged on 2026-09-08. Accuracy measured against them is accuracy against human-reviewed labels, not against proposals. The agent did not approve its own work: authoring and review are recorded as separate facts and the approval originated outside this repository. Labels are still never sent to any model — the loader builds model input from the two texts alone.",
+    "historical": {
+      "previous_human_review_status": "pending",
+      "previous_corpus_sha256": "5a14302d80732959b5ae249de1daaf731f8e9596fd86042d526b7fafc4475b0a",
+      "note": "R0, R1 and R1.1 were measured against these labels while they were unconfirmed, and every figure published in those rounds is labelled provisional accuracy against proposed labels. Those rounds are kept as history and keep that wording."
+    }
   },
-  "handling": "Labels are frozen and are never sent to any model: the loader builds model input from the two texts alone. See scripts/lib/probes.mjs and its test.",
+  "handling": "Labels and every human-review field are frozen and are never sent to any model: the loader builds model input from the two texts alone. See scripts/lib/probes.mjs and its test.",
   "label_definitions": {
     "preserved": "A reader acting on the hypothesis would do the same thing as a reader acting on the reference. Spelling, script, width, case, numeral form and unit form may differ.",
     "changed": "A reader acting on the hypothesis would do something different, or would be missing something they needed. Includes reversed direction, reversed polarity, a different value or unit, a dropped fact and an added fact."

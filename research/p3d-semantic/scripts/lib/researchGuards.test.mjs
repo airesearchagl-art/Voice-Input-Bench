@@ -125,37 +125,84 @@ describe('loopback-only guard', () => {
 });
 
 describe('gold provenance is stated honestly', () => {
-  const { corpus } = loadProbes();
+  const { corpus, sha256 } = loadProbes();
+  const provenance = corpus.gold_provenance;
+  const reviewRows = readFileSync(path.join(RESEARCH_ROOT, 'HUMAN_GOLD_REVIEW.md'), 'utf8')
+    .split('\n')
+    // Table rows only. The prose above the table names both markers, and a row
+    // using one is the thing being counted.
+    .filter((line) => /^\| p\d+ \|/.test(line));
 
-  it('does not claim a human wrote or reviewed the labels', () => {
-    // The spike proposed these labels. Calling them human-authored before a
-    // person has confirmed them would make every accuracy figure look like a
-    // measurement against ground truth.
-    expect(corpus.gold_provenance.authoring).toBe('research-agent');
-    expect(corpus.gold_provenance.authoring).not.toMatch(/human/);
-    // The field that used to make the claim is gone, not merely contradicted.
+  it('still records who wrote the labels, after the review', () => {
+    // A human reviewed them; the research agent still wrote them. Promoting the
+    // review must not overwrite the authorship — they are two facts, and an
+    // artifact that keeps only the second reads as independently authored.
+    expect(provenance.authoring).toBe('research-agent');
+    expect(provenance.authoring).not.toMatch(/human/);
     expect(corpus.authored_by).toBeUndefined();
   });
 
-  it('records the review as pending until a human says otherwise', () => {
-    expect(corpus.gold_provenance.human_review_status).toBe('pending');
-    expect(corpus.gold_provenance.human_review_artifact).toBe('HUMAN_GOLD_REVIEW.md');
+  it('records the human review as complete, with its shape', () => {
+    expect(provenance.human_review_status).toBe('approved');
+    expect(provenance.human_review_artifact).toBe('HUMAN_GOLD_REVIEW.md');
+    expect(provenance.human_reviewed_pair_count).toBe(corpus.probes.length);
+    expect(provenance.human_label_change_count).toBe(0);
+    expect(provenance.human_rejected_pair_count).toBe(0);
+    expect(provenance.human_reviewed_at).toBe('2026-09-08');
   });
 
-  it('the review artifact has a row per probe and no approvals', () => {
+  it('does not present the approval as the agent\'s own', () => {
+    // The agent transcribed a decision made elsewhere. If this ever reads as
+    // the agent approving its own labels, the artifact is worse than useless.
+    expect(provenance.approval_recorded_by).toMatch(/transcription only/);
+    expect(provenance.human_reviewer_role).toBeTruthy();
+    expect(provenance.human_reviewer_role).not.toMatch(/claude|agent|model/i);
+    expect(provenance.human_review_channel).toMatch(/outside this repository/);
+  });
+
+  it('keeps the pre-review state as history rather than erasing it', () => {
+    // R0, R1 and R1.1 were measured against unconfirmed labels and say so. The
+    // corpus records what they were measured against so those rounds stay
+    // readable.
+    expect(provenance.historical.previous_human_review_status).toBe('pending');
+    expect(provenance.historical.previous_corpus_sha256).toBe(
+      '5a14302d80732959b5ae249de1daaf731f8e9596fd86042d526b7fafc4475b0a',
+    );
+    // The historical digest is history, not the digest anything is checked
+    // against now.
+    expect(sha256).not.toBe(provenance.historical.previous_corpus_sha256);
+  });
+
+  it('the review artifact has one settled row per probe and none pending', () => {
     const review = readFileSync(path.join(RESEARCH_ROOT, 'HUMAN_GOLD_REVIEW.md'), 'utf8');
     for (const probe of corpus.probes) {
       expect(review).toContain(`| ${probe.id} |`);
     }
-    // Count table rows only; the header sentence mentions the marker too.
-    const pendingRows = review.split('\n').filter((line) => /^\| p\d+ \|/.test(line));
-    expect(pendingRows).toHaveLength(corpus.probes.length);
-    expect(pendingRows.every((line) => line.includes('☐ pending'))).toBe(true);
-    // An agent must not approve its own labels, so no row may be ticked. The
-    // instructions above the table name the marker; a row using it is the thing
-    // being guarded against.
-    expect(pendingRows.some((line) => line.includes('☑'))).toBe(false);
-    expect(pendingRows.some((line) => /approved/i.test(line))).toBe(false);
+    expect(reviewRows).toHaveLength(corpus.probes.length);
+    expect(reviewRows.filter((line) => line.includes('☑ approved'))).toHaveLength(28);
+    expect(reviewRows.filter((line) => line.includes('☐ pending'))).toHaveLength(0);
+    expect(reviewRows.some((line) => /✗|rejected/i.test(line))).toBe(false);
+  });
+
+  it('the artifact and the corpus agree on the counts', () => {
+    // Two records of the same review. If a row is ever flipped without the
+    // corpus counts moving, or the reverse, they stop agreeing here.
+    const approved = reviewRows.filter((line) => line.includes('☑ approved')).length;
+    const rejected = reviewRows.filter((line) => /✗/.test(line)).length;
+    expect(approved).toBe(provenance.human_reviewed_pair_count);
+    expect(rejected).toBe(provenance.human_rejected_pair_count);
+  });
+
+  it('no label moved when the review was recorded', () => {
+    // The review approved every proposal unchanged, so the labels are the ones
+    // R1.1 measured. Only their status changed.
+    const labels = Object.fromEntries(corpus.probes.map((p) => [p.id, p.gold.label]));
+    expect(labels.p04).toBe('preserved');
+    expect(labels.p13).toBe('changed');
+    expect(labels.p21).toBe('changed');
+    expect(corpus.probes.filter((p) => p.gold.label === 'preserved')).toHaveLength(13);
+    expect(corpus.probes.filter((p) => p.gold.label === 'changed')).toHaveLength(15);
+    expect(corpus.probes.filter((p) => p.hard_negative)).toHaveLength(13);
   });
 });
 
@@ -182,6 +229,37 @@ describe('gold labels never reach a model', () => {
       expect(serialized).not.toContain(probe.gold.reason_code);
       expect(serialized).not.toContain(probe.gold.note);
       expect(serialized).not.toContain('hard_negative');
+    }
+  });
+
+  it('no human-review metadata reaches the model either', () => {
+    // The review added fields to the corpus. `modelInputFor` builds its object
+    // from the two texts by construction, so nothing new can leak by being
+    // forgotten — but the promotion is exactly when that would go wrong.
+    const { corpus } = loadProbes();
+    const template = readFileSync(
+      path.join(RESEARCH_ROOT, 'prompts', 'semantic-rubric-v1.md'),
+      'utf8',
+    );
+    for (const probe of probes) {
+      const texts = textsFor(probe);
+      const prompt = template
+        .replace('<<<REFERENCE>>>', texts.reference)
+        .replace('<<<HYPOTHESIS>>>', texts.hypothesis);
+      const serialized = JSON.stringify(modelInputFor(probe));
+
+      for (const marker of [
+        'human_review',
+        'human_reviewed',
+        'approved',
+        'gold_provenance',
+        corpus.gold_provenance.human_reviewed_at,
+        corpus.gold_provenance.human_reviewer_role,
+      ]) {
+        expect(serialized, `model input leaked ${marker}`).not.toContain(marker);
+        expect(prompt, `prompt leaked ${marker}`).not.toContain(marker);
+      }
+      expect(prompt).not.toContain('HUMAN_GOLD_REVIEW');
     }
   });
 

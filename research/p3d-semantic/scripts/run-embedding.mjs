@@ -25,6 +25,7 @@ import { loadProbes, modelInputFor } from './lib/probes.mjs';
 import { environmentSnapshot, mean, median, writeEvidence } from './lib/evidence.mjs';
 import { surfaceNormalizeMirror } from './lib/surfaceNormalizeMirror.mjs';
 import { lmStudioRuntimeInfo } from './lib/runtimeInfo.mjs';
+import { goldStatus } from './lib/goldStatus.mjs';
 
 const DEFAULT_ENDPOINT = 'http://127.0.0.1:1234';
 const DEFAULT_MODEL = 'text-embedding-nomic-embed-text-v1.5';
@@ -182,8 +183,8 @@ async function main() {
     method: 'embedding',
     status: 'OK',
     gold_provenance: corpus.gold_provenance,
-    scoring_caveat:
-      'Any accuracy computed from this file is provisional accuracy against proposed labels. The labels have not been confirmed by a human.',
+    gold_status: goldStatus(corpus.gold_provenance),
+    scoring_caveat: goldStatus(corpus.gold_provenance).caveat,
     ...runtime,
     // The vectors themselves are not written anywhere. They are large, they are
     // derived from customer text, and nothing downstream needs them: the

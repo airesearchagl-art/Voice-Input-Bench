@@ -1,6 +1,11 @@
-# Evaluation Envelope Architecture — P3-D-A (R1.1)
+# Evaluation Envelope Architecture — P3-D-A Final
 
 **Design study. No schema v4 is implemented here, and nothing in `src/` changes.**
+
+> Final round. The corpus labels are human-reviewed (28/28 approved, 0 changes,
+> 2026-09-08) and every measurement referenced below was re-acquired against the
+> promoted corpus. The recommendation did not change; one new argument for it is
+> recorded at the end.
 
 The question: when a fourth evaluator arrives, does it get a fourth per-evaluator
 schema, or does it get a generic envelope that later evaluators share?
@@ -193,6 +198,30 @@ better supported than it was.
   carry automatically. An envelope designed before that choice would be
   designed for the wrong output.
 
+## Final answer on the envelope question
+
+**G. Generic Evaluation Envelope v4: defer.** Unchanged across four rounds, and
+the final evidence gives the clearest reason yet.
+
+The envelope's shape depends on what a semantic evaluator outputs, and that is
+still an open decision rather than an open question. On the final evidence H1 and
+H3 are both viable and they need **different artifacts**: H1 emits
+`preserved | changed | review` and needs somewhere to record that an automatic
+`preserved` rested on three agreeing runs and a concurring embedding; H3 never
+emits `preserved` at all, and an artifact for it does not need that field —
+carrying it would invite a later reader to fill it in.
+
+That is not a shape that can be frozen before someone picks the rule. Freezing it
+now would mean designing an envelope for the union of two rules, which is how a
+schema ends up with fields that are optional because nobody could decide.
+
+**What to build when the rule is picked**, unchanged from R1: Option B's
+`execution` block and `evidence.derived[]`, with Option A's explicit, written-out
+canonical serializers per evaluator. And **v1/v2/v3 stay read-only and
+unmigrated** — they are exactly recomputable, which a semantic artifact will never
+be, and that difference is a reason to keep them apart rather than a wrinkle to
+smooth over.
+
 ## R1.1 — what a scoring correction says about schema design
 
 R1.1 changed no model output and no conclusion about which method to use. It
@@ -212,3 +241,30 @@ against treating a summary field as the record. It also suggests the envelope
 should distinguish, explicitly, between fields the artifact **stores** and fields
 it **derives**: R1's `unanimous` was a derived field that outlived the definition
 it was derived under, and nothing in the file said so.
+
+## Final round — what the Human Gold promotion added
+
+The promotion changed the corpus digest, which invalidated every stored result by
+design, which forced a full re-acquisition. That is the integrity model working:
+**a corpus edit cannot silently leave old numbers looking current.**
+
+It also surfaced a smaller design point with a direct bearing on the envelope. The
+corpus now records two separate facts — `authoring: research-agent` and
+`human_review_status: approved` — and how an accuracy figure may be *described*
+is derived from the second (`scripts/lib/goldStatus.mjs`) rather than written into
+each document by hand. Before the promotion every figure had to say "provisional";
+after it, the same code says "human-reviewed", and no file needed editing to make
+that true.
+
+An evaluation artifact has the same problem one level up. A verdict's standing
+depends on things outside the verdict — which corpus, reviewed by whom, when — and
+if that standing is written into the artifact as prose it goes stale the moment the
+answer changes. **The envelope should carry the provenance and derive the claim,
+not store the claim.**
+
+Finally, the re-acquisition produced a repeatability result the earlier rounds
+could not: two runs of the same model, prompt and temperature, three days apart,
+agreed on every label and differed on compliance — 96.4% vs 100% parseable on raw
+input. A schema that stores only the verdict cannot express that difference, and a
+bench that cannot express it will eventually quote one run as if it were the
+method.

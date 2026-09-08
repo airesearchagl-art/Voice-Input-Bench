@@ -54,6 +54,7 @@ import { environmentSnapshot, mean, median, writeEvidence } from './lib/evidence
 import { surfaceNormalizeMirror } from './lib/surfaceNormalizeMirror.mjs';
 import { lmStudioRuntimeInfo, ollamaRuntimeInfo } from './lib/runtimeInfo.mjs';
 import { tallyRuns } from './lib/voteSemantics.mjs';
+import { goldStatus } from './lib/goldStatus.mjs';
 
 const DEFAULT_ENDPOINT = 'http://127.0.0.1:11434';
 const DEFAULT_MODEL = 'llama3.1:8b';
@@ -313,8 +314,8 @@ async function main() {
     status: 'OK',
     input_variant: inputVariant,
     gold_provenance: corpus.gold_provenance,
-    scoring_caveat:
-      'Any accuracy computed from this file is provisional accuracy against proposed labels. The labels have not been confirmed by a human.',
+    gold_status: goldStatus(corpus.gold_provenance),
+    scoring_caveat: goldStatus(corpus.gold_provenance).caveat,
     ...runtime,
     request_contract: {
       api,
