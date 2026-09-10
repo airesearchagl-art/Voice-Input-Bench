@@ -545,7 +545,7 @@ describe('POST /api/evaluations with the surface evaluator', () => {
     expect(body.error.kind).toBe('EVALUATION_RESULT_NOT_SEALED');
   });
 
-  it('names all three evaluators when refusing an unknown one', async () => {
+  it('names every implemented evaluator when refusing an unknown one', async () => {
     await writeRun();
     await saveSealedResult();
 
@@ -558,6 +558,9 @@ describe('POST /api/evaluations with the surface evaluator', () => {
     expect(body.error.message).toContain('raw-char-v1');
     expect(body.error.message).toContain('surface-normalized-char-v1');
     expect(body.error.message).toContain('critical-info-v1');
+    // The fourth layer has to be offered here too. A refusal that lists three of
+    // four evaluators tells an operator the one they wanted does not exist.
+    expect(body.error.message).toContain('semantic-h3-v1');
   });
 
   it('lists all three Evaluations for the same Run', async () => {

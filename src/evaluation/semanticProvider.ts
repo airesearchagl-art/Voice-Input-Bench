@@ -101,6 +101,42 @@ export function isLoopbackHost(hostname: unknown): boolean {
 }
 
 /**
+ * The host exactly as the endpoint spells it, before URL parsing rewrites it.
+ *
+ * `new URL()` does IPv4 arithmetic. It turns `http://2130706433`, `http://127.1`
+ * and `http://0177.0.0.1` all into hostname `127.0.0.1`, so a check that read
+ * only the parsed hostname would accept spellings the approved contract lists
+ * as refusals. Those forms do land on loopback, so this is not a hole someone
+ * reaches through from outside — but the contract names four exact spellings,
+ * and an address that has to be decoded before it reads as loopback is not one
+ * of them. Comparing the host as written keeps the allowlist a comparison
+ * rather than a computation.
+ */
+function rawHostOf(endpoint: string): string | null {
+  const trimmed = endpoint.trim();
+  const schemeEnd = trimmed.indexOf('://');
+  if (schemeEnd < 0) return null;
+
+  let authority = trimmed.slice(schemeEnd + 3);
+  for (const terminator of ['/', '?', '#']) {
+    const at = authority.indexOf(terminator);
+    if (at >= 0) authority = authority.slice(0, at);
+  }
+
+  const userinfoEnd = authority.lastIndexOf('@');
+  const hostAndPort = userinfoEnd >= 0 ? authority.slice(userinfoEnd + 1) : authority;
+
+  // A bracketed IPv6 literal keeps its brackets; its colons are not a port.
+  if (hostAndPort.startsWith('[')) {
+    const close = hostAndPort.indexOf(']');
+    return close < 0 ? null : hostAndPort.slice(0, close + 1);
+  }
+
+  const portAt = hostAndPort.indexOf(':');
+  return portAt >= 0 ? hostAndPort.slice(0, portAt) : hostAndPort;
+}
+
+/**
  * Parse an endpoint and refuse it unless it is loopback http(s).
  *
  * Returns the parsed URL only on success, so a caller never holds a URL it is
@@ -142,6 +178,17 @@ export function assertLoopbackEndpoint(endpoint: string): URL {
     return fail(
       'SEMANTIC_ENDPOINT_NOT_LOOPBACK',
       `Semantic endpoint is not loopback: ${url.hostname}`,
+      `allowed=${SEMANTIC_ALLOWED_HOSTS.join(' / ')}`,
+    );
+  }
+
+  // The parsed hostname agreeing is not enough: it may have been computed from
+  // a spelling the contract refuses. The endpoint must also *read* as loopback.
+  const rawHost = rawHostOf(endpoint);
+  if (rawHost === null || !isLoopbackHost(rawHost)) {
+    return fail(
+      'SEMANTIC_ENDPOINT_NOT_LOOPBACK',
+      `Semantic endpoint is not written as a loopback host: ${rawHost ?? '(no host)'}`,
       `allowed=${SEMANTIC_ALLOWED_HOSTS.join(' / ')}`,
     );
   }

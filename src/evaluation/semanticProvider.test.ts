@@ -105,6 +105,33 @@ describe('only a loopback endpoint is accepted', () => {
     }
   });
 
+  it('refuses an endpoint that is only loopback after URL normalization', () => {
+    // The allowlist must not do arithmetic on the caller's behalf. `new URL()`
+    // rewrites every one of these to hostname 127.0.0.1, so a gate that trusted
+    // the parsed hostname would have accepted all three even though none of
+    // them is one of the four approved spellings.
+    for (const endpoint of [
+      'http://2130706433:11434',
+      'http://0177.0.0.1:11434',
+      'http://127.1:11434',
+    ]) {
+      expect(new URL(endpoint).hostname).toBe('127.0.0.1');
+      expect(() => assertLoopbackEndpoint(endpoint)).toThrow(SemanticProviderError);
+    }
+  });
+
+  it('accepts the approved loopback endpoints as written', () => {
+    for (const endpoint of [
+      'http://127.0.0.1:11434',
+      'http://localhost:11434',
+      'http://[::1]:11434',
+      'http://LOCALHOST:11434',
+      'http://127.0.0.1',
+    ]) {
+      expect(() => assertLoopbackEndpoint(endpoint)).not.toThrow();
+    }
+  });
+
   it('refuses an external endpoint', () => {
     expect(() => assertLoopbackEndpoint('http://ollama.example.com:11434')).toThrow(
       SemanticProviderError,
