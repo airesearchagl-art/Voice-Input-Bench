@@ -66,6 +66,13 @@ same evaluator. Any comparison that shows "the" Critical result for a Result is
 already making a silent choice today. This spike makes that choice explicit —
 and refuses to make it at all when verified entries disagree.
 
+**A note on trust, added in R2.** A rejected Evaluation carries no evaluator id
+in the shape production returns, so it cannot be filed under an evaluator at
+all. Evaluator groups therefore hold verified entries only, and rejected
+Evaluations sit on the Result. This removes a per-evaluator "attempted and
+failed" signal the earlier draft claimed — it could only produce it by reading
+the `evaluator` field inside an artifact that had just failed verification.
+
 **4. Verification status is a moving target, so it must not be frozen.**
 Five v2 artifacts moved from `UNEXPECTED` to `EVALUATION_MALFORMED` in P3-E-A,
 and five v3 artifacts moved from `EVALUATION_INTEGRITY_MISMATCH` to

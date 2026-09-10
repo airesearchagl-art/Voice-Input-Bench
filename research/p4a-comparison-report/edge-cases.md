@@ -27,10 +27,10 @@ verified entries only.
 verified; `selection_reason` records `newest-verified-by-id-v1`; the other
 verified entries stay visible.
 
-Note that `multiple_candidates` and `rejected_count` are independent readings.
-`7cdff2e8 / critical-info-v1` is two verified plus one rejected, and both facts
-have to survive into the model — which is why group state is dimensions rather
-than a single enum.
+`multiple_candidates` and `conflicting_evidence` remain independent readings and
+can both be true, which is why group state is dimensions rather than one enum.
+The rejected-sibling overlap the previous revision recorded here was an artifact
+of grouping by an untrusted field; those rejected entries now sit on the Result.
 
 For v1/v2/v3 these entries are necessarily equivalent — readback recomputes those
 metrics from the same Run and Result bytes, so a verified entry cannot disagree
@@ -54,13 +54,23 @@ Evaluation id rather than one verdict.
 
 ## 5. Evidence exists, none of it verifies
 
-*Present: four groups — `4e66c178 / surface`, `4e66c178 / semantic-h3-v1`,
-`7cdff2e8 / surface` and `1ff85dda / surface` — each 1 rejected, 0 verified.*
+*Present: four Results carry an Evaluation that does not verify and have no
+verified Evaluation of the evaluator that artifact claims to be.*
 
-`availability: 'only_rejected'`, `verified_count: 0`, `rejected_count: n`,
-headline `null`. This must never render as `missing` and never as a blank cell
-that reads like "not applicable". Something was attempted and cannot be used,
-which is a stronger signal than nothing having been attempted.
+This case had to be **restated** in R2. The earlier draft called it a group
+state, `only_rejected` — but computing it meant reading the `evaluator` claim
+inside a failed artifact, which is precisely what the trust rule forbids.
+
+The honest split:
+
+```text
+evaluator group      availability: 'missing'      no verified evidence
+Result               unclassified_rejected_count  n unusable Evaluations
+```
+
+The "attempted and unusable" signal survives, at the level where it can be
+stated without a guess. It must never render as a clean blank: a Result with
+unclassified rejected Evaluations is visibly different from one with none.
 
 ## 6. Missing evaluator
 
@@ -74,9 +84,15 @@ zero, not `exact_match: false`, and not a pass.
 
 *Present: 4 Results at `schema_version: 1`, all with zero Evaluations.*
 
-`integrity_trust: 'legacy-unsealed'`, completeness `not_eligible`. Listed, never
-counted as coverage, never migrated. Distinct from `missing`: nothing is
-expected of it, because strict Evaluation requires a sealed Result v2.
+A `ComparisonLegacyResult`, held at Run level in `legacy_unsealed_results[]` and
+**never inside a tool group**: nothing proves its `tool` section was not edited
+after the fact, so its tool fields are named `claimed_*` and carry
+`tool_claim_is_unverified: true`.
+
+Ineligibility is structural rather than a flag — it is a different type, not a
+Result with a state on it. Listed, never counted as coverage, never migrated.
+Distinct from `missing`: nothing is expected of it, because strict Evaluation
+requires a sealed Result v2.
 
 ## 8. Rejected Evaluation with an unreadable evaluator record
 
@@ -86,12 +102,16 @@ rejected as `EVALUATION_EVALUATOR_MISMATCH`.*
 `evaluator_id: null`, and it goes to that Result's
 `unclassified_rejected_evaluations[]` — **not** into any evaluator group.
 
-This is the normal case rather than the exotic one: `EvaluationListEntry`'s
-rejected variant carries no evaluator id at all, so *no* rejected Evaluation has
-a trustworthy evaluator. The stored `evaluator` claim inside the file is not
-promoted to a trusted attribution after the artifact has failed verification.
+This is not the exotic case, it is *every* case: `EvaluationListEntry`'s
+rejected variant carries no evaluator id at all, so no rejected Evaluation ever
+has a trustworthy evaluator, whatever its file happens to say. The stored
+`evaluator` claim is not promoted to an attribution after the artifact failed.
 The current UI keeps rejected entries in a separate block for the same reason
 (`ManualSttResults.tsx:601-603`).
+
+Consequently evaluator groups hold verified entries only, and the four pre-final
+v1 artifacts are simply four unclassified rejected Evaluations on their Results
+rather than a `(pre-final-v1-shape)` pseudo-group.
 
 ## 9. Rejected Evaluation with no attributable Result
 

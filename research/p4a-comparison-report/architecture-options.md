@@ -103,8 +103,8 @@ including each Evaluation's verification status at write time.
 
 The screen is derived exactly as in Option A. A Report additionally freezes an
 explicit **evidence selection**: the exact Run id, Result ids and — for every
-evaluator group — every Evaluation id *considered*, plus evidence hashes and
-ordering rules. Not the verification verdicts.
+evaluator group — every Evaluation id *considered*, plus the byte SHA-256 of
+every artifact file read and the ordering rules. Not the verification verdicts.
 
 ```text
 UI          derived per request, always current
@@ -115,6 +115,10 @@ Re-render   re-reads exactly those ids and re-verifies them now
 Freezing the whole candidate set rather than only the headline is what keeps an
 old report isolated from evidence created after it: a later Evaluation is not in
 the frozen set, so it cannot join the re-render or become the new newest.
+
+Freezing each artifact's byte hash alongside its id is what lets a re-render say
+*which* kind of change happened — the artifact moved under a stable id, or the
+same bytes are now judged differently by a hardened verifier.
 
 The package is a `ReportSource` JSON plus rendered Markdown. Whether it is
 app-managed or operator-exported is a P4-C decision and does not affect the

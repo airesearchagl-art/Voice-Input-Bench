@@ -35,7 +35,8 @@ document holds either way: what P4-A fixes is the *contract*, not the storage.
 |---|---|
 | Run identity | `run_id`, `test_id` |
 | Canonical evidence | `source_sha256`, `audio_sha256`, `manifest_schema_version` |
-| Per tool, per Result | `result_id`, tool id/name/version, `capture.delivery_path`, `integrity_trust` |
+| Per tool, per Result | `result_id`, tool identity, per-Result `tool.version`, `capture.delivery_path` |
+| Unsealed Results | listed at Run level, tool shown as an unverified claim |
 | Transcript | from the verified Result |
 | Raw | `exact_match`, `cer`, edit distance, substitutions/deletions/insertions |
 | Surface | same metric shape, plus normalized hashes and lengths |
@@ -69,22 +70,37 @@ not such a statement and does not appear.
 
 ### Gaps are content, not omissions
 
-A missing evaluator gets a line saying it is missing. A group whose only
-evidence is rejected gets a line saying evidence exists and none of it verifies,
-with the reason. Rejected entries are never filtered out to make a report look
-complete, and neither are unclassified or unattributed ones. The report's
-completeness state appears near the top, not buried.
+A missing evaluator gets a line saying it is missing — meaning no *verified*
+evidence for it exists.
 
-## ReportSource — freeze the whole candidate set
+A Result carrying rejected Evaluations gets a line saying so at Result level,
+with each one's reason. It is deliberately not phrased per evaluator: a rejected
+Evaluation carries no trustworthy evaluator id, so "surface failed" is a claim
+the evidence cannot support, while "this Result has an unusable Evaluation" is
+one it can.
 
-The mistake a headline-only freeze makes is subtle and bad: a Report that
-records only the Evaluation it used cannot distinguish *"there was one candidate
-and it was chosen"* from *"there were four and one was chosen"*, and it cannot
-prove that a group was empty rather than merely unmentioned. Worse, an
-Evaluation created **after** the report would silently join the candidate set on
-re-render and could change which entry looks newest.
+Rejected entries are never filtered out to make a report look complete, and
+neither are unclassified, unattributed or legacy ones. The report's completeness
+state appears near the top, not buried.
 
-So the freeze covers every candidate considered, not just the survivor.
+## ReportSource — freeze the candidate set *and* the exact bytes
+
+Two different things can change under a report after it is written, and a report
+that cannot tell them apart is not auditable:
+
+```text
+same bytes, new verifier    a verifier was hardened; the evidence is untouched
+same id, different bytes    the artifact itself is not what the report read
+```
+
+Freezing ids alone catches neither. Freezing verdicts catches the wrong one. So
+`ReportSource` freezes **identity plus content hash** for every artifact it
+read, including artifacts that have no valid seal of their own.
+
+A headline-only freeze is also insufficient for a second reason: it cannot
+distinguish "one candidate, chosen" from "four candidates, one chosen", cannot
+prove a group was empty rather than unmentioned, and lets an Evaluation created
+*after* the report join the candidate set on re-render and become the new newest.
 
 ```ts
 interface ReportSource {
@@ -95,60 +111,97 @@ interface ReportSource {
   source_sha256: string;
   audio_sha256: string;
 
+  /** Sealed Results placed in a tool group, verified or attributably rejected. */
   results: Array<{
     result_id: string;
-    tool_id: SttToolId;
-    transcript_sha256: string;
-    integrity_trust: IntegrityTrust;
+    tool: ToolIdentity;
+    tool_version: string | null;
+    result_status: 'verified' | 'rejected';
 
-    /** One entry per evaluator in EVALUATOR_IDS order, including empty ones. */
+    /** Content identity, independent of any seal. */
+    result_file_sha256: string;
+
+    /** Present only for a verified Result; a rejected one vouches for neither. */
+    result_semantic_sha256?: string;
+    transcript_sha256?: string;
+
     evaluation_groups: Array<{
       evaluator_id: EvaluatorId;
 
       /**
-       * Every Evaluation id considered for this group at report time,
-       * verified and rejected alike, evaluation_id ascending.
-       *
-       * Empty means the candidate set was empty — which is how `missing` stays
-       * reconstructable rather than being confused with "not mentioned".
+       * Every verified Evaluation considered for this group at report time,
+       * evaluation_id ascending. Empty means the candidate set was empty —
+       * which is how `missing` stays reconstructable rather than being
+       * indistinguishable from "not mentioned".
        */
       considered_evaluation_ids: string[];
 
-      /** Which ones did not verify at report time. Subset of the above. */
-      rejected_evaluation_ids: string[];
-
-      /** Null when nothing verified, and null on conflict. */
       headline_evaluation_id: string | null;
       selection_reason: SelectionReason | null;
-
-      /** Present only when conflicting_evidence was true. */
       conflicting_evaluation_ids?: string[];
-
-      /** The seal of each verified candidate, so a re-render can tell it apart. */
-      semantic_sha256_by_evaluation_id: Record<string, string>;
     }>;
 
-    /** Rejected Evaluations naming this Result but no trustworthy evaluator. */
+    /** Named, not attributed. No evaluator is inferred for these. */
     unclassified_rejected_evaluation_ids: string[];
   }>;
 
-  /** Rejected Results whose tool could not be trusted. */
+  legacy_unsealed_result_ids: string[];
   unattributed_result_ids: string[];
-
-  /** Rejected Evaluations naming no Result. */
   unattributed_rejected_evaluation_ids: string[];
 
-  /** Named so a re-render can tell whether it is reproducing the same view. */
-  ordering: OrderingRules;
+  /**
+   * Content identity for every artifact this report read, of any kind.
+   *
+   * Byte SHA-256 of the file as stored — `result.json` or `evaluation.json` —
+   * so an artifact with no valid semantic seal still has a frozen identity.
+   * This is the map a re-render compares against before it verifies anything.
+   */
+  artifact_content: {
+    results: Record<string, { file_sha256: string }>;
+    evaluations: Record<string, {
+      file_sha256: string;
+      /** Present only when the Evaluation verified at report time. */
+      semantic_sha256?: string;
+    }>;
+  };
 
-  /** What was already incomplete when the report was made. */
+  ordering: OrderingRules;
   completeness: RunCompleteness;
 }
 ```
 
-**No verification verdicts are frozen.** `rejected_evaluation_ids` records what
-did not verify *at report time* as historical context; it is not consulted on
-re-render, which re-verifies everything itself.
+Every id that appears anywhere else in `ReportSource` has an entry in
+`artifact_content`. Legacy, rejected and unattributed artifacts included —
+especially those, since they are the ones with no seal to fall back on.
+
+### Re-render, in order
+
+```text
+1. read ReportSource
+2. load EXACTLY the ids it names — nothing else, ever
+3. hash each file and compare against artifact_content
+       mismatch -> evidence_changed
+                   report it as such and stop treating it as the cited evidence
+       match    -> continue
+4. re-verify each matching artifact with the CURRENT verifier
+5. re-derive headline selection under the frozen ordering rules
+6. report any change in verification outcome as a verification change,
+   distinct from evidence_changed
+```
+
+Step 2 is what isolates an old report from new evidence: an Evaluation created
+after the report is not in `considered_evaluation_ids`, so it cannot join the
+re-render or become the new newest.
+
+Step 3 is the fix this revision adds. Without it, an artifact edited in place
+under a stable id would surface as "the verifier now rejects this", implying a
+tooling change when the real event was that the evidence moved. Those are
+different findings and an operator acts differently on each.
+
+Step 4 is what keeps the report honest. Verification status is a property of the
+current verifier, not of the artifact — five v2 artifacts and five v3 artifacts
+changed outcome inside a week with no byte modified — so a re-render reports
+today's outcome rather than repeating a stored one.
 
 ### Conflict is never resolved by recency
 
@@ -166,25 +219,6 @@ print the newest one as the verdict, does not take a majority across
 Evaluations, and does not prefer whichever answer is friendlier. A report that
 resolved a `changed` / `review` disagreement by picking one would be asserting
 something no evaluator concluded.
-
-### What a re-render does
-
-1. Read `ReportSource`.
-2. Load **exactly** the ids it names — nothing else, ever.
-3. Re-verify each one with the current verifier.
-4. Re-derive headline selection from what verifies now, under the frozen
-   ordering rules.
-5. State any cited evidence that no longer verifies.
-
-Step 2 is what isolates an old report from new evidence. An Evaluation created
-after the report is not in `considered_evaluation_ids`, so it cannot enter the
-re-render, cannot become the new "newest verified", and cannot silently change
-what the report says.
-
-Step 3 is what keeps the report honest. Verification status is a property of the
-current verifier, not of the artifact — five v2 artifacts and five v3 artifacts
-changed outcome inside a week with no byte modified — so a re-render reports
-today's outcome rather than repeating a stored one.
 
 ## Reproducibility and identity
 

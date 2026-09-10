@@ -18,13 +18,22 @@ The derived, evaluation-aware comparison for one Run.
 - A pure read-model builder: `(runId) -> ComparisonRun`, assembled from
   `verifyRunEvidence`, `listResultsForRun` and `listEvaluationsForRun`.
 - Grouping by tool and by `(result_id, evaluator_id)`.
-- Headline selection with `selection_reason`, the orthogonal group-state
-  dimensions, and the attribution containers
-  (`unattributed_results`, `unclassified_rejected_evaluations`,
-  `unattributed_rejected_evaluations`) from `comparison-contract.md`.
+- Evaluator groups built from **verified entries only**, with headline
+  selection and `selection_reason`.
+- The `ComparisonResult` discriminated union (verified / rejected / legacy) and
+  tool identity that keeps custom `other` tools distinct.
+- The attribution containers: `unclassified_rejected_evaluations`,
+  `unattributed_rejected_evaluations`, `unattributed_results` with their
+  `related_*_evaluations`, and `legacy_unsealed_results`.
 - Deterministic ordering consumed from the existing constants — `STT_TOOL_IDS`
   and `EVALUATOR_IDS` — rather than restated.
 - `GET /api/comparisons/run/:runId`.
+
+**Optional, only if adopted deliberately:** a fail-closed `trustedEvaluatorId`
+on `EvaluationListEntry`, set only when the evaluator contract verified before
+the failure. It would let rejected Evaluations be attributed per evaluator
+again. It is a production change with its own contract and must be scoped
+explicitly, never added implicitly. See `comparison-contract.md`.
 - A comparison view: tools side by side, four evaluator rows per Result.
 
 **Explicitly out of scope**
@@ -46,16 +55,19 @@ fixtures, because the tree contains no example:
 
 **Test obligations local data does satisfy** — and which should be pinned
 against real fixtures: multiple Results per tool, six groups with multiple
-verified Evaluations, four groups with only rejected evidence, a group that is
-simultaneously `multiple_candidates` and has a rejected sibling, missing
-evaluators, legacy unsealed Results, and rejected artifacts that carry no
-trustworthy evaluator.
+verified Evaluations, Results carrying unclassified rejected Evaluations,
+missing evaluators, legacy unsealed Results kept out of tool groups, and
+rejected artifacts that carry no trustworthy evaluator.
+
+**Also not exercised by local data:** every Result on disk is a built-in tool,
+so the custom `other` identity rules — two custom tools never sharing a column,
+and a rejected `other` never being guessed into one — need fixtures too.
 
 **Definition of done.** A comparison for either populated Run renders every
 Result and every evaluator group, names every Evaluation id it considered, shows
-the six `multiple_candidates` groups and the four `only_rejected` groups as
-such, and keeps `multiple_candidates` and `rejected_count` visible together on
-the groups where both are true.
+the six `multiple_candidates` groups as such, keeps every rejected Evaluation
+visible at Result or Run level without inferring an evaluator for it, and keeps
+legacy unsealed Results out of the tool groups while still showing them.
 
 ## P4-C — Deterministic Report generation
 

@@ -49,8 +49,12 @@ comparisons is a later question (P4-D) and only if a real need appears.
   tool usually mean repeated capture attempts, and which one is authoritative is
   an operator judgement the system has no basis to make. They are shown as
   siblings.
-- Legacy unsealed v1 Results are listed with an explicit `not_eligible` state,
-  not hidden and not counted as coverage.
+- Legacy unsealed v1 Results are a distinct type held at Run level, shown with
+  their tool as an unverified claim, never inside a tool group and never counted
+  as coverage. Four exist today.
+- Tool identity is `id` for the two built-ins and `(id, trusted_name)` for
+  `other`, so two unrelated custom tools never share a column; `tool.version`
+  stays per Result.
 
 ### Evaluation history policy: keep all, select one, say which
 
@@ -90,22 +94,29 @@ be conflicting *and* have rejected siblings. So state is recorded as separate
 readings:
 
 ```text
-availability          available | only_rejected | missing
+availability          available | missing        (verified entries only)
 verified_count        n
-rejected_count        n
 multiple_candidates   verified_count > 1
 conflicting_evidence  verified entries disagree (v4 only)
 ```
 
-- `missing` is not zero and not a pass.
-- `only_rejected` is not `missing` — something was attempted and cannot be used,
-  which is a stronger signal than nothing having been attempted. Four evaluator
-  groups are in this state today.
-- `available` says nothing about whether rejected siblings exist; that is what
-  `rejected_count` is for. `7cdff2e8 / critical-info-v1` is available, has two
-  verified candidates, and has one rejected sibling — all three at once.
-- Rejected entries stay visible with their `reason`, `message` and `detail`.
-  Nothing is filtered out of the view or the report.
+At Result level, alongside those:
+
+```text
+unclassified_rejected_count   Evaluations naming this Result that cannot be
+                              used and cannot be attributed to an evaluator
+```
+
+- `missing` is not zero and not a pass. It means no *verified* evidence exists
+  for that evaluator.
+- `multiple_candidates` and `conflicting_evidence` are different claims and can
+  both be true: one says a selection happened among candidates, the other says
+  the candidates disagree.
+- Rejected entries stay visible at Result or Run level with their `reason`,
+  `message` and `detail`. Nothing is filtered out of the view or the report.
+- `rejected_count` and `only_rejected` are deliberately **not** group-level
+  facts. The earlier draft had them, and it could only compute them by reading
+  the untrusted `evaluator` claim inside a failed artifact.
 
 ### Attribution: a failed artifact is never filed on its own say-so
 
@@ -115,18 +126,30 @@ without a seal `trustedToolId` is "a shape check rather than trustworthy
 attribution" (`saveResult.ts:185-198`, `comparisonMatrix.ts:194-209`). One
 broken Windows observation must not appear as a failure of Aqua Voice.
 
-The comparison applies the same rule at both levels:
+The comparison applies the same rule everywhere, without exception:
 
 ```text
-rejected Result, tool not trusted        -> Run.unattributed_results[]
-rejected Evaluation, evaluator unknown   -> Result.unclassified_rejected_evaluations[]
+evaluator groups                         verified Evaluations only
+rejected Evaluation, result_id known     -> Result.unclassified_rejected_evaluations[]
 rejected Evaluation, no result_id        -> Run.unattributed_rejected_evaluations[]
+rejected Result, tool not trusted        -> Run.unattributed_results[]
+legacy unsealed Result                   -> Run.legacy_unsealed_results[]
 ```
 
-The middle case is the normal one, not an exception: `EvaluationListEntry`'s
-rejected variant carries no evaluator id at all, so a rejected Evaluation never
-has a trustworthy evaluator to be filed under. This matches what the UI already
-does for the same stated reason (`ManualSttResults.tsx:601-603`).
+**Evaluator groups contain verified entries only.** A rejected
+`EvaluationListEntry` has no evaluator id at all, so there is never a
+trustworthy evaluator to file one under — the stored `evaluator` claim inside a
+failed artifact is not promoted to an attribution.
+
+The cost is stated rather than hidden: a group can no longer report
+"attempted and unusable" for its own evaluator. That signal moves to the Result,
+where it can be made without a guess. Recovering it per evaluator would need a
+fail-closed `trustedEvaluatorId` in production — a documented P4-B scope change,
+never an implicit one. See `comparison-contract.md`.
+
+A legacy unsealed Result is never trusted tool evidence: nothing proves its
+`tool` section was not edited after the fact, so it sits at Run level with its
+tool shown as a claim.
 
 ### Comparison persistence: derived only
 
@@ -147,12 +170,21 @@ What P4-A fixes is what the package freezes:
 
 - `run_id`, the `result_id`s, and for every evaluator group **every**
   `evaluation_id` considered — not only the one used;
-- which of those was the headline, which were rejected at report time, and the
-  `selection_reason`;
+- which of those was the headline and the `selection_reason`;
 - the evidence hashes relied on (`source_sha256`, `audio_sha256`,
   `transcript.sha256`, each verified Evaluation's `semantic_sha256`);
-- unclassified and unattributed ids, so nothing that existed goes unrecorded;
+- **the byte SHA-256 of every artifact file read**, including legacy, rejected
+  and unattributed ones, so an artifact with no valid seal still has a frozen
+  content identity;
+- unclassified, unattributed and legacy ids, so nothing that existed goes
+  unrecorded;
 - the ordering rule identifiers.
+
+The byte hash is what lets a re-render separate *"the artifact changed under a
+stable id"* from *"a verifier was hardened and now rejects the same bytes"*.
+Those are different findings and an operator acts differently on each; a report
+that reported both as "no longer verifies" would be misleading about which one
+happened.
 
 Freezing the whole candidate set is what stops an Evaluation created *after* the
 report from joining the set on re-render and changing which entry is newest. An
@@ -172,7 +204,7 @@ meaningful once an artifact has verified, and never on filesystem order.
 
 ```text
 Runs                run_id descending        (matches listVerifiableRuns)
-Tools               STT_TOOL_IDS order       tools.ts:9
+Tools               STT_TOOL_IDS order, then trusted_name for custom tools
 Results in a tool   result_id ascending      (matches listResultsForRun)
 Evaluators          EVALUATOR_IDS order      raw → surface → critical → semantic
 Evaluations         evaluation_id ascending  (matches listEvaluationsForRun)
@@ -180,6 +212,11 @@ Headline            newest verified = max evaluation_id among verified
 Rejected entries    evaluation_id ascending
 Report sections     the same evaluator order
 ```
+
+`other` is a bucket, not a tool: its real identity is the operator-supplied
+name, so custom groups key on `(id, trusted_name)` and two unrelated custom
+tools never share a column. `tool.version` stays per Result — hoisting it to a
+group would assert a version some of those Results never claimed.
 
 The recommended evaluator display order — Raw, Surface, Critical, Semantic — is
 **already** the declared order of `EVALUATOR_IDS`
