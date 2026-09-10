@@ -32,6 +32,7 @@ import {
 import { surfaceNormalize } from './surfaceNormalize';
 import { computeEvaluationSemanticSha256, type EvaluationPayloadV1 } from './evaluationSchema';
 import { EvaluationSubjectError } from './evaluationSubject';
+import { EvaluationVerificationError } from './verifyStoredEvaluation';
 import { evaluateRawChar } from './rawChar';
 
 /**
@@ -719,6 +720,133 @@ describe('stored Evaluations are re-derived on read', () => {
     expect(entry.status).toBe('rejected');
     if (entry.status === 'rejected') expect(entry.reason).toBe('RESULT_INTEGRITY_MISMATCH');
   });
+
+  // --- pre-canonical structure + unhashed fields (v1) -------------------------
+  // The canonicalizer steps into `subject.tool` by name while sealing, so a
+  // missing one used to throw a TypeError and arrive as UNEXPECTED. It also
+  // hashes only the fields it names, so anything else survived every re-seal
+  // inside an artifact still reported as verified.
+
+  it('reports a missing subject.tool as malformed rather than crashing', async () => {
+    await seed();
+    await patchEvaluation(EVALUATION_ID, (evaluation) => {
+      delete (evaluation.subject as Record<string, unknown>).tool;
+    });
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') {
+      expect(entry.reason).toBe('EVALUATION_MALFORMED');
+      expect(entry.reason).not.toBe('UNEXPECTED');
+      expect(entry.detail).toContain('subject.tool');
+    }
+  });
+
+  it('reports a subject.capture that is not an object as malformed', async () => {
+    await seed();
+    await patchEvaluation(EVALUATION_ID, (evaluation) => {
+      (evaluation.subject as Record<string, unknown>).capture = 'keyboard';
+    });
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_MALFORMED');
+  });
+
+  it('never reports UNEXPECTED for any v1 dereference path', async () => {
+    await seed();
+    const file = evaluationStore.resolveEvaluationFile(EVALUATION_ID);
+    const pristine = await readFile(file, 'utf8');
+    const breakages: Array<[string, (e: Record<string, unknown>) => void]> = [
+      ['subject', (e) => { e.subject = null; }],
+      ['subject.tool', (e) => { (e.subject as Record<string, unknown>).tool = 7; }],
+      ['subject.capture', (e) => { delete (e.subject as Record<string, unknown>).capture; }],
+      ['reference', (e) => { e.reference = []; }],
+      ['hypothesis', (e) => { delete e.hypothesis; }],
+      ['run_evidence', (e) => { e.run_evidence = 'none'; }],
+      ['metrics', (e) => { e.metrics = null; }],
+      ['evaluator', (e) => { e.evaluator = 'raw-char-v1'; }],
+    ];
+
+    for (const [label, mutate] of breakages) {
+      const evaluation = JSON.parse(pristine) as Record<string, unknown>;
+      mutate(evaluation);
+      await writeFile(file, `${JSON.stringify(evaluation, null, 2)}\n`);
+
+      const entry = await listOne();
+      expect(entry.status, label).toBe('rejected');
+      if (entry.status === 'rejected') expect(entry.reason, label).not.toBe('UNEXPECTED');
+    }
+
+    await writeFile(file, pristine);
+    expect((await listOne()).status).toBe('verified');
+  });
+
+  it('refuses an unhashed field anywhere the seal does not reach', async () => {
+    // No re-sealing: the point is that these fields cost the seal nothing, so
+    // the stored hash still matches and only a closed check can catch them.
+    await seed();
+    const file = evaluationStore.resolveEvaluationFile(EVALUATION_ID);
+    const pristine = await readFile(file, 'utf8');
+    const sealOf = (raw: string) =>
+      (JSON.parse(raw) as { integrity: { semantic_sha256: string } }).integrity.semantic_sha256;
+
+    const places: Array<[string, (e: Record<string, unknown>) => void]> = [
+      ['root', (e) => { e.zz_note = 'reviewed'; }],
+      ['subject', (e) => { (e.subject as Record<string, unknown>).zz_note = 1; }],
+      ['subject.tool', (e) => {
+        ((e.subject as Record<string, unknown>).tool as Record<string, unknown>).zz_note = 1;
+      }],
+      ['subject.capture', (e) => {
+        ((e.subject as Record<string, unknown>).capture as Record<string, unknown>).zz_note = 1;
+      }],
+      ['reference', (e) => { (e.reference as Record<string, unknown>).zz_note = 1; }],
+      ['hypothesis', (e) => { (e.hypothesis as Record<string, unknown>).zz_note = 1; }],
+      ['run_evidence', (e) => { (e.run_evidence as Record<string, unknown>).zz_note = 1; }],
+      ['metrics', (e) => { (e.metrics as Record<string, unknown>).zz_note = 1; }],
+      ['integrity', (e) => { (e.integrity as Record<string, unknown>).trusted = true; }],
+    ];
+
+    for (const [label, mutate] of places) {
+      const evaluation = JSON.parse(pristine) as Record<string, unknown>;
+      mutate(evaluation);
+      await writeFile(file, `${JSON.stringify(evaluation, null, 2)}\n`);
+
+      // The seal is untouched by construction, which is what makes these free.
+      expect(sealOf(await readFile(file, 'utf8')), label).toBe(sealOf(pristine));
+
+      const entry = await listOne();
+      expect(entry.status, label).toBe('rejected');
+      if (entry.status === 'rejected') expect(entry.reason, label).toBe('EVALUATION_MALFORMED');
+    }
+  });
+
+  it('rejects an evaluator carrying a field this build has never heard of', async () => {
+    await seed();
+    await patchEvaluation(
+      EVALUATION_ID,
+      (evaluation) => {
+        (evaluation.evaluator as Record<string, unknown>).rounding = 'nearest';
+      },
+      true,
+    );
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_EVALUATOR_MISMATCH');
+  });
+
+  it('fails loadVerifiedEvaluation with a structured error, not a crash', async () => {
+    await seed();
+    await patchEvaluation(EVALUATION_ID, (evaluation) => {
+      delete (evaluation.subject as Record<string, unknown>).tool;
+    });
+
+    await expect(loadVerifiedEvaluation(deps(), EVALUATION_ID)).rejects.toThrow(
+      EvaluationVerificationError,
+    );
+  });
+
 
   it('loadVerifiedEvaluation throws rather than returning something partial', async () => {
     await seed();
@@ -1450,6 +1578,36 @@ describe('stored critical Evaluations are re-derived on read', () => {
     });
   }
 
+  it('refuses an unhashed field in a v2 container the seal does not reach', async () => {
+    await seedCritical();
+    const file = evaluationStore.resolveEvaluationFile(EVALUATION_ID);
+    const pristine = await readFile(file, 'utf8');
+
+    const places: Array<[string, (e: Record<string, unknown>) => void]> = [
+      ['root', (e) => { e.zz_note = 'reviewed'; }],
+      ['subject.tool', (e) => {
+        ((e.subject as Record<string, unknown>).tool as Record<string, unknown>).zz_note = 1;
+      }],
+      ['metrics', (e) => { (e.metrics as Record<string, unknown>).zz_note = 1; }],
+      ['entities', (e) => { (e.entities as Record<string, unknown>).zz_note = 1; }],
+      ['integrity', (e) => { (e.integrity as Record<string, unknown>).trusted = true; }],
+    ];
+
+    for (const [label, mutate] of places) {
+      const evaluation = JSON.parse(pristine) as Record<string, unknown>;
+      mutate(evaluation);
+      await writeFile(file, `${JSON.stringify(evaluation, null, 2)}\n`);
+
+      const entry = await listOne();
+      expect(entry.status, label).toBe('rejected');
+      if (entry.status === 'rejected') expect(entry.reason, label).toBe('EVALUATION_MALFORMED');
+    }
+
+    await writeFile(file, pristine);
+    expect((await listOne()).status).toBe('verified');
+  });
+
+
   it('rejects an evaluator carrying a field this build has never heard of', async () => {
     await seedCritical();
     await patchCritical((evaluation) => {
@@ -1914,6 +2072,101 @@ describe('stored surface Evaluations are re-derived on read', () => {
       if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_EVALUATOR_MISMATCH');
     });
   }
+
+  // --- pre-canonical structure + unhashed fields (v3) -------------------------
+
+  it('reports a missing subject.tool as malformed rather than crashing', async () => {
+    await seedSurface();
+    await patchSurface((evaluation) => {
+      delete (evaluation.subject as Record<string, unknown>).tool;
+    });
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') {
+      expect(entry.reason).toBe('EVALUATION_MALFORMED');
+      expect(entry.reason).not.toBe('UNEXPECTED');
+      expect(entry.detail).toContain('subject.tool');
+    }
+  });
+
+  it('reports a malformed normalized.reference as malformed', async () => {
+    await seedSurface();
+    await patchSurface((evaluation) => {
+      (evaluation.normalized as Record<string, unknown>).reference = 'folded';
+    });
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') {
+      expect(entry.reason).toBe('EVALUATION_MALFORMED');
+      expect(entry.detail).toContain('normalized.reference');
+    }
+  });
+
+  it('never reports UNEXPECTED for any v3 dereference path', async () => {
+    await seedSurface();
+    const file = evaluationStore.resolveEvaluationFile(EVALUATION_ID);
+    const pristine = await readFile(file, 'utf8');
+    const breakages: Array<[string, (e: Record<string, unknown>) => void]> = [
+      ['subject', (e) => { e.subject = null; }],
+      ['subject.tool', (e) => { (e.subject as Record<string, unknown>).tool = 7; }],
+      ['subject.capture', (e) => { delete (e.subject as Record<string, unknown>).capture; }],
+      ['reference', (e) => { e.reference = []; }],
+      ['run_evidence', (e) => { e.run_evidence = 'none'; }],
+      ['normalized', (e) => { e.normalized = 'folded'; }],
+      ['normalized.hypothesis', (e) => {
+        delete (e.normalized as Record<string, unknown>).hypothesis;
+      }],
+      ['metrics', (e) => { e.metrics = null; }],
+    ];
+
+    for (const [label, mutate] of breakages) {
+      const evaluation = JSON.parse(pristine) as Record<string, unknown>;
+      mutate(evaluation);
+      await writeFile(file, `${JSON.stringify(evaluation, null, 2)}\n`);
+
+      const entry = await listOne();
+      expect(entry.status, label).toBe('rejected');
+      if (entry.status === 'rejected') expect(entry.reason, label).not.toBe('UNEXPECTED');
+    }
+
+    await writeFile(file, pristine);
+    expect((await listOne()).status).toBe('verified');
+  });
+
+  it('refuses an unhashed field in a v3 container the seal does not reach', async () => {
+    await seedSurface();
+    const file = evaluationStore.resolveEvaluationFile(EVALUATION_ID);
+    const pristine = await readFile(file, 'utf8');
+
+    const places: Array<[string, (e: Record<string, unknown>) => void]> = [
+      ['root', (e) => { e.zz_note = 'reviewed'; }],
+      ['subject.tool', (e) => {
+        ((e.subject as Record<string, unknown>).tool as Record<string, unknown>).zz_note = 1;
+      }],
+      ['metrics', (e) => { (e.metrics as Record<string, unknown>).zz_note = 1; }],
+      ['normalized', (e) => { (e.normalized as Record<string, unknown>).zz_note = 1; }],
+      ['normalized.reference', (e) => {
+        ((e.normalized as Record<string, unknown>).reference as Record<string, unknown>).zz = 1;
+      }],
+      ['integrity', (e) => { (e.integrity as Record<string, unknown>).trusted = true; }],
+    ];
+
+    for (const [label, mutate] of places) {
+      const evaluation = JSON.parse(pristine) as Record<string, unknown>;
+      mutate(evaluation);
+      await writeFile(file, `${JSON.stringify(evaluation, null, 2)}\n`);
+
+      const entry = await listOne();
+      expect(entry.status, label).toBe('rejected');
+      if (entry.status === 'rejected') expect(entry.reason, label).toBe('EVALUATION_MALFORMED');
+    }
+
+    await writeFile(file, pristine);
+    expect((await listOne()).status).toBe('verified');
+  });
+
 
   it('rejects an evaluator carrying a field this build has never heard of', async () => {
     await seedSurface();

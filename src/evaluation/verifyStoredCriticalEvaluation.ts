@@ -127,7 +127,7 @@ export function verifyStoredCriticalEvaluation(input: {
   if (!isCriticalInfoEvaluator(raw.evaluator)) {
     fail(
       'EVALUATION_EVALUATOR_MISMATCH',
-      'evaluator が critical-info-v1 / critical-entity / fixed-alias-table と一致しません。',
+      'evaluator が critical-info-v1 の現行 6-field contract と一致しません。',
       `recorded=${JSON.stringify(raw.evaluator)} expected=${JSON.stringify(CRITICAL_INFO_EVALUATOR)}`,
     );
   }

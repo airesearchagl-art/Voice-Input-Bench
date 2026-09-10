@@ -1,5 +1,6 @@
 import { sha256OfText } from '@/lib/hash';
 import { isValidEvaluationId } from '@/lib/evaluationId';
+import { assertSurfaceEvaluationShape } from './surfaceEvaluationShape';
 import { computeResultSemanticSha256, resultPayloadOf } from '@/results/resultSchema';
 import {
   SURFACE_CHAR_EVALUATOR,
@@ -84,25 +85,15 @@ export function verifyStoredSurfaceEvaluation(input: {
     fail('EVALUATION_MALFORMED', 'created_at が有効な timestamp ではありません。');
   }
 
-  const sections = [
-    raw.subject,
-    raw.reference,
-    raw.hypothesis,
-    raw.run_evidence,
-    raw.normalized,
-    raw.metrics,
-  ];
-  if (!sections.every(isPlainObject)) {
-    fail('EVALUATION_MALFORMED', 'evaluation.json に必要なセクションがありません。');
-  }
+  // Everything the canonicalizer is about to walk, and everything it will not
+  // hash. `subject.tool` is stepped into by name during sealing, so a missing
+  // one threw a TypeError and arrived as UNEXPECTED; an unknown field anywhere
+  // here would have been carried, unhashed, inside a verified artifact.
+  assertSurfaceEvaluationShape(raw, (message, detail) =>
+    fail('EVALUATION_MALFORMED', message, detail),
+  );
 
   const normalizedSection = raw.normalized as Record<string, unknown>;
-  if (
-    !isPlainObject(normalizedSection.reference) ||
-    !isPlainObject(normalizedSection.hypothesis)
-  ) {
-    fail('EVALUATION_MALFORMED', 'normalized.reference / normalized.hypothesis がありません。');
-  }
 
   // The evaluator has to be there before the seal can be computed over it. Its
   // values are checked after the seal, so a tampered file reads as tampered.

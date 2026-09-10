@@ -1,5 +1,6 @@
 import { sha256OfText } from '@/lib/hash';
 import { isValidEvaluationId } from '@/lib/evaluationId';
+import { assertRawEvaluationShape } from './rawEvaluationShape';
 import { computeResultSemanticSha256, resultPayloadOf } from '@/results/resultSchema';
 import {
   EVALUATION_SCHEMA_VERSION,
@@ -180,20 +181,19 @@ export function verifyStoredEvaluation(input: {
     fail('EVALUATION_MALFORMED', 'created_at が有効な timestamp ではありません。');
   }
 
-  const subjectNode = raw.subject;
-  const referenceNode = raw.reference;
-  const hypothesisNode = raw.hypothesis;
-  const evidenceNode = raw.run_evidence;
-  const metricsNode = raw.metrics;
-  if (
-    !isPlainObject(subjectNode) ||
-    !isPlainObject(referenceNode) ||
-    !isPlainObject(hypothesisNode) ||
-    !isPlainObject(evidenceNode) ||
-    !isPlainObject(metricsNode)
-  ) {
-    fail('EVALUATION_MALFORMED', 'evaluation.json に必要なセクションがありません。');
-  }
+  // Everything the canonicalizer is about to walk, and everything it will not
+  // hash. Without the first, a missing `subject.tool` threw a TypeError out of
+  // the seal computation and arrived as UNEXPECTED; without the second, a field
+  // this build has never heard of rode along inside a verified artifact.
+  assertRawEvaluationShape(raw, (message, detail) =>
+    fail('EVALUATION_MALFORMED', message, detail),
+  );
+
+  const subjectNode = raw.subject as Record<string, unknown>;
+  const referenceNode = raw.reference as Record<string, unknown>;
+  const hypothesisNode = raw.hypothesis as Record<string, unknown>;
+  const evidenceNode = raw.run_evidence as Record<string, unknown>;
+  const metricsNode = raw.metrics as Record<string, unknown>;
 
   // --- The seal -----------------------------------------------------------
   const integrity = raw.integrity;
