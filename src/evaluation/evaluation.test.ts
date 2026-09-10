@@ -1257,6 +1257,177 @@ describe('stored critical Evaluations are re-derived on read', () => {
     if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_ENTITIES_MISMATCH');
   });
 
+  // --- structural validation before the seal ---------------------------------
+  // A stored v2 artifact whose nested shape the canonicalizer cannot walk used
+  // to throw a TypeError out of `computeCriticalEvaluationSemanticSha256` and
+  // arrive as UNEXPECTED. Every case below asserts a structured rejection, and
+  // all of them read through `listEvaluationsForRun`, which is the path the API
+  // and the screen actually use.
+
+  it('reports a match without a reference object as malformed', async () => {
+    // The shape the five historical artifacts on disk actually have: a match
+    // carrying `reference_surface` and `reference_offset` rather than a
+    // `reference` object, so `canonicalEntity(match.reference)` got undefined.
+    await seedCritical();
+    await patchCritical((evaluation) => {
+      evaluation.matches = [
+        {
+          key: 'number:2700:mm',
+          reference_surface: '2700mm',
+          reference_offset: 5,
+          hypothesis_surface: '2600mm',
+          hypothesis_offset: 4,
+        },
+      ];
+    });
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') {
+      expect(entry.reason).toBe('EVALUATION_MALFORMED');
+      expect(entry.reason).not.toBe('UNEXPECTED');
+      // The rejection has to say which field, or it is no better than a crash.
+      expect(entry.detail).toContain('matches[0].reference');
+    }
+  });
+
+  it('reports a null entity in the reference list as malformed', async () => {
+    await seedCritical();
+    await patchCritical((evaluation) => {
+      (evaluation.entities as Record<string, unknown>).reference = [null];
+    });
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') {
+      expect(entry.reason).toBe('EVALUATION_MALFORMED');
+      expect(entry.detail).toContain('entities.reference[0]');
+    }
+  });
+
+  it('reports a null match as malformed', async () => {
+    await seedCritical();
+    await patchCritical((evaluation) => {
+      evaluation.matches = [null];
+    });
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') {
+      expect(entry.reason).toBe('EVALUATION_MALFORMED');
+      expect(entry.detail).toContain('matches[0]');
+    }
+  });
+
+  it('reports metrics that are not an object as malformed', async () => {
+    await seedCritical();
+    await patchCritical((evaluation) => {
+      evaluation.metrics = 'all good';
+    });
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') {
+      expect(entry.reason).toBe('EVALUATION_MALFORMED');
+      expect(entry.detail).toContain('metrics');
+    }
+  });
+
+  it('reports a missing subject.tool as malformed rather than crashing', async () => {
+    // `payload.subject.tool.id` is dereferenced by name in the canonicalizer.
+    await seedCritical();
+    await patchCritical((evaluation) => {
+      delete (evaluation.subject as Record<string, unknown>).tool;
+    });
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') {
+      expect(entry.reason).toBe('EVALUATION_MALFORMED');
+      expect(entry.detail).toContain('subject.tool');
+    }
+  });
+
+  it('keeps a malformed integrity record with its existing owner', async () => {
+    // Structured, and deliberately still EVALUATION_INTEGRITY_MISSING: that
+    // check never crashed, so hardening the shape must not relabel it.
+    await seedCritical();
+    await patchCritical((evaluation) => {
+      evaluation.integrity = 'sealed, honest';
+    });
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') {
+      expect(entry.reason).toBe('EVALUATION_INTEGRITY_MISSING');
+      expect(entry.reason).not.toBe('UNEXPECTED');
+    }
+  });
+
+  it('keeps an entity with the wrong fields as an entities mismatch', async () => {
+    // The distinction the shape check must not blur. An entity object with the
+    // old vocabulary is still an object, so the canonicalizer can walk it; what
+    // is wrong is what it says, and recomputation is what knows that. Reporting
+    // this as malformed would lose the more precise answer.
+    await seedCritical();
+    await patchCritical((evaluation) => {
+      const entities = evaluation.entities as Record<string, unknown>;
+      entities.hypothesis = [{ kind: 'number', surface: '二千七百ミリ', key: 'number:2700:mm' }];
+    }, true);
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') {
+      expect(entry.reason).toBe('EVALUATION_ENTITIES_MISMATCH');
+      expect(entry.reason).not.toBe('UNEXPECTED');
+    }
+  });
+
+  it('never reports UNEXPECTED for any malformed nested v2 shape', async () => {
+    // A sweep rather than one case: the guarantee is about the class, not about
+    // the particular field someone happened to break.
+    const breakages: Array<[string, (evaluation: Record<string, unknown>) => void]> = [
+      ['matches not an array', (e) => { e.matches = {}; }],
+      ['missing not an array', (e) => { e.missing = 'none'; }],
+      ['extra containing null', (e) => { e.extra = [null]; }],
+      ['entities not an object', (e) => { e.entities = []; }],
+      ['entities.hypothesis null entry', (e) => {
+        (e.entities as Record<string, unknown>).hypothesis = [null];
+      }],
+      ['match hypothesis not an object', (e) => {
+        e.matches = [{ canonical_key: 'k', reference: {}, hypothesis: 'x' }];
+      }],
+      ['subject.capture missing', (e) => {
+        delete (e.subject as Record<string, unknown>).capture;
+      }],
+      ['run_evidence not an object', (e) => { e.run_evidence = 7; }],
+      ['reference not an object', (e) => { e.reference = null; }],
+    ];
+
+    // Seeded once — the Run bundle is immutable and will not be written twice —
+    // then each case is applied to a pristine copy of the same artifact.
+    await seedCritical();
+    const file = evaluationStore.resolveEvaluationFile(EVALUATION_ID);
+    const pristine = await readFile(file, 'utf8');
+
+    for (const [label, mutate] of breakages) {
+      const evaluation = JSON.parse(pristine) as Record<string, unknown>;
+      mutate(evaluation);
+      await writeFile(file, `${JSON.stringify(evaluation, null, 2)}
+`);
+
+      const entry = await listOne();
+      expect(entry.status, label).toBe('rejected');
+      if (entry.status === 'rejected') {
+        expect(entry.reason, label).toBe('EVALUATION_MALFORMED');
+      }
+    }
+
+    // And the pristine artifact still verifies once it is put back.
+    await writeFile(file, pristine);
+    expect((await listOne()).status).toBe('verified');
+  });
+
   const EVALUATOR_FIELD_EDITS: Array<[string, string]> = [
     ['id', 'normalized-info-v1'],
     ['scope', 'numeric-only'],

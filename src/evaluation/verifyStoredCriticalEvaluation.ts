@@ -1,6 +1,7 @@
 import { sha256OfText } from '@/lib/hash';
 import { isValidEvaluationId } from '@/lib/evaluationId';
 import { computeResultSemanticSha256, resultPayloadOf } from '@/results/resultSchema';
+import { assertCriticalEvaluationShape } from './criticalEvaluationShape';
 import {
   CRITICAL_EVALUATION_SCHEMA_VERSION,
   CRITICAL_INFO_EVALUATOR,
@@ -82,26 +83,6 @@ export function verifyStoredCriticalEvaluation(input: {
     fail('EVALUATION_MALFORMED', 'created_at が有効な timestamp ではありません。');
   }
 
-  const sections = [
-    raw.subject,
-    raw.reference,
-    raw.hypothesis,
-    raw.run_evidence,
-    raw.entities,
-    raw.metrics,
-  ];
-  if (!sections.every(isPlainObject)) {
-    fail('EVALUATION_MALFORMED', 'evaluation.json に必要なセクションがありません。');
-  }
-  if (!Array.isArray(raw.matches) || !Array.isArray(raw.missing) || !Array.isArray(raw.extra)) {
-    fail('EVALUATION_MALFORMED', 'matches / missing / extra が配列ではありません。');
-  }
-
-  const entitiesSection = raw.entities as Record<string, unknown>;
-  if (!Array.isArray(entitiesSection.reference) || !Array.isArray(entitiesSection.hypothesis)) {
-    fail('EVALUATION_MALFORMED', 'entities.reference / entities.hypothesis が配列ではありません。');
-  }
-
   // The evaluator has to be there before the seal can be computed over it. Its
   // values are checked after the seal, so a tampered file reads as tampered.
   if (!isPlainObject(raw.evaluator)) {
@@ -111,6 +92,13 @@ export function verifyStoredCriticalEvaluation(input: {
       `recorded=${JSON.stringify(raw.evaluator)} expected=${JSON.stringify(CRITICAL_INFO_EVALUATOR)}`,
     );
   }
+
+  // Everything the canonicalizer is about to walk, checked first. Sealing an
+  // artifact whose entities or matches use a different vocabulary used to throw
+  // a TypeError out of the canonicalizer and surface as UNEXPECTED.
+  assertCriticalEvaluationShape(evaluationId, raw);
+
+  const entitiesSection = raw.entities as Record<string, unknown>;
 
   // --- The seal -----------------------------------------------------------
   const integrity = raw.integrity;
