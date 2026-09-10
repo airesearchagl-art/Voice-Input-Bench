@@ -521,8 +521,9 @@ async function runSemanticModel(
 /**
  * Evaluate whether a transcript still means what the source said.
  *
- * The order is the policy. Both texts are surface-normalized first, so the
- * guard and the model read the same thing. critical-info-v1 then runs as a hard
+ * The order is the policy. The model reads the surface-normalized pair and the
+ * guard reads the raw one, which is the composition P3-D-A adopted and not an
+ * accident of plumbing. critical-info-v1 then runs as a hard
  * veto: a supported numeric mismatch is a change no rubric gets to argue with,
  * and it ends the evaluation before a single token is generated. Only if the
  * guard has nothing to say is the model asked, three times, and only three

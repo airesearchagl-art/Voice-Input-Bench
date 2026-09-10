@@ -152,7 +152,7 @@ export function verifyStoredSemanticEvaluation(input: {
   if (!isSemanticH3Evaluator(raw.evaluator)) {
     fail(
       'EVALUATION_EVALUATOR_MISMATCH',
-      'evaluator が semantic-h3-v1 の contract 7 field と一致しません。',
+      'evaluator が semantic-h3-v1 の contract 8 field と一致しません。',
       `recorded=${JSON.stringify(raw.evaluator)} expected=${JSON.stringify(SEMANTIC_H3_EVALUATOR)}`,
     );
   }

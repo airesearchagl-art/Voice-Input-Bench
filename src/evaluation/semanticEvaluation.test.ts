@@ -821,6 +821,58 @@ describe('a stored Semantic Evaluation is re-derived on read', () => {
     expect(await verificationErrorOf()).toBe('EVALUATION_MALFORMED');
   });
 
+  it('refuses an extra field on the integrity record', async () => {
+    // The seal is computed over the payload, so it does not hash `integrity`
+    // itself. An extra field here is free: it moves no hash, and without a
+    // closed check it would sit inside an artifact reported as verified.
+    //
+    // Written directly rather than through `tamperAndReseal`, which rebuilds the
+    // integrity record from scratch — that helper would erase the field being
+    // tested, which is its own demonstration that the seal does not cover it.
+    await seedVerified();
+    await tamperWithoutReseal((evaluation) => {
+      (evaluation.integrity as Record<string, unknown>).trusted = true;
+    });
+    expect(await verificationErrorOf()).toBe('EVALUATION_MALFORMED');
+  });
+
+  it('refuses an integrity field added without touching the stored hash', async () => {
+    // The same case with the seal deliberately left exactly as written, which is
+    // the shape an attacker would actually use: no recomputation, no mismatch,
+    // just a claim like `reviewed_by` parked next to a hash that never covered it.
+    await seedVerified();
+    const before = (await readStored()).integrity as Record<string, unknown>;
+    await tamperWithoutReseal((evaluation) => {
+      (evaluation.integrity as Record<string, unknown>).reviewed_by = 'nobody';
+    });
+
+    const after = (await readStored()).integrity as Record<string, unknown>;
+    expect(after.semantic_sha256).toBe(before.semantic_sha256);
+    expect(await verificationErrorOf()).toBe('EVALUATION_MALFORMED');
+  });
+
+  it('reports a malformed integrity record without crashing', async () => {
+    await seedVerified();
+    await tamperWithoutReseal((evaluation) => {
+      evaluation.integrity = 'sealed, honest';
+    });
+    const kind = await verificationErrorOf();
+    expect(kind).toBe('EVALUATION_MALFORMED');
+    expect(kind).not.toBe('UNEXPECTED');
+  });
+
+  it('still accepts an untouched integrity record', async () => {
+    // The companion to the three above: closing the object must not close it on
+    // the artifacts this codebase actually writes.
+    await seedVerified();
+    const stored = await readStored();
+    expect(Object.keys(stored.integrity as Record<string, unknown>).sort()).toEqual([
+      'algorithm',
+      'semantic_sha256',
+    ]);
+    await expect(loadVerifiedEvaluation(deps(), EVALUATION_ID)).resolves.toBeDefined();
+  });
+
   it('catches model runs added to a veto artifact', async () => {
     const resultId = await seed(RUN_P12, P12_SOURCE, P12_TRANSCRIPT);
     await createSemanticEvaluation({ resultId }, deps({ semanticRunner: fakeRunner([]) }));
@@ -854,7 +906,7 @@ describe('a stored Semantic Evaluation is re-derived on read', () => {
 });
 
 describe('the fourth evaluator sits beside the other three', () => {
-  it('records the evaluator contract as seven closed fields', async () => {
+  it('records the evaluator contract as eight closed fields', async () => {
     const resultId = await seed(RUN_P14, P14_SOURCE, P14_TRANSCRIPT);
     const outcome = await createSemanticEvaluation(
       { resultId },

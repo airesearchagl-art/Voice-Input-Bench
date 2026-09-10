@@ -112,6 +112,31 @@ export function assertSemanticEvaluationShape(evaluationId: string, stored: Rec)
     );
   };
 
+  /**
+   * Reject unknown fields without requiring every allowed one to be present.
+   *
+   * Used for `integrity` alone. Whether its two fields are there and well formed
+   * is EVALUATION_INTEGRITY_MISSING's question, and answering it here would
+   * relabel a long-standing error; what belongs here is the part nothing else
+   * covers, which is a field the seal has never heard of.
+   */
+  const noUnknownFields = (value: unknown, path: string, allowed: readonly string[]): void => {
+    if (!isRec(value)) {
+      bad(path, 'オブジェクト', value);
+      return;
+    }
+    for (const key of Object.keys(value)) {
+      if (!allowed.includes(key)) {
+        throw new EvaluationVerificationError(
+          'EVALUATION_MALFORMED',
+          evaluationId,
+          `evaluation.json の ${path} に未知の field があります: ${key}`,
+          `path=${path}.${key} allowed=${allowed.join(' / ')}`,
+        );
+      }
+    }
+  };
+
   const closed = (value: unknown, path: string, allowed: readonly string[]): Rec => {
     if (!isRec(value)) return bad(path, 'オブジェクト', value);
     for (const key of Object.keys(value)) {
@@ -349,6 +374,15 @@ export function assertSemanticEvaluationShape(evaluationId: string, stored: Rec)
   str(decision.by, 'decision.by');
 
   // --- the seal record ----------------------------------------------------
-  // Presence and type only; EVALUATION_INTEGRITY_MISSING owns the rest.
-  if (!isRec(stored.integrity)) bad('integrity', 'オブジェクト', stored.integrity);
+  // Closed, and closed for a reason the other objects do not share: the semantic
+  // SHA is computed over the payload and therefore does not hash `integrity`
+  // itself. An extra field here costs the seal nothing, so without this check an
+  // `integrity.trusted: true` or `integrity.reviewed_by` would survive untouched
+  // inside an artifact that reads back as verified — a claim sitting in the seal
+  // record that the seal never made.
+  //
+  // Only unknown fields are refused here. Whether `algorithm` and
+  // `semantic_sha256` are present and well formed stays with
+  // EVALUATION_INTEGRITY_MISSING, which has always owned that question.
+  noUnknownFields(stored.integrity, 'integrity', ['algorithm', 'semantic_sha256']);
 }
