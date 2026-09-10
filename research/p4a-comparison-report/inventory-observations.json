@@ -1,0 +1,557 @@
+{
+  "measured_against": "main@8273d1aad2a981754710661f6a905b61e2eaf6d8",
+  "note": "Read-only. Identities and counts only; no transcript text.",
+  "totals": {
+    "runs": 18,
+    "results": 9,
+    "evaluations": 36,
+    "evaluations_by_schema": {
+      "v1": 11,
+      "v2": 14,
+      "v3": 6,
+      "v4": 5
+    },
+    "readback": {
+      "listed": 36,
+      "verified": 19,
+      "rejected": 17,
+      "unexpected": 0
+    }
+  },
+  "results": {
+    "20260906T120126054Z-5ff19101": {
+      "run_id": "20260906T104832215Z-f5d8794e",
+      "tool": "windows-standard-voice-input",
+      "schema_version": 1
+    },
+    "20260906T120126164Z-a9f3b523": {
+      "run_id": "20260906T104832215Z-f5d8794e",
+      "tool": "aqua-voice",
+      "schema_version": 1
+    },
+    "20260906T235952609Z-efc32895": {
+      "run_id": "20260906T235924185Z-2d915a76",
+      "tool": "windows-standard-voice-input",
+      "schema_version": 1
+    },
+    "20260907T003444217Z-f35db15e": {
+      "run_id": "20260906T235924185Z-2d915a76",
+      "tool": "aqua-voice",
+      "schema_version": 1
+    },
+    "20260907T010102794Z-4e66c178": {
+      "run_id": "20260906T104832215Z-f5d8794e",
+      "tool": "windows-standard-voice-input",
+      "schema_version": 2
+    },
+    "20260907T010102809Z-bfe7ffd0": {
+      "run_id": "20260906T104832215Z-f5d8794e",
+      "tool": "aqua-voice",
+      "schema_version": 2
+    },
+    "20260907T012143648Z-bf897c7d": {
+      "run_id": "20260906T104832215Z-f5d8794e",
+      "tool": "windows-standard-voice-input",
+      "schema_version": 2
+    },
+    "20260907T100824503Z-7cdff2e8": {
+      "run_id": "20260906T235924185Z-2d915a76",
+      "tool": "windows-standard-voice-input",
+      "schema_version": 2
+    },
+    "20260907T100824517Z-1ff85dda": {
+      "run_id": "20260906T235924185Z-2d915a76",
+      "tool": "aqua-voice",
+      "schema_version": 2
+    }
+  },
+  "evaluation_groups": [
+    {
+      "result_id": "20260907T010102794Z-4e66c178",
+      "evaluator_id": "(pre-final-v1-shape)",
+      "total": 2,
+      "verified": 0,
+      "rejected": 2,
+      "candidate_state": "has_rejected_evidence",
+      "headline_if_newest_verified": null,
+      "entries": [
+        {
+          "evaluation_id": "20260907T054940866Z-7e1ac26f",
+          "schema_version": 1,
+          "status": "rejected",
+          "reason": "EVALUATION_EVALUATOR_MISMATCH"
+        },
+        {
+          "evaluation_id": "20260907T055113074Z-06fd15cf",
+          "schema_version": 1,
+          "status": "rejected",
+          "reason": "EVALUATION_EVALUATOR_MISMATCH"
+        }
+      ]
+    },
+    {
+      "result_id": "20260907T010102794Z-4e66c178",
+      "evaluator_id": "critical-info-v1",
+      "total": 3,
+      "verified": 2,
+      "rejected": 1,
+      "candidate_state": "multiple_candidates",
+      "headline_if_newest_verified": "20260907T153052470Z-30b9407c",
+      "entries": [
+        {
+          "evaluation_id": "20260907T100824590Z-5d012627",
+          "schema_version": 2,
+          "status": "rejected",
+          "reason": "EVALUATION_MALFORMED"
+        },
+        {
+          "evaluation_id": "20260907T132649204Z-ee926dbe",
+          "schema_version": 2,
+          "status": "verified",
+          "reason": null
+        },
+        {
+          "evaluation_id": "20260907T153052470Z-30b9407c",
+          "schema_version": 2,
+          "status": "verified",
+          "reason": null
+        }
+      ]
+    },
+    {
+      "result_id": "20260907T010102794Z-4e66c178",
+      "evaluator_id": "raw-char-v1",
+      "total": 3,
+      "verified": 3,
+      "rejected": 0,
+      "candidate_state": "multiple_candidates",
+      "headline_if_newest_verified": "20260907T153052436Z-08f3120a",
+      "entries": [
+        {
+          "evaluation_id": "20260907T065603060Z-47fbc142",
+          "schema_version": 1,
+          "status": "verified",
+          "reason": null
+        },
+        {
+          "evaluation_id": "20260907T100824620Z-b8df2334",
+          "schema_version": 1,
+          "status": "verified",
+          "reason": null
+        },
+        {
+          "evaluation_id": "20260907T153052436Z-08f3120a",
+          "schema_version": 1,
+          "status": "verified",
+          "reason": null
+        }
+      ]
+    },
+    {
+      "result_id": "20260907T010102794Z-4e66c178",
+      "evaluator_id": "semantic-h3-v1",
+      "total": 1,
+      "verified": 0,
+      "rejected": 1,
+      "candidate_state": "has_rejected_evidence",
+      "headline_if_newest_verified": null,
+      "entries": [
+        {
+          "evaluation_id": "20260908T224738051Z-cd5282b3",
+          "schema_version": 4,
+          "status": "rejected",
+          "reason": "EVALUATION_INTEGRITY_MISMATCH"
+        }
+      ]
+    },
+    {
+      "result_id": "20260907T010102794Z-4e66c178",
+      "evaluator_id": "surface-normalized-char-v1",
+      "total": 1,
+      "verified": 0,
+      "rejected": 1,
+      "candidate_state": "has_rejected_evidence",
+      "headline_if_newest_verified": null,
+      "entries": [
+        {
+          "evaluation_id": "20260907T153052455Z-894bfbcb",
+          "schema_version": 3,
+          "status": "rejected",
+          "reason": "EVALUATION_MALFORMED"
+        }
+      ]
+    },
+    {
+      "result_id": "20260907T010102809Z-bfe7ffd0",
+      "evaluator_id": "(pre-final-v1-shape)",
+      "total": 1,
+      "verified": 0,
+      "rejected": 1,
+      "candidate_state": "has_rejected_evidence",
+      "headline_if_newest_verified": null,
+      "entries": [
+        {
+          "evaluation_id": "20260907T054940886Z-84267be3",
+          "schema_version": 1,
+          "status": "rejected",
+          "reason": "EVALUATION_EVALUATOR_MISMATCH"
+        }
+      ]
+    },
+    {
+      "result_id": "20260907T010102809Z-bfe7ffd0",
+      "evaluator_id": "critical-info-v1",
+      "total": 4,
+      "verified": 3,
+      "rejected": 1,
+      "candidate_state": "multiple_candidates",
+      "headline_if_newest_verified": "20260907T155436325Z-f7f107fd",
+      "entries": [
+        {
+          "evaluation_id": "20260907T100824599Z-04d40247",
+          "schema_version": 2,
+          "status": "rejected",
+          "reason": "EVALUATION_MALFORMED"
+        },
+        {
+          "evaluation_id": "20260907T132649223Z-db4493f8",
+          "schema_version": 2,
+          "status": "verified",
+          "reason": null
+        },
+        {
+          "evaluation_id": "20260907T153052522Z-3c207ab5",
+          "schema_version": 2,
+          "status": "verified",
+          "reason": null
+        },
+        {
+          "evaluation_id": "20260907T155436325Z-f7f107fd",
+          "schema_version": 2,
+          "status": "verified",
+          "reason": null
+        }
+      ]
+    },
+    {
+      "result_id": "20260907T010102809Z-bfe7ffd0",
+      "evaluator_id": "raw-char-v1",
+      "total": 2,
+      "verified": 2,
+      "rejected": 0,
+      "candidate_state": "multiple_candidates",
+      "headline_if_newest_verified": "20260907T153052498Z-63d8301a",
+      "entries": [
+        {
+          "evaluation_id": "20260907T065603094Z-89813b7b",
+          "schema_version": 1,
+          "status": "verified",
+          "reason": null
+        },
+        {
+          "evaluation_id": "20260907T153052498Z-63d8301a",
+          "schema_version": 1,
+          "status": "verified",
+          "reason": null
+        }
+      ]
+    },
+    {
+      "result_id": "20260907T010102809Z-bfe7ffd0",
+      "evaluator_id": "surface-normalized-char-v1",
+      "total": 3,
+      "verified": 1,
+      "rejected": 2,
+      "candidate_state": "partial",
+      "headline_if_newest_verified": "20260907T155436291Z-180c0a3a",
+      "entries": [
+        {
+          "evaluation_id": "20260907T153052510Z-20ff2349",
+          "schema_version": 3,
+          "status": "rejected",
+          "reason": "EVALUATION_MALFORMED"
+        },
+        {
+          "evaluation_id": "20260907T153247985Z-20fd808a",
+          "schema_version": 3,
+          "status": "rejected",
+          "reason": "EVALUATION_MALFORMED"
+        },
+        {
+          "evaluation_id": "20260907T155436291Z-180c0a3a",
+          "schema_version": 3,
+          "status": "verified",
+          "reason": null
+        }
+      ]
+    },
+    {
+      "result_id": "20260907T012143648Z-bf897c7d",
+      "evaluator_id": "(pre-final-v1-shape)",
+      "total": 1,
+      "verified": 0,
+      "rejected": 1,
+      "candidate_state": "has_rejected_evidence",
+      "headline_if_newest_verified": null,
+      "entries": [
+        {
+          "evaluation_id": "20260907T055051310Z-8530dc5a",
+          "schema_version": 1,
+          "status": "rejected",
+          "reason": "EVALUATION_EVALUATOR_MISMATCH"
+        }
+      ]
+    },
+    {
+      "result_id": "20260907T100824503Z-7cdff2e8",
+      "evaluator_id": "critical-info-v1",
+      "total": 3,
+      "verified": 2,
+      "rejected": 1,
+      "candidate_state": "multiple_candidates",
+      "headline_if_newest_verified": "20260907T153052567Z-96448dd7",
+      "entries": [
+        {
+          "evaluation_id": "20260907T100824534Z-82e2a16e",
+          "schema_version": 2,
+          "status": "rejected",
+          "reason": "EVALUATION_MALFORMED"
+        },
+        {
+          "evaluation_id": "20260907T132649152Z-56d29e8c",
+          "schema_version": 2,
+          "status": "verified",
+          "reason": null
+        },
+        {
+          "evaluation_id": "20260907T153052567Z-96448dd7",
+          "schema_version": 2,
+          "status": "verified",
+          "reason": null
+        }
+      ]
+    },
+    {
+      "result_id": "20260907T100824503Z-7cdff2e8",
+      "evaluator_id": "raw-char-v1",
+      "total": 1,
+      "verified": 1,
+      "rejected": 0,
+      "candidate_state": "complete",
+      "headline_if_newest_verified": "20260907T153052544Z-d1115254",
+      "entries": [
+        {
+          "evaluation_id": "20260907T153052544Z-d1115254",
+          "schema_version": 1,
+          "status": "verified",
+          "reason": null
+        }
+      ]
+    },
+    {
+      "result_id": "20260907T100824503Z-7cdff2e8",
+      "evaluator_id": "semantic-h3-v1",
+      "total": 2,
+      "verified": 1,
+      "rejected": 1,
+      "candidate_state": "partial",
+      "headline_if_newest_verified": "20260910T022251362Z-be03593a",
+      "entries": [
+        {
+          "evaluation_id": "20260908T232621113Z-3785ac47",
+          "schema_version": 4,
+          "status": "rejected",
+          "reason": "EVALUATION_INTEGRITY_MISMATCH"
+        },
+        {
+          "evaluation_id": "20260910T022251362Z-be03593a",
+          "schema_version": 4,
+          "status": "verified",
+          "reason": null
+        }
+      ]
+    },
+    {
+      "result_id": "20260907T100824503Z-7cdff2e8",
+      "evaluator_id": "surface-normalized-char-v1",
+      "total": 1,
+      "verified": 0,
+      "rejected": 1,
+      "candidate_state": "has_rejected_evidence",
+      "headline_if_newest_verified": null,
+      "entries": [
+        {
+          "evaluation_id": "20260907T153052555Z-ff5d4304",
+          "schema_version": 3,
+          "status": "rejected",
+          "reason": "EVALUATION_MALFORMED"
+        }
+      ]
+    },
+    {
+      "result_id": "20260907T100824517Z-1ff85dda",
+      "evaluator_id": "critical-info-v1",
+      "total": 4,
+      "verified": 2,
+      "rejected": 2,
+      "candidate_state": "multiple_candidates",
+      "headline_if_newest_verified": "20260907T153052615Z-610a5244",
+      "entries": [
+        {
+          "evaluation_id": "20260907T100824564Z-4cda6476",
+          "schema_version": 2,
+          "status": "rejected",
+          "reason": "EVALUATION_MALFORMED"
+        },
+        {
+          "evaluation_id": "20260907T100951492Z-c3d9dd08",
+          "schema_version": 2,
+          "status": "rejected",
+          "reason": "EVALUATION_MALFORMED"
+        },
+        {
+          "evaluation_id": "20260907T132649183Z-0e254722",
+          "schema_version": 2,
+          "status": "verified",
+          "reason": null
+        },
+        {
+          "evaluation_id": "20260907T153052615Z-610a5244",
+          "schema_version": 2,
+          "status": "verified",
+          "reason": null
+        }
+      ]
+    },
+    {
+      "result_id": "20260907T100824517Z-1ff85dda",
+      "evaluator_id": "raw-char-v1",
+      "total": 1,
+      "verified": 1,
+      "rejected": 0,
+      "candidate_state": "complete",
+      "headline_if_newest_verified": "20260907T153052590Z-17b75adb",
+      "entries": [
+        {
+          "evaluation_id": "20260907T153052590Z-17b75adb",
+          "schema_version": 1,
+          "status": "verified",
+          "reason": null
+        }
+      ]
+    },
+    {
+      "result_id": "20260907T100824517Z-1ff85dda",
+      "evaluator_id": "semantic-h3-v1",
+      "total": 2,
+      "verified": 1,
+      "rejected": 1,
+      "candidate_state": "partial",
+      "headline_if_newest_verified": "20260910T022243302Z-69b4829e",
+      "entries": [
+        {
+          "evaluation_id": "20260908T232603756Z-9fb0afad",
+          "schema_version": 4,
+          "status": "rejected",
+          "reason": "EVALUATION_INTEGRITY_MISMATCH"
+        },
+        {
+          "evaluation_id": "20260910T022243302Z-69b4829e",
+          "schema_version": 4,
+          "status": "verified",
+          "reason": null
+        }
+      ]
+    },
+    {
+      "result_id": "20260907T100824517Z-1ff85dda",
+      "evaluator_id": "surface-normalized-char-v1",
+      "total": 1,
+      "verified": 0,
+      "rejected": 1,
+      "candidate_state": "has_rejected_evidence",
+      "headline_if_newest_verified": null,
+      "entries": [
+        {
+          "evaluation_id": "20260907T153052601Z-45a26793",
+          "schema_version": 3,
+          "status": "rejected",
+          "reason": "EVALUATION_MALFORMED"
+        }
+      ]
+    }
+  ],
+  "derived_findings": {
+    "groups_with_multiple_verified": [
+      {
+        "result_id": "20260907T010102794Z-4e66c178",
+        "evaluator_id": "critical-info-v1",
+        "verified": 2
+      },
+      {
+        "result_id": "20260907T010102794Z-4e66c178",
+        "evaluator_id": "raw-char-v1",
+        "verified": 3
+      },
+      {
+        "result_id": "20260907T010102809Z-bfe7ffd0",
+        "evaluator_id": "critical-info-v1",
+        "verified": 3
+      },
+      {
+        "result_id": "20260907T010102809Z-bfe7ffd0",
+        "evaluator_id": "raw-char-v1",
+        "verified": 2
+      },
+      {
+        "result_id": "20260907T100824503Z-7cdff2e8",
+        "evaluator_id": "critical-info-v1",
+        "verified": 2
+      },
+      {
+        "result_id": "20260907T100824517Z-1ff85dda",
+        "evaluator_id": "critical-info-v1",
+        "verified": 2
+      }
+    ],
+    "groups_with_only_rejected": [
+      {
+        "result_id": "20260907T010102794Z-4e66c178",
+        "evaluator_id": "(pre-final-v1-shape)",
+        "rejected": 2
+      },
+      {
+        "result_id": "20260907T010102794Z-4e66c178",
+        "evaluator_id": "semantic-h3-v1",
+        "rejected": 1
+      },
+      {
+        "result_id": "20260907T010102794Z-4e66c178",
+        "evaluator_id": "surface-normalized-char-v1",
+        "rejected": 1
+      },
+      {
+        "result_id": "20260907T010102809Z-bfe7ffd0",
+        "evaluator_id": "(pre-final-v1-shape)",
+        "rejected": 1
+      },
+      {
+        "result_id": "20260907T012143648Z-bf897c7d",
+        "evaluator_id": "(pre-final-v1-shape)",
+        "rejected": 1
+      },
+      {
+        "result_id": "20260907T100824503Z-7cdff2e8",
+        "evaluator_id": "surface-normalized-char-v1",
+        "rejected": 1
+      },
+      {
+        "result_id": "20260907T100824517Z-1ff85dda",
+        "evaluator_id": "surface-normalized-char-v1",
+        "rejected": 1
+      }
+    ],
+    "semantic_review_present": false,
+    "semantic_review_note": "No semantic-h3-v1 artifact decided review; P4-B must cover it with a fixture."
+  }
+}
