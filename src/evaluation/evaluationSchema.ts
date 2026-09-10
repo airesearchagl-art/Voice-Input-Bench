@@ -211,12 +211,20 @@ export function evaluationPayloadOf(evaluation: EvaluationV1): EvaluationPayload
  * is a measurement this code cannot reproduce, and reproducing it is the only
  * reason readback exists.
  */
+export const RAW_CHAR_EVALUATOR_FIELDS = [
+  'id',
+  'unit',
+  'normalization',
+] as const satisfies ReadonlyArray<keyof EvaluatorV1>;
+
 export function isRawCharEvaluator(value: unknown): value is EvaluatorV1 {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const evaluator = value as Record<string, unknown>;
-  return (
-    evaluator.id === RAW_CHAR_EVALUATOR.id &&
-    evaluator.unit === RAW_CHAR_EVALUATOR.unit &&
-    evaluator.normalization === RAW_CHAR_EVALUATOR.normalization
+  // Extra fields are refused too, the way v2 and v3 already refuse them. The
+  // canonicalizer hashes these three and nothing else, so a fourth would ride
+  // along unhashed and still be there when a reader trusted the record.
+  if (Object.keys(evaluator).length !== RAW_CHAR_EVALUATOR_FIELDS.length) return false;
+  return RAW_CHAR_EVALUATOR_FIELDS.every(
+    (field) => evaluator[field] === RAW_CHAR_EVALUATOR[field],
   );
 }

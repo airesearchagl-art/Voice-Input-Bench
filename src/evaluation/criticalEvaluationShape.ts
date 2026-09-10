@@ -1,4 +1,64 @@
 import { EvaluationVerificationError } from './verifyStoredEvaluation';
+import { rejectUnknownFields } from './evaluationShapeGuards';
+
+/**
+ * The v2 field lists, mirroring `canonicalCriticalEvaluationPayload`.
+ *
+ * Only the containers are listed. The entity and match *elements* are compared
+ * against a fresh analysis field by field, so an unknown field inside one is
+ * already refused as EVALUATION_ENTITIES_MISMATCH — a more precise answer than
+ * "malformed", and one this file must not take away.
+ */
+const ROOT_FIELDS = [
+  'schema_version',
+  'evaluation_id',
+  'created_at',
+  'evaluator',
+  'run_id',
+  'result_id',
+  'subject',
+  'reference',
+  'hypothesis',
+  'run_evidence',
+  'entities',
+  'matches',
+  'missing',
+  'extra',
+  'metrics',
+  'integrity',
+] as const;
+
+const SUBJECT_FIELDS = [
+  'result_schema_version',
+  'tool',
+  'capture',
+  'result_semantic_sha256',
+] as const;
+
+const TOOL_FIELDS = ['id', 'name', 'version'] as const;
+const CAPTURE_FIELDS = ['method', 'delivery_path'] as const;
+const TEXT_FIELDS = ['file', 'sha256', 'chars'] as const;
+
+const RUN_EVIDENCE_FIELDS = [
+  'manifest_schema_version',
+  'test_id',
+  'source_sha256',
+  'audio_sha256',
+] as const;
+
+const ENTITIES_FIELDS = ['reference', 'hypothesis'] as const;
+
+const METRICS_FIELDS = [
+  'reference_entities',
+  'hypothesis_entities',
+  'matched',
+  'missing',
+  'extra',
+  'preservation_rate',
+  'exact_entity_multiset_match',
+] as const;
+
+const INTEGRITY_FIELDS = ['algorithm', 'semantic_sha256'] as const;
 
 /**
  * Structural validation of a stored Critical Evaluation, before it is sealed.
@@ -92,4 +152,49 @@ export function assertCriticalEvaluationShape(evaluationId: string, stored: Rec)
     object(match.reference, `${path}.reference`);
     object(match.hypothesis, `${path}.hypothesis`);
   });
+
+  // --- fields the seal does not cover ---------------------------------------
+  // The canonicalizer hashes the fields it names and no others, so anything
+  // else here survives every re-seal and is still present when a reader takes
+  // a verified artifact at its word.
+  //
+  // Containers only. Entity and match elements are compared against a fresh
+  // analysis, which already refuses an unknown field inside one as
+  // EVALUATION_ENTITIES_MISMATCH; relabelling that as malformed would replace a
+  // precise answer with a vaguer one.
+  const unknown = (message: string, detail: string): never => {
+    throw new EvaluationVerificationError(
+      'EVALUATION_MALFORMED',
+      evaluationId,
+      message,
+      detail,
+    );
+  };
+
+  rejectUnknownFields(stored, 'root', ROOT_FIELDS, unknown);
+  rejectUnknownFields(subject, 'subject', SUBJECT_FIELDS, unknown);
+  rejectUnknownFields(object(subject.tool, 'subject.tool'), 'subject.tool', TOOL_FIELDS, unknown);
+  rejectUnknownFields(
+    object(subject.capture, 'subject.capture'),
+    'subject.capture',
+    CAPTURE_FIELDS,
+    unknown,
+  );
+  for (const side of ['reference', 'hypothesis'] as const) {
+    rejectUnknownFields(object(stored[side], side), side, TEXT_FIELDS, unknown);
+  }
+  rejectUnknownFields(
+    object(stored.run_evidence, 'run_evidence'),
+    'run_evidence',
+    RUN_EVIDENCE_FIELDS,
+    unknown,
+  );
+  rejectUnknownFields(entities, 'entities', ENTITIES_FIELDS, unknown);
+  rejectUnknownFields(object(stored.metrics, 'metrics'), 'metrics', METRICS_FIELDS, unknown);
+  // Unknown fields only, and only once it is an object at all;
+  // EVALUATION_INTEGRITY_MISSING keeps the required-value question it has
+  // always owned.
+  if (isRec(stored.integrity)) {
+    rejectUnknownFields(stored.integrity, 'integrity', INTEGRITY_FIELDS, unknown);
+  }
 }
