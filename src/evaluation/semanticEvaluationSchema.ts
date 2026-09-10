@@ -63,6 +63,21 @@ export const SEMANTIC_CRITICAL_GUARD = 'critical-info-v1-hard-veto';
 export type SemanticCriticalGuard = typeof SEMANTIC_CRITICAL_GUARD;
 
 /**
+ * The guard reads the raw texts, not the surface-normalized ones.
+ *
+ * This is the composition P3-D-A actually measured and adopted: surface
+ * normalization is the *model's* input profile, and critical-info-v1 was scored
+ * against raw reference and hypothesis. Feeding the guard normalized text would
+ * be a different evaluator, and not a harmless one — folding `2700ｍｍ` to
+ * `2700mm` is what lets the extractor see a measurement it otherwise cannot
+ * read, so the same pair can veto under one composition and reach the model
+ * under the other. The profile is named in the artifact so no reader has to
+ * infer which one produced the stored working.
+ */
+export const SEMANTIC_CRITICAL_INPUT_PROFILE = 'raw-v1';
+export type SemanticCriticalInputProfile = typeof SEMANTIC_CRITICAL_INPUT_PROFILE;
+
+/**
  * Self-describing evaluator contract. Server-fixed, never from a request.
  *
  * Each field names a versioned sub-contract instead of describing it, so
@@ -73,7 +88,10 @@ export type SemanticCriticalGuard = typeof SEMANTIC_CRITICAL_GUARD;
  */
 export interface SemanticEvaluatorV4 {
   id: SemanticH3Algorithm;
-  input_profile: SurfaceNormalizeProfile;
+  /** What the model is shown. */
+  llm_input_profile: SurfaceNormalizeProfile;
+  /** What the deterministic guard reads. Not the same texts. */
+  critical_input_profile: SemanticCriticalInputProfile;
   critical_guard: SemanticCriticalGuard;
   decision_policy: typeof SEMANTIC_DECISION_POLICY;
   vote_policy: typeof SEMANTIC_VOTE_POLICY;
@@ -83,7 +101,8 @@ export interface SemanticEvaluatorV4 {
 
 export const SEMANTIC_H3_EVALUATOR: SemanticEvaluatorV4 = {
   id: SEMANTIC_H3_ALGORITHM,
-  input_profile: SURFACE_NORMALIZE_PROFILE,
+  llm_input_profile: SURFACE_NORMALIZE_PROFILE,
+  critical_input_profile: SEMANTIC_CRITICAL_INPUT_PROFILE,
   critical_guard: SEMANTIC_CRITICAL_GUARD,
   decision_policy: SEMANTIC_DECISION_POLICY,
   vote_policy: SEMANTIC_VOTE_POLICY,
@@ -94,7 +113,8 @@ export const SEMANTIC_H3_EVALUATOR: SemanticEvaluatorV4 = {
 /** The order the evaluator's fields are hashed and compared in. */
 export const SEMANTIC_EVALUATOR_FIELDS = [
   'id',
-  'input_profile',
+  'llm_input_profile',
+  'critical_input_profile',
   'critical_guard',
   'decision_policy',
   'vote_policy',
@@ -226,11 +246,12 @@ export interface SemanticEvaluationPayloadV4 {
   run_evidence: EvaluationPayloadV1['run_evidence'];
 
   /**
-   * The two texts the guard and the model actually saw.
+   * The two texts the model was shown, and only the model.
    *
-   * Only these enter the prompt. Which profile produced them is not repeated
-   * here — `evaluator.input_profile` is the single record of that, so the two
-   * can never disagree about what was run.
+   * Only these enter the prompt. The guard reads the raw pair above instead, so
+   * this block is not evidence about the veto. Which profile produced these is
+   * not repeated here — `evaluator.llm_input_profile` is the single record of
+   * that, so the two can never disagree about what was run.
    */
   normalized: {
     reference: NormalizedSide;
@@ -308,7 +329,8 @@ export function canonicalSemanticEvaluationPayload(payload: SemanticEvaluationPa
     created_at: payload.created_at,
     evaluator: {
       id: payload.evaluator.id,
-      input_profile: payload.evaluator.input_profile,
+      llm_input_profile: payload.evaluator.llm_input_profile,
+      critical_input_profile: payload.evaluator.critical_input_profile,
       critical_guard: payload.evaluator.critical_guard,
       decision_policy: payload.evaluator.decision_policy,
       vote_policy: payload.evaluator.vote_policy,

@@ -644,7 +644,8 @@ describe('POST /api/evaluations with the semantic evaluator', () => {
     expect(body.evaluation.schema_version).toBe(4);
     expect(body.evaluation.evaluator).toEqual({
       id: 'semantic-h3-v1',
-      input_profile: 'surface-normalize-v1',
+      llm_input_profile: 'surface-normalize-v1',
+      critical_input_profile: 'raw-v1',
       critical_guard: 'critical-info-v1-hard-veto',
       decision_policy: 'h3-no-auto-preserved-v1',
       vote_policy: 'full-run-unanimous-3-v1',

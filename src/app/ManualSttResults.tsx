@@ -13,6 +13,13 @@ import type { SurfaceEvaluationV3 } from '@/evaluation/surfaceEvaluationSchema';
 import type { SemanticEvaluationV4 } from '@/evaluation/semanticEvaluationSchema';
 import { DELIVERY_PATHS, STT_TOOL_IDS, type DeliveryPath, type SttToolId } from '@/results/tools';
 import {
+  SEMANTIC_DECISION_RULES,
+  SEMANTIC_INPUT_NOTE,
+  semanticDecisionLabel,
+  semanticRouteNote,
+  semanticRunSummary,
+} from './semanticDecisionCopy';
+import {
   applyFailed,
   applyLoaded,
   idleSelection,
@@ -479,19 +486,6 @@ function shortHash(value: string): string {
   return value.length <= 16 ? value : `${value.slice(0, 12)}…`;
 }
 
-/** How the three runs came back, in one line. */
-function runSummary(evaluation: SemanticEvaluationV4): string {
-  const runs = evaluation.execution.runs;
-  if (runs.length === 0) return 'モデル実行なし';
-  const valid = runs.filter((run) => run.parseable_schema_valid).length;
-  const exact = runs.filter((run) => run.exact_output_contract_valid).length;
-  const changed = runs.filter(
-    (run) => run.parsed_output !== null && run.parsed_output.meaning_preserved === false,
-  ).length;
-  const preserved = valid - changed;
-  return `${valid}/${runs.length} parseable・${exact}/${runs.length} exact format・changed ${changed} / preserved ${preserved}`;
-}
-
 /**
  * semantic-h3-v1 for one Result.
  *
@@ -531,7 +525,7 @@ function SemanticEvaluationSection({
             <dt>Decision</dt>
             <dd>
               <strong>
-                {entry.evaluation.decision.value === 'changed' ? 'CHANGED' : 'REVIEW REQUIRED'}
+                {semanticDecisionLabel(entry.evaluation)}
               </strong>
             </dd>
             <dt>Decision source</dt>
@@ -564,16 +558,17 @@ function SemanticEvaluationSection({
                 : '—'}
             </dd>
             <dt>Runs</dt>
-            <dd>{runSummary(entry.evaluation)}</dd>
+            <dd>{semanticRunSummary(entry.evaluation)}</dd>
             <dt>Created At</dt>
             <dd>{entry.evaluation.created_at}</dd>
           </dl>
 
+          <p className="fixed-note">{semanticRouteNote(entry.evaluation)}</p>
+
           <p className="fixed-note">
-            semantic-h3-v1 は <strong>PRESERVED を出しません</strong>。
-            3 回すべてが読み取れて全会一致で changed のときだけ CHANGED、
-            それ以外はすべて REVIEW REQUIRED です。Raw / Surface / Critical を
-            置き換えるものではなく、4 つ目の層として並びます。
+            {SEMANTIC_DECISION_RULES.join('')}
+            {SEMANTIC_INPUT_NOTE}
+            Raw / Surface / Critical を置き換えるものではなく、4 つ目の層として並びます。
           </p>
 
           <p className="fixed-note">

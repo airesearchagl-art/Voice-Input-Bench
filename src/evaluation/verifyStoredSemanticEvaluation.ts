@@ -33,6 +33,7 @@ import {
   tallySemanticRuns,
 } from './semanticDecision';
 import { normalizeSemanticInput, runSemanticCriticalGuard } from './semanticGuard';
+import { assertSemanticEvaluationShape } from './semanticEvaluationShape';
 
 /**
  * Verification of a Semantic Evaluation read back from disk.
@@ -105,30 +106,6 @@ export function verifyStoredSemanticEvaluation(input: {
     fail('EVALUATION_MALFORMED', 'created_at が有効な timestamp ではありません。');
   }
 
-  const sections = [
-    raw.subject,
-    raw.reference,
-    raw.hypothesis,
-    raw.run_evidence,
-    raw.normalized,
-    raw.critical,
-    raw.execution,
-    raw.decision,
-  ];
-  if (!sections.every(isPlainObject)) {
-    fail('EVALUATION_MALFORMED', 'evaluation.json に必要なセクションがありません。');
-  }
-
-  const normalizedSection = raw.normalized as Record<string, unknown>;
-  if (!isPlainObject(normalizedSection.reference) || !isPlainObject(normalizedSection.hypothesis)) {
-    fail('EVALUATION_MALFORMED', 'normalized.reference / normalized.hypothesis がありません。');
-  }
-
-  const executionSection = raw.execution as Record<string, unknown>;
-  if (!Array.isArray(executionSection.runs)) {
-    fail('EVALUATION_MALFORMED', 'execution.runs が配列ではありません。');
-  }
-
   // The evaluator has to be there before the seal can be computed over it. Its
   // values are checked after the seal, so a tampered file reads as tampered.
   if (!isPlainObject(raw.evaluator)) {
@@ -138,6 +115,15 @@ export function verifyStoredSemanticEvaluation(input: {
       `recorded=${JSON.stringify(raw.evaluator)} expected=${JSON.stringify(SEMANTIC_H3_EVALUATOR)}`,
     );
   }
+
+  // Everything the canonicalizer is about to walk, checked first and closed.
+  // Sealing a malformed artifact would dereference whatever the file contains
+  // and surface a TypeError as UNEXPECTED; an unknown field would sail through
+  // unhashed inside something that still read back as verified.
+  assertSemanticEvaluationShape(evaluationId, raw);
+
+  const normalizedSection = raw.normalized as Record<string, unknown>;
+  const executionSection = raw.execution as Record<string, unknown>;
 
   // --- The seal -----------------------------------------------------------
   const integrity = raw.integrity;
@@ -263,7 +249,9 @@ export function verifyStoredSemanticEvaluation(input: {
   // --- The critical guard -------------------------------------------------
   // Recomputed from the actual Run/Result bytes, not read back from the record.
   // A veto is the one path that decides on its own, so it has to stay auditable.
-  const guard = runSemanticCriticalGuard(normalizedReference.text, normalizedHypothesis.text);
+  // Raw, matching the adopted composition: the guard never read the normalized
+  // pair, so recomputing it from those bytes would check a different evaluator.
+  const guard = runSemanticCriticalGuard(subject.referenceText, subject.hypothesisText);
   const criticalSection = raw.critical as Record<string, unknown>;
   const guardChecks: Array<[string, unknown, unknown]> = [
     ['critical.status', criticalSection.status, guard.status],

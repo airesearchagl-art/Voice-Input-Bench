@@ -37,6 +37,7 @@ import {
 } from './semanticProvider';
 import { SEMANTIC_RUBRIC_V1_SHA256 } from './semanticPrompt';
 import { surfaceNormalize } from './surfaceNormalize';
+import { analyzeCriticalInfo } from './criticalInfo';
 
 /**
  * semantic-h3-v1 against real Runs and Results on disk.
@@ -53,6 +54,7 @@ import { surfaceNormalize } from './surfaceNormalize';
 const RUN_P12 = '20260909T030000000Z-aaaaaaa1';
 const RUN_P14 = '20260909T030001000Z-aaaaaaa2';
 const RUN_P21 = '20260909T030002000Z-aaaaaaa3';
+const RUN_FULLWIDTH = '20260909T030003000Z-aaaaaaa4';
 const RESULT_ID = '20260909T040000000Z-cccccccc';
 const EVALUATION_ID = '20260909T050000000Z-eeeeeeee';
 const NOW = new Date('2026-09-09T05:00:00.000Z');
@@ -67,7 +69,24 @@ const P14_TRANSCRIPT = '設備ルートとの干渉は梁貫通で逃がす方�
 
 /** p21 — a request that became a report of completed work. */
 const P21_SOURCE = '電気室の位置も、幹線ルートと合わせて一度整理しておいてください。';
+
+/**
+ * A pair that the two input profiles disagree about, which is the whole point.
+ *
+ * Raw, critical-info-v1 finds no measurement in the reference at all: it cannot
+ * read the full-width `ｍｍ`, so the guard reports not-applicable and the pair
+ * goes to the model. Surface-normalized, `2700ｍｍ` folds to `2700mm`, the
+ * extractor sees 2700 against 2600, and the guard vetoes outright with zero
+ * model calls.
+ *
+ * Same pair, opposite decisions. Every existing fixture happens to agree under
+ * both compositions, so without this one the adopted contract would be pinned
+ * by coincidence rather than by a test.
+ */
 const P21_TRANSCRIPT = '電気室の位置も、幹線ルートと合わせて一度整理しておきました。';
+
+const FULLWIDTH_SOURCE = '天井高は2700ｍｍです。';
+const FULLWIDTH_TRANSCRIPT = '天井高は2600mmです。';
 
 const AUDIO = new Uint8Array([0x52, 0x49, 0x46, 0x46, 1, 2, 3, 4, 0x57, 0x41, 0x56, 0x45, 9, 9]);
 const PROVIDER_QUERY = Buffer.from('{"schema_version":1,"segments":[]}\n', 'utf8');
@@ -254,6 +273,28 @@ async function readStored(evaluationId = EVALUATION_ID): Promise<Record<string, 
  * the hash is easy, and would say nothing about whether readback actually
  * recomputes anything.
  */
+/**
+ * Write a mutated artifact without resealing it.
+ *
+ * Used for shapes the canonicalizer cannot walk at all — a deleted section, a
+ * null run. Those cannot be resealed by definition, and they do not need to be:
+ * the shape check runs before the seal is even computed, which is the property
+ * these cases exist to hold.
+ */
+async function tamperWithoutReseal(
+  mutate: (evaluation: Record<string, unknown>) => void,
+  evaluationId = EVALUATION_ID,
+): Promise<void> {
+  const stored = await readStored(evaluationId);
+  mutate(stored);
+  await writeFile(
+    evaluationStore.resolveEvaluationFile(evaluationId),
+    `${JSON.stringify(stored, null, 2)}
+`,
+    'utf8',
+  );
+}
+
 async function tamperAndReseal(
   mutate: (evaluation: Record<string, unknown>) => void,
   evaluationId = EVALUATION_ID,
@@ -330,6 +371,44 @@ describe('the critical guard vetoes before the model is asked', () => {
     // The span is what makes it checkable against the text it came from.
     expect(critical.missing?.[0]?.start_code_point).toBeGreaterThanOrEqual(0);
 
+    await expect(loadVerifiedEvaluation(deps(), EVALUATION_ID)).resolves.toBeDefined();
+  });
+
+  it('runs the guard on the raw pair, not on what the model is shown', async () => {
+    // The adopted composition, pinned by a pair the two profiles disagree about.
+    // First, prove they really do disagree, so this test fails loudly if the
+    // fixture ever stops discriminating rather than passing for the wrong reason.
+    expect(() => analyzeCriticalInfo(FULLWIDTH_SOURCE, FULLWIDTH_TRANSCRIPT)).toThrow();
+    const normalized = analyzeCriticalInfo(
+      surfaceNormalize(FULLWIDTH_SOURCE),
+      surfaceNormalize(FULLWIDTH_TRANSCRIPT),
+    );
+    expect(normalized.metrics.exact_entity_multiset_match).toBe(false);
+
+    const resultId = await seed(RUN_FULLWIDTH, FULLWIDTH_SOURCE, FULLWIDTH_TRANSCRIPT);
+    const runner = fakeRunner([VERDICT_CHANGED, VERDICT_CHANGED, VERDICT_CHANGED]);
+    const outcome = await createSemanticEvaluation({ resultId }, deps({ semanticRunner: runner }));
+
+    // Raw contract: the guard could not read the reference, so it did not veto.
+    expect(outcome.evaluation.critical.status).toBe('not_applicable_no_reference_entity');
+    expect(outcome.evaluation.critical.mismatch).toBe(false);
+
+    // Had the guard read the model's bytes, this would have been a veto with no
+    // model call at all. It is the model route instead.
+    expect(runner.chatCalls).toHaveLength(3);
+    expect(outcome.evaluation.decision).toEqual({
+      value: 'changed',
+      by: 'full-run-unanimous-changed-v1',
+    });
+
+    // The model still reads the surface-normalized pair: two profiles, recorded.
+    expect(outcome.evaluation.normalized.reference.sha256).toBe(
+      createHash('sha256').update(surfaceNormalize(FULLWIDTH_SOURCE), 'utf8').digest('hex'),
+    );
+    expect(outcome.evaluation.evaluator.llm_input_profile).toBe('surface-normalize-v1');
+    expect(outcome.evaluation.evaluator.critical_input_profile).toBe('raw-v1');
+
+    // And the artifact re-derives all of it from the raw pair on readback.
     await expect(loadVerifiedEvaluation(deps(), EVALUATION_ID)).resolves.toBeDefined();
   });
 
@@ -663,6 +742,85 @@ describe('a stored Semantic Evaluation is re-derived on read', () => {
     expect(await verificationErrorOf()).toBe('EVALUATION_DECISION_MISMATCH');
   });
 
+  // --- structural validation ------------------------------------------------
+  // Every case here reseals after tampering, so the seal is valid and the only
+  // thing standing between a malformed artifact and a `verified` response is
+  // the shape check. A raw TypeError surfacing as UNEXPECTED would be a bug:
+  // "Cannot read properties of undefined" names neither the artifact nor the
+  // field, and callers cannot act on it.
+
+  it('reports a missing subject.tool as malformed, not as a crash', async () => {
+    await seedVerified();
+    await tamperWithoutReseal((evaluation) => {
+      delete (evaluation.subject as Record<string, unknown>).tool;
+    });
+    expect(await verificationErrorOf()).toBe('EVALUATION_MALFORMED');
+  });
+
+  it('reports missing critical.matches as malformed', async () => {
+    await seedVerified();
+    await tamperWithoutReseal((evaluation) => {
+      delete (evaluation.critical as Record<string, unknown>).matches;
+    });
+    expect(await verificationErrorOf()).toBe('EVALUATION_MALFORMED');
+  });
+
+  it('reports a null run as malformed rather than dereferencing it', async () => {
+    // The canonicalizer maps over runs; a null entry used to reach it directly.
+    await seedVerified();
+    await tamperWithoutReseal((evaluation) => {
+      (evaluation.execution as Record<string, unknown>).runs = [null];
+    });
+    expect(await verificationErrorOf()).toBe('EVALUATION_MALFORMED');
+  });
+
+  it('refuses an extra field on the decision, even resealed', async () => {
+    // `decision.safe` is the shape of the mistake worth refusing: a field that
+    // reads like a verdict, is hashed by nothing, and would otherwise survive
+    // inside an artifact reported as verified.
+    await seedVerified();
+    await tamperAndReseal((evaluation) => {
+      (evaluation.decision as Record<string, unknown>).safe = true;
+    });
+    expect(await verificationErrorOf()).toBe('EVALUATION_MALFORMED');
+  });
+
+  it('refuses an extra field on the execution record', async () => {
+    await seedVerified();
+    await tamperAndReseal((evaluation) => {
+      (evaluation.execution as Record<string, unknown>).endpoint = 'http://127.0.0.1:11434';
+    });
+    expect(await verificationErrorOf()).toBe('EVALUATION_MALFORMED');
+  });
+
+  it('refuses an extra field on the model contract', async () => {
+    await seedVerified();
+    await tamperAndReseal((evaluation) => {
+      const execution = evaluation.execution as Record<string, unknown>;
+      (execution.model as Record<string, unknown>).extra = 'anything';
+    });
+    expect(await verificationErrorOf()).toBe('EVALUATION_MALFORMED');
+  });
+
+  it('refuses an extra field on a single run', async () => {
+    await seedVerified();
+    await tamperAndReseal((evaluation) => {
+      const runs = (evaluation.execution as Record<string, unknown>).runs as Array<
+        Record<string, unknown>
+      >;
+      runs[0]!.note = 'looked fine to me';
+    });
+    expect(await verificationErrorOf()).toBe('EVALUATION_MALFORMED');
+  });
+
+  it('refuses an extra field at the root', async () => {
+    await seedVerified();
+    await tamperAndReseal((evaluation) => {
+      evaluation.reviewed_by = 'nobody';
+    });
+    expect(await verificationErrorOf()).toBe('EVALUATION_MALFORMED');
+  });
+
   it('catches model runs added to a veto artifact', async () => {
     const resultId = await seed(RUN_P12, P12_SOURCE, P12_TRANSCRIPT);
     await createSemanticEvaluation({ resultId }, deps({ semanticRunner: fakeRunner([]) }));
@@ -706,7 +864,8 @@ describe('the fourth evaluator sits beside the other three', () => {
     expect(outcome.evaluation.evaluator).toEqual(SEMANTIC_H3_EVALUATOR);
     expect(Object.keys(outcome.evaluation.evaluator)).toEqual([
       'id',
-      'input_profile',
+      'llm_input_profile',
+      'critical_input_profile',
       'critical_guard',
       'decision_policy',
       'vote_policy',

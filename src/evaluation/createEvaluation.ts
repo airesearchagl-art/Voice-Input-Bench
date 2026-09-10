@@ -549,9 +549,14 @@ export async function createSemanticEvaluation(
     input.resultId,
   );
 
+  // Two input profiles, deliberately. The model reads the surface-normalized
+  // pair; the guard reads the raw pair, which is the composition P3-D-A
+  // adopted. They are not interchangeable: a full-width unit the extractor
+  // cannot read raw becomes readable once folded, so running the guard on the
+  // model's bytes would veto pairs the adopted evaluator sends to the model.
   const normalizedReference = normalizeSemanticInput(subject.referenceText);
   const normalizedHypothesis = normalizeSemanticInput(subject.hypothesisText);
-  const critical = runSemanticCriticalGuard(normalizedReference.text, normalizedHypothesis.text);
+  const critical = runSemanticCriticalGuard(subject.referenceText, subject.hypothesisText);
 
   let execution = SKIPPED_BY_CRITICAL_VETO;
   if (!critical.mismatch) {

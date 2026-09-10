@@ -35,11 +35,16 @@ export function normalizeSemanticInput(text: string): SemanticNormalizedInput {
 }
 
 /**
- * Run critical-info-v1 over the normalized texts, as a veto.
+ * Run critical-info-v1 over the RAW texts, as a veto.
  *
- * It runs on the *normalized* pair on purpose. semantic-h3-v1 declares one
- * input profile for the whole evaluator, and a guard reading different bytes
- * than the model does would be guarding a different comparison.
+ * Raw, not normalized, because that is the composition P3-D-A measured and
+ * adopted: surface normalization is the model's input profile, and the guard
+ * was scored against the reference and hypothesis as captured. The distinction
+ * is not cosmetic. Folding `2700ｍｍ` to `2700mm` is exactly what lets the
+ * extractor see a measurement it cannot otherwise read, so a pair that reaches
+ * the model under the adopted composition would be vetoed outright under a
+ * normalized one. Running the guard on the model's bytes would be a different
+ * evaluator wearing this one's name.
  *
  * The two refusal paths are recorded, never swallowed. critical-info-v1 throws
  * when the reference has no facts to check, and again when the reference uses
@@ -50,12 +55,12 @@ export function normalizeSemanticInput(text: string): SemanticNormalizedInput {
  * cannot conclude `preserved` in any case.
  */
 export function runSemanticCriticalGuard(
-  normalizedReference: string,
-  normalizedHypothesis: string,
+  rawReference: string,
+  rawHypothesis: string,
 ): SemanticCriticalGuardV4 {
   let analysis: ReturnType<typeof analyzeCriticalInfo>;
   try {
-    analysis = analyzeCriticalInfo(normalizedReference, normalizedHypothesis);
+    analysis = analyzeCriticalInfo(rawReference, rawHypothesis);
   } catch (caught) {
     if (caught instanceof CriticalInfoError) {
       return {
