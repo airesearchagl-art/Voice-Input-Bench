@@ -86,15 +86,31 @@ def load_groups(status):
 
 
 def classify(entries):
+    """Group state as orthogonal dimensions, per comparison-contract.md.
+
+    A single enum lost whichever fact came second. `7cdff2e8 / critical-info-v1`
+    is two verified *and* one rejected, and both readings have to survive.
+    """
     verified = [e for e in entries if e['status'] == 'verified']
     rejected = [e for e in entries if e['status'] == 'rejected']
-    if not verified and rejected:
-        return 'has_rejected_evidence', verified
-    if len(verified) > 1:
-        return 'multiple_candidates', verified
-    if verified and rejected:
-        return 'partial', verified
-    return 'complete', verified
+
+    if verified:
+        availability = 'available'
+    elif rejected:
+        availability = 'only_rejected'
+    else:
+        availability = 'missing'
+
+    state = {
+        'availability': availability,
+        'verified_count': len(verified),
+        'rejected_count': len(rejected),
+        'multiple_candidates': len(verified) > 1,
+        # Only reachable for semantic-h3-v1, and only by comparing decisions.
+        # Not computed here: the probe reads identities, not stored verdicts.
+        'conflicting_evidence': None,
+    }
+    return state, verified
 
 
 def main():
@@ -110,10 +126,10 @@ def main():
             'result_id': key[0],
             'evaluator_id': key[1],
             'total': len(entries),
-            'verified': len(verified),
-            'rejected': sum(1 for e in entries if e['status'] == 'rejected'),
-            'candidate_state': state,
+            'state': state,
             # The recommended rule: newest verified by id. Null when none verifies.
+            # On a v4 conflict the contract yields no headline at all; the probe
+            # does not compare decisions, so this stays the unconflicted rule.
             'headline_if_newest_verified': verified[-1]['evaluation_id'] if verified else None,
             'entries': entries,
         })
@@ -141,13 +157,21 @@ def main():
         'derived_findings': {
             'groups_with_multiple_verified': [
                 {'result_id': r['result_id'], 'evaluator_id': r['evaluator_id'],
-                 'verified': r['verified']}
-                for r in rows if r['verified'] > 1
+                 'verified': r['state']['verified_count'],
+                 'rejected': r['state']['rejected_count']}
+                for r in rows if r['state']['multiple_candidates']
             ],
             'groups_with_only_rejected': [
                 {'result_id': r['result_id'], 'evaluator_id': r['evaluator_id'],
-                 'rejected': r['rejected']}
-                for r in rows if r['candidate_state'] == 'has_rejected_evidence'
+                 'rejected': r['state']['rejected_count']}
+                for r in rows if r['state']['availability'] == 'only_rejected'
+            ],
+            'groups_multiple_candidates_with_rejected_siblings': [
+                {'result_id': r['result_id'], 'evaluator_id': r['evaluator_id'],
+                 'verified': r['state']['verified_count'],
+                 'rejected': r['state']['rejected_count']}
+                for r in rows
+                if r['state']['multiple_candidates'] and r['state']['rejected_count'] > 0
             ],
             'semantic_review_present': False,
             'semantic_review_note': (

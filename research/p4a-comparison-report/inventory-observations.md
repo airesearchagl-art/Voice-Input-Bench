@@ -90,6 +90,27 @@ A comparison that displays "the" Critical result for a Result is choosing one of
 two or three verified candidates. Today that choice is made implicitly by render
 order. The recommendation makes it explicit and records it.
 
+## Groups that are *both* multiple-candidate and partially rejected
+
+```text
+4e66c178 / critical-info-v1   verified=2  rejected=1
+bfe7ffd0 / critical-info-v1   verified=3  rejected=1
+7cdff2e8 / critical-info-v1   verified=2  rejected=1
+1ff85dda / critical-info-v1   verified=2  rejected=2
+
+4 groups
+```
+
+These are why group state is recorded as independent dimensions rather than one
+enum. A single enum has to pick: calling these `multiple_candidates` drops the
+rejected sibling, and calling them `partial` drops the fact that a selection was
+made among several verified candidates. **All four under-reported** under the
+enum this spike originally proposed.
+
+The contract now records `availability`, `verified_count`, `rejected_count`,
+`multiple_candidates` and `conflicting_evidence` separately, so none of those
+readings can displace another.
+
 ## Groups holding evidence but no usable evidence
 
 Four genuine evaluator groups have Evaluations on disk and nothing that verifies:

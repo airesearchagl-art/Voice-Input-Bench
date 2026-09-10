@@ -102,15 +102,23 @@ including each Evaluation's verification status at write time.
 ### Option C — derived view + frozen Report evidence selection
 
 The screen is derived exactly as in Option A. A Report additionally freezes an
-explicit **evidence selection**: the exact Run id, Result ids, Evaluation ids,
-evidence hashes and ordering rules that were used — but not the verification
-verdicts.
+explicit **evidence selection**: the exact Run id, Result ids and — for every
+evaluator group — every Evaluation id *considered*, plus evidence hashes and
+ordering rules. Not the verification verdicts.
 
 ```text
 UI          derived per request, always current
-Report      pins identities + hashes
-Re-render   re-reads those exact ids and re-verifies them now
+Report      pins identities + hashes of the whole candidate set
+Re-render   re-reads exactly those ids and re-verifies them now
 ```
+
+Freezing the whole candidate set rather than only the headline is what keeps an
+old report isolated from evidence created after it: a later Evaluation is not in
+the frozen set, so it cannot join the re-render or become the new newest.
+
+The package is a `ReportSource` JSON plus rendered Markdown. Whether it is
+app-managed or operator-exported is a P4-C decision and does not affect the
+contract.
 
 - **Reproducibility**: a report can always be re-rendered from its own selection.
   If the underlying evidence no longer verifies, the re-render says so instead of
@@ -120,8 +128,9 @@ Re-render   re-reads those exact ids and re-verifies them now
   Evaluation id, and the selection records *why* that Evaluation was the one used.
 - **Correction behaviour**: the right one. Hardening a verifier changes what a
   re-rendered report says about evidence, and that change is visible.
-- **Storage cost**: low if the report artifact stores only the selection and the
-  rendered text. **UI cost**: low — same derived view as Option A.
+- **Storage cost**: low — the package is a selection plus rendered text, and
+  whether the app manages it is deferred to P4-C. **UI cost**: low, the same
+  derived view as Option A.
 
 ## Cost summary
 

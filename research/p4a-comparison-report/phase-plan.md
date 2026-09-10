@@ -18,8 +18,10 @@ The derived, evaluation-aware comparison for one Run.
 - A pure read-model builder: `(runId) -> ComparisonRun`, assembled from
   `verifyRunEvidence`, `listResultsForRun` and `listEvaluationsForRun`.
 - Grouping by tool and by `(result_id, evaluator_id)`.
-- Headline selection with `selection_reason`, and the completeness / conflict
-  states from `comparison-contract.md`.
+- Headline selection with `selection_reason`, the orthogonal group-state
+  dimensions, and the attribution containers
+  (`unattributed_results`, `unclassified_rejected_evaluations`,
+  `unattributed_rejected_evaluations`) from `comparison-contract.md`.
 - Deterministic ordering consumed from the existing constants — `STT_TOOL_IDS`
   and `EVALUATOR_IDS` — rather than restated.
 - `GET /api/comparisons/run/:runId`.
@@ -44,14 +46,16 @@ fixtures, because the tree contains no example:
 
 **Test obligations local data does satisfy** — and which should be pinned
 against real fixtures: multiple Results per tool, six groups with multiple
-verified Evaluations, two groups with only rejected evidence, missing
-evaluators, legacy unsealed Results, and rejected artifacts whose evaluator is
-unreadable.
+verified Evaluations, four groups with only rejected evidence, a group that is
+simultaneously `multiple_candidates` and has a rejected sibling, missing
+evaluators, legacy unsealed Results, and rejected artifacts that carry no
+trustworthy evaluator.
 
 **Definition of done.** A comparison for either populated Run renders every
-Result and every evaluator group, names every Evaluation id it used, and shows
-the six `multiple_candidates` groups and the two `has_rejected_evidence` groups
-as such.
+Result and every evaluator group, names every Evaluation id it considered, shows
+the six `multiple_candidates` groups and the four `only_rejected` groups as
+such, and keeps `multiple_candidates` and `rejected_count` visible together on
+the groups where both are true.
 
 ## P4-C — Deterministic Report generation
 
@@ -59,17 +63,19 @@ Markdown export over the P4-B model.
 
 **Scope**
 
-- `ReportSource`: the frozen evidence selection — ids, hashes, ordering rule ids,
-  selection reasons. No verification verdicts.
+- `ReportSource`: the frozen evidence selection — for every group, **every**
+  Evaluation id considered, plus hashes, ordering rule ids and selection
+  reasons. No verification verdicts.
 - Deterministic Markdown rendering, four evaluator sections, gaps included.
 - `content_sha256` over the selection plus the rendered body, excluding
   `generated_at`.
 - Re-render: reload the cited ids, re-verify now, state anything that no longer
   verifies.
 
-**Decide during P4-C, not before:** whether a Report is an immutable stored
-artifact under a fifth root or an exported file. P4-B has to exist first to show
-what the model looks like in use.
+**Decide during P4-C, not before:** whether the Report package — `ReportSource`
+JSON plus rendered Markdown — is an app-managed immutable artifact under a fifth
+root, or files the operator exports. P4-A fixes the contract; P4-B has to exist
+first to show what the model looks like in use.
 
 **Out of scope.** No model call. No score. No ranking.
 

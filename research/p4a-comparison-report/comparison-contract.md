@@ -7,6 +7,39 @@ a shape, not because they are ready to compile into production.
 Every field below is either already produced by current production code or
 derived from it by a rule stated in `recommended-architecture.md`.
 
+## The attribution rule this contract is built on
+
+An artifact that failed verification has not earned the right to be filed
+anywhere its own claims would put it.
+
+Production already works this way, and states why. `ResultListEntry`'s rejected
+variant carries `trustedToolId?` and documents that without a seal it is "a
+shape check rather than trustworthy attribution"
+(`src/results/saveResult.ts:185-198`). The Session matrix acts on that: a
+rejected Result reaches a tool's cell only when `integrityTrust === 'sealed'`
+**and** `trustedToolId` matches, and otherwise goes to `unattributedRejected`
+(`src/sessions/comparisonMatrix.ts:194-209`), because "one broken Windows
+observation must not show up as a failure of Aqua Voice" (`:236-239`).
+
+The comparison contract adopts the same rule at both levels:
+
+```text
+rejected Result
+  sealed AND trustedToolId present   → that tool's group
+  otherwise                          → ComparisonRun.unattributed_results[]
+
+rejected Evaluation
+  result_id known, evaluator known and trusted   → that evaluator's group
+  result_id known, evaluator not trustworthy     → ComparisonResult
+                                                    .unclassified_rejected_evaluations[]
+  result_id unknown                              → ComparisonRun
+                                                    .unattributed_rejected_evaluations[]
+```
+
+`EvaluationListEntry`'s rejected variant carries no `evaluatorId` at all
+(`createEvaluation.ts:660-682`), so for a rejected Evaluation the middle case is
+the normal one, not the exception.
+
 ## ComparisonRun
 
 ```ts
@@ -28,16 +61,36 @@ interface ComparisonRun {
   tools: ComparisonToolGroup[];
 
   /**
-   * Rejected Evaluations that name no Result.
+   * Rejected Results whose tool cannot be trusted.
+   *
+   * Either no seal survived, or the `tool` section itself is what failed. Their
+   * stored `tool.id` is readable and is deliberately not used: filing a failure
+   * under a tool on the strength of an unverified claim would attribute it to a
+   * tool that may have had nothing to do with it.
+   */
+  unattributed_results: UnattributedResult[];
+
+  /**
+   * Rejected Evaluations that name no Result at all.
    *
    * They cannot be attributed, and they are not dropped: an artifact that
    * cannot say which Result it measured is still evidence that something was
    * attempted and did not survive readback.
    */
-  unattributed_rejected: ComparisonEvaluationEntry[];
+  unattributed_rejected_evaluations: ComparisonEvaluationEntry[];
 
   completeness: RunCompleteness;
   ordering: OrderingRules;
+}
+
+interface UnattributedResult {
+  result_id: string;
+  /** Why it could not be placed, in a closed vocabulary. */
+  reason_class: 'no-seal' | 'tool-identity-unverified';
+  reason: string;
+  message: string;
+  detail?: string;
+  integrity_trust: IntegrityTrust | null;
 }
 ```
 
@@ -78,14 +131,24 @@ interface ComparisonResult {
   /** One group per evaluator in EVALUATOR_IDS order, including empty ones. */
   evaluations: ComparisonEvaluationGroup[];
 
+  /**
+   * Rejected Evaluations that name this Result but no trustworthy evaluator.
+   *
+   * The common case for a rejected Evaluation, since the rejected entry shape
+   * carries no evaluator id. Filing one under an evaluator would be a guess —
+   * the reason for rejection can be that the evaluator record is exactly what
+   * could not be read.
+   */
+  unclassified_rejected_evaluations: ComparisonEvaluationEntry[];
+
   completeness: ResultCompleteness;
 }
 ```
 
-An evaluator with no Evaluation still gets a group, with an empty `entries` and
-`state: 'missing'`. A missing evaluator is a fact about the comparison and has
-to occupy space in it; omitting the group would make an incomplete Result look
-like a shorter complete one.
+An evaluator with no Evaluation still gets a group, with empty `entries` and
+`availability: 'missing'`. A missing evaluator is a fact about the comparison
+and has to occupy space in it; omitting the group would make an incomplete
+Result look like a shorter complete one.
 
 ## ComparisonEvaluationGroup
 
@@ -94,36 +157,76 @@ interface ComparisonEvaluationGroup {
   evaluator_id: EvaluatorId;
   schema_version: 1 | 2 | 3 | 4;
 
-  /** Every attempt, verified and rejected, evaluation_id ascending. */
+  /** Every attempt attributable to this evaluator, evaluation_id ascending. */
   entries: ComparisonEvaluationEntry[];
 
-  /** Chosen only from verified entries. Null when none verifies. */
+  /** Chosen only from verified entries. Null when none verifies, or on conflict. */
   headline: ComparisonEvaluationEntry | null;
 
-  /** Why that entry, in a closed vocabulary — never prose. */
+  /** Why that entry — or why there is none. Closed vocabulary, never prose. */
   selection_reason: SelectionReason | null;
 
-  state: GroupState;
+  state: GroupEvidenceState;
 }
 
 type SelectionReason =
   | 'only-verified-entry-v1'
-  | 'newest-verified-by-id-v1';
-
-type GroupState =
-  | 'complete'                 // one verified entry, nothing rejected
-  | 'partial'                  // a verified headline, plus rejected siblings
-  | 'multiple_candidates'      // more than one verified entry; a choice was made
-  | 'conflicting_evidence'     // verified entries disagree — never auto-resolved
-  | 'has_rejected_evidence'    // entries exist, none verifies
-  | 'missing';                 // no entry at all
+  | 'newest-verified-by-id-v1'
+  /** Verified entries disagree; no entry is promoted. See below. */
+  | 'conflict-no-headline-v1';
 ```
 
-`multiple_candidates` and `conflicting_evidence` are different claims.
-The first says a choice was made among equivalent readings; the second says the
-readings do not agree. For v1–v3 only the first can occur, because readback
-recomputes those metrics from the same bytes. For v4 both can, because a
-Semantic Evaluation is historical execution evidence rather than a recomputation.
+### Group state is orthogonal, not one enum
+
+A single enum forced these into one slot and lost whichever fact came second.
+The real states overlap: a group can have two verified entries *and* a rejected
+sibling, and a v4 group can be conflicting *and* have rejected siblings.
+
+```ts
+interface GroupEvidenceState {
+  /** Is there anything usable? Derived from the counts, never set by hand. */
+  availability: 'available' | 'only_rejected' | 'missing';
+
+  verified_count: number;
+  rejected_count: number;
+
+  /** More than one verified entry: a selection happened. */
+  multiple_candidates: boolean;
+
+  /** Verified entries disagree. Only reachable for semantic-h3-v1. */
+  conflicting_evidence: boolean;
+}
+```
+
+Derivation, in full:
+
+```text
+availability          = missing        when verified_count == 0 && rejected_count == 0
+                        only_rejected  when verified_count == 0 && rejected_count > 0
+                        available      when verified_count > 0
+
+multiple_candidates   = verified_count > 1
+conflicting_evidence  = verified entries disagree on decision or metrics
+```
+
+`availability: 'available'` says nothing about whether rejected siblings exist —
+that is what `rejected_count` is for. The two are independent readings, and the
+UI and report must show both.
+
+**Worked against real data.** `7cdff2e8 / critical-info-v1` holds three
+Evaluations: two verified, one rejected.
+
+```text
+old enum      multiple_candidates      ← "and one rejected sibling" is lost
+new state     availability: available
+              verified_count: 2
+              rejected_count: 1
+              multiple_candidates: true
+              conflicting_evidence: false
+```
+
+`1ff85dda / critical-info-v1` is the same shape at 2 verified / 2 rejected. Both
+are in the tree today, and under the old enum both under-reported.
 
 ## ComparisonEvaluationEntry
 
@@ -132,7 +235,14 @@ interface ComparisonEvaluationEntry {
   evaluation_id: string;
   status: 'verified' | 'rejected';
 
-  /** Unknown for a rejected artifact whose evaluator record is unreadable. */
+  /**
+   * Null for every rejected entry.
+   *
+   * Not "unknown when unreadable" — the rejected entry shape has no evaluator
+   * id at all, so there is never a trustworthy one to record. The stored
+   * `evaluator` claim inside the file is not promoted to this field after the
+   * artifact has failed verification.
+   */
   evaluator_id: EvaluatorId | null;
   schema_version: number | null;
   created_at: string | null;
@@ -209,7 +319,9 @@ interface ResultCompleteness {
   evaluators_present: EvaluatorId[];
   evaluators_missing: EvaluatorId[];
   evaluators_with_only_rejected: EvaluatorId[];
+  /** Attributed rejected entries plus this Result's unclassified ones. */
   rejected_count: number;
+  unclassified_rejected_count: number;
 }
 
 interface RunCompleteness {
@@ -217,7 +329,8 @@ interface RunCompleteness {
   sealed_results: number;
   legacy_unsealed_results: number;
   results_missing_all_evaluators: number;
-  unattributed_rejected: number;
+  unattributed_results: number;
+  unattributed_rejected_evaluations: number;
 }
 ```
 
@@ -234,47 +347,16 @@ interface OrderingRules {
   evaluators: 'evaluator-ids-declared-order-v1';
   evaluations: 'evaluation-id-ascending-v1';
   headline: 'newest-verified-by-id-v1';
+  unattributed: 'artifact-id-ascending-v1';
 }
 ```
 
 Naming the rules in the payload means a Report can cite the ordering it was
 built under, and a later change of rule is visible rather than silent.
 
-## ComparisonSnapshot / ReportSource
+## Where the Report's frozen selection lives
 
-The selection a Report freezes. Identities and hashes only — **no verification
-verdicts**, because a verdict is a property of the verifier that ran, not of the
-artifact.
-
-```ts
-interface ReportSource {
-  report_contract_version: 1;
-
-  run_id: string;
-  test_id: string;
-  source_sha256: string;
-  audio_sha256: string;
-
-  results: Array<{
-    result_id: string;
-    tool_id: SttToolId;
-    transcript_sha256: string;
-    /** The exact Evaluations cited, and why each was the one used. */
-    evaluations: Array<{
-      evaluation_id: string;
-      evaluator_id: EvaluatorId;
-      semantic_sha256: string;
-      selection_reason: SelectionReason;
-    }>;
-  }>;
-
-  /** Named so a re-render can tell whether it is reproducing the same view. */
-  ordering: OrderingRules;
-
-  /** What was already incomplete when the report was made. */
-  completeness: RunCompleteness;
-}
-```
-
-A re-render loads exactly these ids, re-verifies them, and reports any that no
-longer verify. It never reuses a stored verdict.
+`ReportSource` is defined in `report-contract.md`, because what it freezes is a
+report concern rather than a view concern. It must be able to reconstruct every
+container above — including the empty ones — which is why it freezes the whole
+candidate set and not just the headline.

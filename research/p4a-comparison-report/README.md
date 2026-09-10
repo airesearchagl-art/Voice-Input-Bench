@@ -34,6 +34,7 @@ This spike decides how that step should be built. It does not build it.
 | `edge-cases.md` | the states the model must be able to express |
 | `phase-plan.md` | proposed P4-B / P4-C / P4-D split |
 | `inventory-observations.json` | machine-readable counts behind the above |
+| `inventory-probe.py` | read-only probe that regenerates that JSON |
 
 ## The four findings that drove the recommendation
 
@@ -62,7 +63,8 @@ case, not a corner case.** Six such groups exist locally right now, one of them
 with three. Nothing prevents it: each create path mints a new id and writes
 (`createEvaluation.ts:246`), with no lookup for an existing evaluation of the
 same evaluator. Any comparison that shows "the" Critical result for a Result is
-already making a silent choice today. This spike makes that choice explicit.
+already making a silent choice today. This spike makes that choice explicit —
+and refuses to make it at all when verified entries disagree.
 
 **4. Verification status is a moving target, so it must not be frozen.**
 Five v2 artifacts moved from `UNEXPECTED` to `EVALUATION_MALFORMED` in P3-E-A,

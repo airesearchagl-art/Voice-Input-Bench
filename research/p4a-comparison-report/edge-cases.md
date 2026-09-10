@@ -23,8 +23,14 @@ verified entries only.
 
 *Present: 6 groups, one with 3.*
 
-State `multiple_candidates`. Headline is the newest verified; `selection_reason`
-records `newest-verified-by-id-v1`; the other verified entries stay visible.
+`multiple_candidates: true`, `availability: 'available'`. Headline is the newest
+verified; `selection_reason` records `newest-verified-by-id-v1`; the other
+verified entries stay visible.
+
+Note that `multiple_candidates` and `rejected_count` are independent readings.
+`7cdff2e8 / critical-info-v1` is two verified plus one rejected, and both facts
+have to survive into the model — which is why group state is dimensions rather
+than a single enum.
 
 For v1/v2/v3 these entries are necessarily equivalent — readback recomputes those
 metrics from the same Run and Result bytes, so a verified entry cannot disagree
@@ -35,30 +41,33 @@ selection happened, not because the numbers are in doubt.
 
 *Not represented locally.*
 
-State `conflicting_evidence`. Only reachable for `semantic-h3-v1`, whose
+`conflicting_evidence: true`. Only reachable for `semantic-h3-v1`, whose
 Evaluations are historical model executions rather than recomputations: two
 verified v4 artifacts for one Result can legitimately disagree.
 
-The conflict is shown, not resolved. No majority vote across Evaluations, no
-recency preference presented as truth, and above all no preference for whichever
-answer is friendlier. A conflict between `changed` and `review` is surfaced as a
-conflict.
+**There is no headline.** `headline` is null and `selection_reason` is
+`conflict-no-headline-v1`; every conflicting id is retained and shown. No
+majority vote across Evaluations, no recency preference presented as truth, and
+no preference for whichever answer is friendlier. A conflict between `changed`
+and `review` is surfaced as a conflict, and the Report carries every conflicting
+Evaluation id rather than one verdict.
 
 ## 5. Evidence exists, none of it verifies
 
 *Present: four groups — `4e66c178 / surface`, `4e66c178 / semantic-h3-v1`,
 `7cdff2e8 / surface` and `1ff85dda / surface` — each 1 rejected, 0 verified.*
 
-State `has_rejected_evidence`, headline `null`. This must never render as
-`missing` and never as a blank cell that reads like "not applicable". Something
-was attempted and cannot be used, which is a stronger signal than nothing having
-been attempted.
+`availability: 'only_rejected'`, `verified_count: 0`, `rejected_count: n`,
+headline `null`. This must never render as `missing` and never as a blank cell
+that reads like "not applicable". Something was attempted and cannot be used,
+which is a stronger signal than nothing having been attempted.
 
 ## 6. Missing evaluator
 
 *Present: `bfe7ffd0` has no `semantic-h3-v1`; `bf897c7d` has none of the four.*
 
-State `missing`, with the group still present in the model. `missing` is not
+`availability: 'missing'`, with the group still present in the model and its
+`considered_evaluation_ids` empty in any Report built from it. `missing` is not
 zero, not `exact_match: false`, and not a pass.
 
 ## 7. Legacy unsealed Result
@@ -74,25 +83,39 @@ expected of it, because strict Evaluation requires a sealed Result v2.
 *Present: 4 pre-final v1 artifacts carrying `algorithm` instead of `evaluator`,
 rejected as `EVALUATION_EVALUATOR_MISMATCH`.*
 
-`evaluator_id: null`. Attributed to its Result but **not** filed under any
-evaluator group — filing it would be a guess about which evaluator it belonged
-to, which is exactly why the current UI keeps rejected entries in a separate
-block (`ManualSttResults.tsx:601-603`).
+`evaluator_id: null`, and it goes to that Result's
+`unclassified_rejected_evaluations[]` — **not** into any evaluator group.
+
+This is the normal case rather than the exotic one: `EvaluationListEntry`'s
+rejected variant carries no evaluator id at all, so *no* rejected Evaluation has
+a trustworthy evaluator. The stored `evaluator` claim inside the file is not
+promoted to a trusted attribution after the artifact has failed verification.
+The current UI keeps rejected entries in a separate block for the same reason
+(`ManualSttResults.tsx:601-603`).
 
 ## 9. Rejected Evaluation with no attributable Result
 
 *Shape supported by production: `EvaluationListEntry` rejected variant has
 `resultId?` optional.*
 
-Surfaced at Run level in `unattributed_rejected`. Never dropped.
+Surfaced at Run level in `unattributed_rejected_evaluations[]`. Never dropped,
+and never guessed into a Result.
 
 ## 10. Rejected Result
 
-*Production supports it: `/api/results` returns rejected entries.*
+*Production supports it: `/api/results` returns rejected entries with an
+optional `trustedToolId`.*
 
-The Result is still listed, with its rejection reason and no transcript. Its
-Evaluation groups are not silently emptied — Evaluations naming that Result are
-still shown, because they are evidence about what happened even though the
+A rejected Result is listed under a tool **only** when `integrityTrust ===
+'sealed'` and `trustedToolId` is present — the rule the Session matrix already
+applies (`comparisonMatrix.ts:194-209`), because without a seal `trustedToolId`
+is a shape check rather than trustworthy attribution
+(`saveResult.ts:185-198`). Otherwise it goes to
+`ComparisonRun.unattributed_results[]` with a `reason_class` of `no-seal` or
+`tool-identity-unverified`.
+
+Either way it keeps its rejection reason and has no transcript, and Evaluations
+naming it are still shown: they are evidence about what happened even though the
 Result itself no longer verifies.
 
 ## 11. Semantic `review`

@@ -74,34 +74,59 @@ Why newest-verified is defensible, with one important asymmetry:
   legitimately disagree, because they are two different model executions.
 
 So the model carries a `conflicting_evidence` flag, raised when verified entries
-within a group disagree on their reported decision or metrics. For v4 this is a
-real possibility and must be surfaced next to the headline rather than resolved
-silently. **A conflict is never resolved by majority, recency or preference for
-the friendlier answer.**
+within a group disagree on their reported decision or metrics.
 
-### Rejected and missing: three distinct states, never merged
+**On conflict there is no headline at all.** `headline` is null and
+`selection_reason` is `conflict-no-headline-v1`, and every conflicting id is
+retained. Promoting the newest entry would publish one execution's verdict as
+the answer while another verified execution said otherwise. A conflict is never
+resolved by majority, by recency, or by preference for the friendlier answer.
+
+### Rejected and missing: independent dimensions, never one enum
+
+A single state enum loses whichever fact comes second, and these facts overlap.
+A group can have two verified entries *and* a rejected sibling; a v4 group can
+be conflicting *and* have rejected siblings. So state is recorded as separate
+readings:
 
 ```text
-missing               no Evaluation exists for this evaluator
-has_rejected_evidence Evaluations exist; none of them verifies
-partial               a verified headline exists, plus rejected siblings
-complete              a verified headline exists, nothing rejected
+availability          available | only_rejected | missing
+verified_count        n
+rejected_count        n
+multiple_candidates   verified_count > 1
+conflicting_evidence  verified entries disagree (v4 only)
 ```
 
 - `missing` is not zero and not a pass.
-- `has_rejected_evidence` is not `missing` — something was attempted and cannot
-  be used, and that is a stronger signal than nothing having been attempted.
-  Four evaluator groups are in this state today.
+- `only_rejected` is not `missing` — something was attempted and cannot be used,
+  which is a stronger signal than nothing having been attempted. Four evaluator
+  groups are in this state today.
+- `available` says nothing about whether rejected siblings exist; that is what
+  `rejected_count` is for. `7cdff2e8 / critical-info-v1` is available, has two
+  verified candidates, and has one rejected sibling — all three at once.
 - Rejected entries stay visible with their `reason`, `message` and `detail`.
   Nothing is filtered out of the view or the report.
-- Rejected entries that carry no `resultId` cannot be attributed to a Result and
-  are surfaced at Run level, matching what the UI already does.
 
-Following the existing UI's reasoning, a rejected Evaluation is **not** filed
-under an evaluator section: the reason for rejection can be that its evaluator
-record is unreadable, so filing it would be a guess
-(`ManualSttResults.tsx:601-603`). It is attributed to the Result where possible,
-and to the Run otherwise.
+### Attribution: a failed artifact is never filed on its own say-so
+
+Production already draws this line. A rejected Result reaches a tool's cell only
+when `integrityTrust === 'sealed'` **and** `trustedToolId` matches, because
+without a seal `trustedToolId` is "a shape check rather than trustworthy
+attribution" (`saveResult.ts:185-198`, `comparisonMatrix.ts:194-209`). One
+broken Windows observation must not appear as a failure of Aqua Voice.
+
+The comparison applies the same rule at both levels:
+
+```text
+rejected Result, tool not trusted        -> Run.unattributed_results[]
+rejected Evaluation, evaluator unknown   -> Result.unclassified_rejected_evaluations[]
+rejected Evaluation, no result_id        -> Run.unattributed_rejected_evaluations[]
+```
+
+The middle case is the normal one, not an exception: `EvaluationListEntry`'s
+rejected variant carries no evaluator id at all, so a rejected Evaluation never
+has a trustworthy evaluator to be filed under. This matches what the UI already
+does for the same stated reason (`ManualSttResults.tsx:601-603`).
 
 ### Comparison persistence: derived only
 
@@ -111,19 +136,32 @@ artifact: five v2 artifacts and five v3 artifacts changed their rejection
 outcome within a week of hardening work, with no artifact byte altered. A stored
 comparison asserting `verified` would have aged into a false claim silently.
 
-### Report persistence: freeze the selection, not the verdict
+### Report persistence: freeze the whole candidate set, not the verdict
 
-A Report stores:
+A Report package is a `ReportSource` JSON plus a rendered Markdown document.
+**Where that package lives — an app-managed fifth storage root, or files the
+operator exports — is deferred to P4-C**, which can decide it against a model in
+use rather than a sketch.
 
-- `run_id`, the `result_id`s and the exact `evaluation_id`s it used;
-- the evidence hashes it relied on (`source_sha256`, `audio_sha256`,
-  `transcript.sha256`, each Evaluation's `semantic_sha256`);
-- the ordering rule identifiers and the `selection_reason` for each headline;
-- the rendered Markdown.
+What P4-A fixes is what the package freezes:
+
+- `run_id`, the `result_id`s, and for every evaluator group **every**
+  `evaluation_id` considered — not only the one used;
+- which of those was the headline, which were rejected at report time, and the
+  `selection_reason`;
+- the evidence hashes relied on (`source_sha256`, `audio_sha256`,
+  `transcript.sha256`, each verified Evaluation's `semantic_sha256`);
+- unclassified and unattributed ids, so nothing that existed goes unrecorded;
+- the ordering rule identifiers.
+
+Freezing the whole candidate set is what stops an Evaluation created *after* the
+report from joining the set on re-render and changing which entry is newest. An
+empty `considered_evaluation_ids` is also how `missing` stays reconstructable
+instead of being indistinguishable from "not mentioned".
 
 It does not store "this Evaluation was verified" as a durable fact. Re-rendering
-re-reads those ids and re-verifies them now, so a report whose evidence has
-stopped verifying says so rather than repeating itself.
+re-reads exactly those ids and re-verifies them now, so a report whose evidence
+has stopped verifying says so rather than repeating itself.
 
 ### Deterministic ordering: by artifact id, everywhere
 

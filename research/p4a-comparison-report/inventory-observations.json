@@ -70,9 +70,13 @@
       "result_id": "20260907T010102794Z-4e66c178",
       "evaluator_id": "(pre-final-v1-shape)",
       "total": 2,
-      "verified": 0,
-      "rejected": 2,
-      "candidate_state": "has_rejected_evidence",
+      "state": {
+        "availability": "only_rejected",
+        "verified_count": 0,
+        "rejected_count": 2,
+        "multiple_candidates": false,
+        "conflicting_evidence": null
+      },
       "headline_if_newest_verified": null,
       "entries": [
         {
@@ -93,9 +97,13 @@
       "result_id": "20260907T010102794Z-4e66c178",
       "evaluator_id": "critical-info-v1",
       "total": 3,
-      "verified": 2,
-      "rejected": 1,
-      "candidate_state": "multiple_candidates",
+      "state": {
+        "availability": "available",
+        "verified_count": 2,
+        "rejected_count": 1,
+        "multiple_candidates": true,
+        "conflicting_evidence": null
+      },
       "headline_if_newest_verified": "20260907T153052470Z-30b9407c",
       "entries": [
         {
@@ -122,9 +130,13 @@
       "result_id": "20260907T010102794Z-4e66c178",
       "evaluator_id": "raw-char-v1",
       "total": 3,
-      "verified": 3,
-      "rejected": 0,
-      "candidate_state": "multiple_candidates",
+      "state": {
+        "availability": "available",
+        "verified_count": 3,
+        "rejected_count": 0,
+        "multiple_candidates": true,
+        "conflicting_evidence": null
+      },
       "headline_if_newest_verified": "20260907T153052436Z-08f3120a",
       "entries": [
         {
@@ -151,9 +163,13 @@
       "result_id": "20260907T010102794Z-4e66c178",
       "evaluator_id": "semantic-h3-v1",
       "total": 1,
-      "verified": 0,
-      "rejected": 1,
-      "candidate_state": "has_rejected_evidence",
+      "state": {
+        "availability": "only_rejected",
+        "verified_count": 0,
+        "rejected_count": 1,
+        "multiple_candidates": false,
+        "conflicting_evidence": null
+      },
       "headline_if_newest_verified": null,
       "entries": [
         {
@@ -168,9 +184,13 @@
       "result_id": "20260907T010102794Z-4e66c178",
       "evaluator_id": "surface-normalized-char-v1",
       "total": 1,
-      "verified": 0,
-      "rejected": 1,
-      "candidate_state": "has_rejected_evidence",
+      "state": {
+        "availability": "only_rejected",
+        "verified_count": 0,
+        "rejected_count": 1,
+        "multiple_candidates": false,
+        "conflicting_evidence": null
+      },
       "headline_if_newest_verified": null,
       "entries": [
         {
@@ -185,9 +205,13 @@
       "result_id": "20260907T010102809Z-bfe7ffd0",
       "evaluator_id": "(pre-final-v1-shape)",
       "total": 1,
-      "verified": 0,
-      "rejected": 1,
-      "candidate_state": "has_rejected_evidence",
+      "state": {
+        "availability": "only_rejected",
+        "verified_count": 0,
+        "rejected_count": 1,
+        "multiple_candidates": false,
+        "conflicting_evidence": null
+      },
       "headline_if_newest_verified": null,
       "entries": [
         {
@@ -202,9 +226,13 @@
       "result_id": "20260907T010102809Z-bfe7ffd0",
       "evaluator_id": "critical-info-v1",
       "total": 4,
-      "verified": 3,
-      "rejected": 1,
-      "candidate_state": "multiple_candidates",
+      "state": {
+        "availability": "available",
+        "verified_count": 3,
+        "rejected_count": 1,
+        "multiple_candidates": true,
+        "conflicting_evidence": null
+      },
       "headline_if_newest_verified": "20260907T155436325Z-f7f107fd",
       "entries": [
         {
@@ -237,9 +265,13 @@
       "result_id": "20260907T010102809Z-bfe7ffd0",
       "evaluator_id": "raw-char-v1",
       "total": 2,
-      "verified": 2,
-      "rejected": 0,
-      "candidate_state": "multiple_candidates",
+      "state": {
+        "availability": "available",
+        "verified_count": 2,
+        "rejected_count": 0,
+        "multiple_candidates": true,
+        "conflicting_evidence": null
+      },
       "headline_if_newest_verified": "20260907T153052498Z-63d8301a",
       "entries": [
         {
@@ -260,9 +292,13 @@
       "result_id": "20260907T010102809Z-bfe7ffd0",
       "evaluator_id": "surface-normalized-char-v1",
       "total": 3,
-      "verified": 1,
-      "rejected": 2,
-      "candidate_state": "partial",
+      "state": {
+        "availability": "available",
+        "verified_count": 1,
+        "rejected_count": 2,
+        "multiple_candidates": false,
+        "conflicting_evidence": null
+      },
       "headline_if_newest_verified": "20260907T155436291Z-180c0a3a",
       "entries": [
         {
@@ -289,9 +325,13 @@
       "result_id": "20260907T012143648Z-bf897c7d",
       "evaluator_id": "(pre-final-v1-shape)",
       "total": 1,
-      "verified": 0,
-      "rejected": 1,
-      "candidate_state": "has_rejected_evidence",
+      "state": {
+        "availability": "only_rejected",
+        "verified_count": 0,
+        "rejected_count": 1,
+        "multiple_candidates": false,
+        "conflicting_evidence": null
+      },
       "headline_if_newest_verified": null,
       "entries": [
         {
@@ -306,9 +346,13 @@
       "result_id": "20260907T100824503Z-7cdff2e8",
       "evaluator_id": "critical-info-v1",
       "total": 3,
-      "verified": 2,
-      "rejected": 1,
-      "candidate_state": "multiple_candidates",
+      "state": {
+        "availability": "available",
+        "verified_count": 2,
+        "rejected_count": 1,
+        "multiple_candidates": true,
+        "conflicting_evidence": null
+      },
       "headline_if_newest_verified": "20260907T153052567Z-96448dd7",
       "entries": [
         {
@@ -335,9 +379,13 @@
       "result_id": "20260907T100824503Z-7cdff2e8",
       "evaluator_id": "raw-char-v1",
       "total": 1,
-      "verified": 1,
-      "rejected": 0,
-      "candidate_state": "complete",
+      "state": {
+        "availability": "available",
+        "verified_count": 1,
+        "rejected_count": 0,
+        "multiple_candidates": false,
+        "conflicting_evidence": null
+      },
       "headline_if_newest_verified": "20260907T153052544Z-d1115254",
       "entries": [
         {
@@ -352,9 +400,13 @@
       "result_id": "20260907T100824503Z-7cdff2e8",
       "evaluator_id": "semantic-h3-v1",
       "total": 2,
-      "verified": 1,
-      "rejected": 1,
-      "candidate_state": "partial",
+      "state": {
+        "availability": "available",
+        "verified_count": 1,
+        "rejected_count": 1,
+        "multiple_candidates": false,
+        "conflicting_evidence": null
+      },
       "headline_if_newest_verified": "20260910T022251362Z-be03593a",
       "entries": [
         {
@@ -375,9 +427,13 @@
       "result_id": "20260907T100824503Z-7cdff2e8",
       "evaluator_id": "surface-normalized-char-v1",
       "total": 1,
-      "verified": 0,
-      "rejected": 1,
-      "candidate_state": "has_rejected_evidence",
+      "state": {
+        "availability": "only_rejected",
+        "verified_count": 0,
+        "rejected_count": 1,
+        "multiple_candidates": false,
+        "conflicting_evidence": null
+      },
       "headline_if_newest_verified": null,
       "entries": [
         {
@@ -392,9 +448,13 @@
       "result_id": "20260907T100824517Z-1ff85dda",
       "evaluator_id": "critical-info-v1",
       "total": 4,
-      "verified": 2,
-      "rejected": 2,
-      "candidate_state": "multiple_candidates",
+      "state": {
+        "availability": "available",
+        "verified_count": 2,
+        "rejected_count": 2,
+        "multiple_candidates": true,
+        "conflicting_evidence": null
+      },
       "headline_if_newest_verified": "20260907T153052615Z-610a5244",
       "entries": [
         {
@@ -427,9 +487,13 @@
       "result_id": "20260907T100824517Z-1ff85dda",
       "evaluator_id": "raw-char-v1",
       "total": 1,
-      "verified": 1,
-      "rejected": 0,
-      "candidate_state": "complete",
+      "state": {
+        "availability": "available",
+        "verified_count": 1,
+        "rejected_count": 0,
+        "multiple_candidates": false,
+        "conflicting_evidence": null
+      },
       "headline_if_newest_verified": "20260907T153052590Z-17b75adb",
       "entries": [
         {
@@ -444,9 +508,13 @@
       "result_id": "20260907T100824517Z-1ff85dda",
       "evaluator_id": "semantic-h3-v1",
       "total": 2,
-      "verified": 1,
-      "rejected": 1,
-      "candidate_state": "partial",
+      "state": {
+        "availability": "available",
+        "verified_count": 1,
+        "rejected_count": 1,
+        "multiple_candidates": false,
+        "conflicting_evidence": null
+      },
       "headline_if_newest_verified": "20260910T022243302Z-69b4829e",
       "entries": [
         {
@@ -467,9 +535,13 @@
       "result_id": "20260907T100824517Z-1ff85dda",
       "evaluator_id": "surface-normalized-char-v1",
       "total": 1,
-      "verified": 0,
-      "rejected": 1,
-      "candidate_state": "has_rejected_evidence",
+      "state": {
+        "availability": "only_rejected",
+        "verified_count": 0,
+        "rejected_count": 1,
+        "multiple_candidates": false,
+        "conflicting_evidence": null
+      },
       "headline_if_newest_verified": null,
       "entries": [
         {
@@ -486,32 +558,38 @@
       {
         "result_id": "20260907T010102794Z-4e66c178",
         "evaluator_id": "critical-info-v1",
-        "verified": 2
+        "verified": 2,
+        "rejected": 1
       },
       {
         "result_id": "20260907T010102794Z-4e66c178",
         "evaluator_id": "raw-char-v1",
-        "verified": 3
+        "verified": 3,
+        "rejected": 0
       },
       {
         "result_id": "20260907T010102809Z-bfe7ffd0",
         "evaluator_id": "critical-info-v1",
-        "verified": 3
+        "verified": 3,
+        "rejected": 1
       },
       {
         "result_id": "20260907T010102809Z-bfe7ffd0",
         "evaluator_id": "raw-char-v1",
-        "verified": 2
+        "verified": 2,
+        "rejected": 0
       },
       {
         "result_id": "20260907T100824503Z-7cdff2e8",
         "evaluator_id": "critical-info-v1",
-        "verified": 2
+        "verified": 2,
+        "rejected": 1
       },
       {
         "result_id": "20260907T100824517Z-1ff85dda",
         "evaluator_id": "critical-info-v1",
-        "verified": 2
+        "verified": 2,
+        "rejected": 2
       }
     ],
     "groups_with_only_rejected": [
@@ -549,6 +627,32 @@
         "result_id": "20260907T100824517Z-1ff85dda",
         "evaluator_id": "surface-normalized-char-v1",
         "rejected": 1
+      }
+    ],
+    "groups_multiple_candidates_with_rejected_siblings": [
+      {
+        "result_id": "20260907T010102794Z-4e66c178",
+        "evaluator_id": "critical-info-v1",
+        "verified": 2,
+        "rejected": 1
+      },
+      {
+        "result_id": "20260907T010102809Z-bfe7ffd0",
+        "evaluator_id": "critical-info-v1",
+        "verified": 3,
+        "rejected": 1
+      },
+      {
+        "result_id": "20260907T100824503Z-7cdff2e8",
+        "evaluator_id": "critical-info-v1",
+        "verified": 2,
+        "rejected": 1
+      },
+      {
+        "result_id": "20260907T100824517Z-1ff85dda",
+        "evaluator_id": "critical-info-v1",
+        "verified": 2,
+        "rejected": 2
       }
     ],
     "semantic_review_present": false,
