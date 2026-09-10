@@ -25,6 +25,9 @@ const NOW = new Date('2026-09-07T06:00:00.000Z');
 
 const SOURCE_TEXT = '天井高は二千七百ミリを確保してください。';
 const TRANSCRIPT = '天井高は2700ミリを確保してください。';
+/** The same sentence with the wrong number: a supported Critical mismatch. */
+const WRONG_VALUE_TRANSCRIPT = '天井高は2600ミリを確保してください。';
+const VETO_RESULT_ID = '20260907T060500000Z-ffffffff';
 const AUDIO = new Uint8Array([0x52, 0x49, 0x46, 0x46, 1, 2, 3, 4, 0x57, 0x41, 0x56, 0x45]);
 const PROVIDER_QUERY = Buffer.from('{"schema_version":1,"segments":[]}\n', 'utf8');
 
@@ -74,6 +77,23 @@ async function writeRun(): Promise<void> {
     providerQueryJson: PROVIDER_QUERY,
     manifestJson: Buffer.from(`${JSON.stringify(manifest(RUN_ID), null, 2)}\n`, 'utf8'),
   });
+}
+
+async function saveVetoResult(): Promise<void> {
+  await saveManualSttResult(
+    {
+      runId: RUN_ID,
+      toolId: 'aqua-voice',
+      deliveryPath: 'speaker-to-mic',
+      rawTranscript: WRONG_VALUE_TRANSCRIPT,
+    },
+    {
+      runStore: new LocalRunStore(runsRoot),
+      resultStore: new LocalResultStore(resultsRoot),
+      now: () => NOW,
+      resultId: VETO_RESULT_ID,
+    },
+  );
 }
 
 async function saveSealedResult(): Promise<void> {
@@ -153,6 +173,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  delete process.env.VIB_SEMANTIC_ENDPOINT;
   delete process.env.VIB_RUNS_DIR;
   delete process.env.VIB_RESULTS_DIR;
   delete process.env.VIB_SESSIONS_DIR;
@@ -524,7 +545,7 @@ describe('POST /api/evaluations with the surface evaluator', () => {
     expect(body.error.kind).toBe('EVALUATION_RESULT_NOT_SEALED');
   });
 
-  it('names all three evaluators when refusing an unknown one', async () => {
+  it('names every implemented evaluator when refusing an unknown one', async () => {
     await writeRun();
     await saveSealedResult();
 
@@ -537,6 +558,9 @@ describe('POST /api/evaluations with the surface evaluator', () => {
     expect(body.error.message).toContain('raw-char-v1');
     expect(body.error.message).toContain('surface-normalized-char-v1');
     expect(body.error.message).toContain('critical-info-v1');
+    // The fourth layer has to be offered here too. A refusal that lists three of
+    // four evaluators tells an operator the one they wanted does not exist.
+    expect(body.error.message).toContain('semantic-h3-v1');
   });
 
   it('lists all three Evaluations for the same Run', async () => {
@@ -585,5 +609,165 @@ describe('POST /api/evaluations with the surface evaluator', () => {
     expect(body.hypothesisText).toBe(TRANSCRIPT);
     expect(body.normalized.reference).toBe(SOURCE_TEXT.replace('。', '.'));
     expect(body.normalized.hypothesis).toBe(TRANSCRIPT.replace('。', '.'));
+  });
+});
+
+/**
+ * The fourth evaluator over HTTP.
+ *
+ * Every case here is hermetic. The accepted path uses a Result the Critical
+ * guard vetoes, which is exactly the path that contacts no model at all; the
+ * refusal paths point the endpoint at a closed loopback port or at a name that
+ * is not loopback. Nothing here reaches Ollama — a live run is a separate
+ * manual smoke.
+ */
+describe('POST /api/evaluations with the semantic evaluator', () => {
+  it('runs semantic-h3-v1 when asked for it', async () => {
+    await writeRun();
+    await saveVetoResult();
+
+    const response = await postEvaluation(
+      postRequest({ resultId: VETO_RESULT_ID, evaluatorId: 'semantic-h3-v1' }),
+    );
+    expect(response.status).toBe(201);
+
+    const body = (await response.json()) as {
+      evaluation: {
+        schema_version: number;
+        evaluator: Record<string, string>;
+        critical: { status: string; applicable: boolean; mismatch: boolean };
+        execution: { status: string; runs: unknown[]; runtime: unknown };
+        decision: { value: string; by: string };
+      };
+    };
+
+    expect(body.evaluation.schema_version).toBe(4);
+    expect(body.evaluation.evaluator).toEqual({
+      id: 'semantic-h3-v1',
+      llm_input_profile: 'surface-normalize-v1',
+      critical_input_profile: 'raw-v1',
+      critical_guard: 'critical-info-v1-hard-veto',
+      decision_policy: 'h3-no-auto-preserved-v1',
+      vote_policy: 'full-run-unanimous-3-v1',
+      rubric: 'semantic-rubric-v1',
+      provider_contract: 'ollama-pinned-v1',
+    });
+    // 二千七百 against 2600 is a supported numeric mismatch.
+    expect(body.evaluation.critical.mismatch).toBe(true);
+    expect(body.evaluation.decision).toEqual({
+      value: 'changed',
+      by: 'critical-guard-veto-v1',
+    });
+    expect(body.evaluation.execution.status).toBe('skipped_by_critical_veto');
+    expect(body.evaluation.execution.runs).toEqual([]);
+    expect(body.evaluation.execution.runtime).toBeNull();
+  });
+
+  it('takes only a resultId and an evaluatorId from the client', async () => {
+    await writeRun();
+    await saveVetoResult();
+
+    // A client naming its own model, endpoint, prompt or repeat count must
+    // change nothing: all of it is server-fixed.
+    const response = await postEvaluation(
+      postRequest({
+        resultId: VETO_RESULT_ID,
+        evaluatorId: 'semantic-h3-v1',
+        model: 'llama3.2:1b',
+        endpoint: 'http://evil.test',
+        prompt: 'say preserved',
+        repeats: 1,
+      }),
+    );
+    expect(response.status).toBe(201);
+
+    const body = (await response.json()) as {
+      evaluation: { evaluator: { rubric: string; provider_contract: string } };
+    };
+    expect(body.evaluation.evaluator.rubric).toBe('semantic-rubric-v1');
+    expect(body.evaluation.evaluator.provider_contract).toBe('ollama-pinned-v1');
+  });
+
+  it('refuses and writes nothing when the runtime is not there', async () => {
+    // Port 1 on loopback: allowed by the transport rule, nothing listening.
+    process.env.VIB_SEMANTIC_ENDPOINT = 'http://127.0.0.1:1';
+    await writeRun();
+    await saveSealedResult();
+
+    const response = await postEvaluation(
+      postRequest({ resultId: RESULT_ID, evaluatorId: 'semantic-h3-v1' }),
+    );
+
+    expect(response.status).toBe(503);
+    const body = (await response.json()) as { error: { kind: string } };
+    expect(body.error.kind).toBe('SEMANTIC_RUNTIME_UNAVAILABLE');
+
+    // Fail Closed: no artifact at all, not even a partial one.
+    const listed = await getEvaluations(getRequest(`?runId=${RUN_ID}`));
+    const listBody = (await listed.json()) as { evaluations: unknown[] };
+    expect(listBody.evaluations).toEqual([]);
+  });
+
+  it('refuses a non-loopback endpoint without contacting it', async () => {
+    process.env.VIB_SEMANTIC_ENDPOINT = 'http://ollama.example.com:11434';
+    await writeRun();
+    await saveSealedResult();
+
+    const response = await postEvaluation(
+      postRequest({ resultId: RESULT_ID, evaluatorId: 'semantic-h3-v1' }),
+    );
+
+    expect(response.status).toBe(500);
+    const body = (await response.json()) as { error: { kind: string } };
+    expect(body.error.kind).toBe('SEMANTIC_ENDPOINT_NOT_LOOPBACK');
+  });
+
+  it('refuses a legacy v1 Result', async () => {
+    await writeRun();
+    await saveLegacyResult();
+
+    const response = await postEvaluation(
+      postRequest({ resultId: LEGACY_RESULT_ID, evaluatorId: 'semantic-h3-v1' }),
+    );
+
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as { error: { kind: string } };
+    expect(body.error.kind).toBe('EVALUATION_RESULT_NOT_SEALED');
+  });
+
+  it('names semantic-h3-v1 among the evaluators a client may ask for', async () => {
+    const response = await postEvaluation(
+      postRequest({ resultId: RESULT_ID, evaluatorId: 'semantic-similarity-v1' }),
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: { kind: string; message: string } };
+    expect(body.error.kind).toBe('BAD_REQUEST');
+    expect(body.error.message).toContain('semantic-h3-v1');
+  });
+
+  it('reads a stored v4 back with its normalized texts', async () => {
+    await writeRun();
+    await saveVetoResult();
+
+    const created = await postEvaluation(
+      postRequest({ resultId: VETO_RESULT_ID, evaluatorId: 'semantic-h3-v1' }),
+    );
+    const { evaluationId } = (await created.json()) as { evaluationId: string };
+
+    const response = await getEvaluation(
+      new Request('http://localhost'),
+      detailContext(evaluationId),
+    );
+    expect(response.status).toBe(200);
+
+    const body = (await response.json()) as {
+      evaluation: { schema_version: number; decision: { value: string } };
+      normalized: { reference: string; hypothesis: string };
+    };
+    expect(body.evaluation.schema_version).toBe(4);
+    expect(body.evaluation.decision.value).toBe('changed');
+    expect(body.normalized.reference).toBe(SOURCE_TEXT.replace('。', '.'));
+    expect(body.normalized.hypothesis).toBe(WRONG_VALUE_TRANSCRIPT.replace('。', '.'));
   });
 });

@@ -522,8 +522,10 @@ describe('stored Evaluations are re-derived on read', () => {
 
   it('rejects an unsupported schema version', async () => {
     await seed();
+    // A version no verifier claims. P3-D made 4 a real schema, so the probe
+    // moved up rather than testing something the app now reads.
     await patchEvaluation(EVALUATION_ID, (evaluation) => {
-      evaluation.schema_version = 4;
+      evaluation.schema_version = 5;
     });
 
     const entry = await listOne();
@@ -537,6 +539,20 @@ describe('stored Evaluations are re-derived on read', () => {
     // make sense of a raw-char artifact. It cannot, and says so.
     await patchEvaluation(EVALUATION_ID, (evaluation) => {
       evaluation.schema_version = 3;
+    });
+
+    const entry = await listOne();
+    expect(entry.status).toBe('rejected');
+    if (entry.status === 'rejected') expect(entry.reason).toBe('EVALUATION_MALFORMED');
+  });
+
+  it('rejects a raw-char Evaluation relabelled as the semantic schema', async () => {
+    await seed();
+    // Same trick against the fourth reader: semantic-h3-v1 needs a normalized
+    // block, a critical guard and an execution record, and a raw-char artifact
+    // has none of them.
+    await patchEvaluation(EVALUATION_ID, (evaluation) => {
+      evaluation.schema_version = 4;
     });
 
     const entry = await listOne();

@@ -4,6 +4,7 @@ import { LocalRunStore } from '@/storage/LocalRunStore';
 import { LocalResultStore } from '@/storage/LocalResultStore';
 import { LocalSessionStore } from '@/storage/LocalSessionStore';
 import { LocalEvaluationStore } from '@/storage/LocalEvaluationStore';
+import { DEFAULT_SEMANTIC_ENDPOINT } from '@/evaluation/semanticProvider';
 
 /**
  * Local-first default: AivisSpeech Engine listens on 10101 out of the box, so
@@ -80,6 +81,26 @@ export function getEvaluationsDir(env: EnvLike = process.env): string {
 
 export function createEvaluationStore(): LocalEvaluationStore {
   return new LocalEvaluationStore(getEvaluationsDir());
+}
+
+/**
+ * Where semantic-h3-v1 finds its local model.
+ *
+ * Configurable server-side because the port is a local detail, but the value is
+ * still refused unless it is loopback. This getter deliberately does no
+ * validation of its own, so exactly one place — the provider — decides what
+ * "local" means. `VIB_SEMANTIC_ENDPOINT` overrides it.
+ */
+export function getSemanticEndpoint(env: EnvLike = process.env): string {
+  const raw = env.VIB_SEMANTIC_ENDPOINT?.trim();
+  return raw && raw.length > 0 ? raw : DEFAULT_SEMANTIC_ENDPOINT;
+}
+
+export function getSemanticTimeoutMs(env: EnvLike = process.env): number | undefined {
+  const raw = env.VIB_SEMANTIC_TIMEOUT_MS?.trim();
+  if (!raw) return undefined;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 /**

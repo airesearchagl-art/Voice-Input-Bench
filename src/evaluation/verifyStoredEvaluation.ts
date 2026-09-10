@@ -63,7 +63,36 @@ export type EvaluationVerificationErrorKind =
    * this to check — and without it a stored CER could belong to a profile other
    * than the one the artifact names.
    */
-  | 'EVALUATION_NORMALIZATION_MISMATCH';
+  | 'EVALUATION_NORMALIZATION_MISMATCH'
+  /**
+   * Recomputing critical-info-v1 does not reproduce the stored guard.
+   *
+   * Only semantic-h3-v1 runs the extractor as a veto. That veto is the one
+   * decision the pipeline reaches without asking anything else, so the working
+   * behind it is recomputed from the actual bytes rather than believed.
+   */
+  | 'EVALUATION_CRITICAL_GUARD_MISMATCH'
+  /**
+   * The record of *whether and how* the model ran does not hold together — a
+   * veto artifact carrying model runs, or a completed one missing the transport
+   * record that says what it talked to.
+   */
+  | 'EVALUATION_EXECUTION_MISMATCH'
+  /** The stored runtime, model or request contract is not the pinned one. */
+  | 'EVALUATION_MODEL_CONTRACT_MISMATCH'
+  /** The stored prompt is not the approved rubric. */
+  | 'EVALUATION_PROMPT_MISMATCH'
+  /**
+   * A stored model response does not survive being re-read: its hash, its
+   * length, or the parsed verdict sitting next to it does not follow from the
+   * raw text it claims to have come from.
+   */
+  | 'EVALUATION_RESPONSE_MISMATCH'
+  /**
+   * Re-deriving the vote and the H3 policy does not reproduce the stored
+   * decision — or the artifact records a decision H3 cannot reach at all.
+   */
+  | 'EVALUATION_DECISION_MISMATCH';
 
 export class EvaluationVerificationError extends Error {
   readonly kind: EvaluationVerificationErrorKind;
