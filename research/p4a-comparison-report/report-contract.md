@@ -33,8 +33,8 @@ document holds either way: what P4-A fixes is the *contract*, not the storage.
 
 | section | source |
 |---|---|
-| Run identity | `run_id`, `test_id` |
-| Canonical evidence | `source_sha256`, `audio_sha256`, `manifest_schema_version` |
+| Run identity | `run_id`, and `test_id` read from `manifest.json` |
+| Canonical evidence | `manifest_schema_version` (from the manifest), `source_sha256`, `audio_sha256` |
 | Per tool, per Result | `result_id`, tool identity, per-Result `tool.version`, `capture.delivery_path` |
 | Unsealed Results | listed at Run level, tool shown as an unverified claim |
 | Transcript | from the verified Result |
@@ -107,9 +107,29 @@ interface ReportSource {
   report_contract_version: 1;
 
   run_id: string;
-  test_id: string;
-  source_sha256: string;
-  audio_sha256: string;
+
+  /**
+   * The Run's evidence, with the manifest's own bytes included.
+   *
+   * `test_id` and `manifest_schema_version` are read out of `manifest.json`,
+   * and `verifyRunEvidence` does not hash that file — it re-hashes source,
+   * audio and provider-query *against the SHAs the manifest records*
+   * (`runEvidence.ts:206-215`). So the manifest is the source of all three
+   * recorded hashes and is itself unprotected: an edited manifest can move a
+   * recorded hash and the file beside it together, and the check still passes.
+   *
+   * Freezing `manifest_file_sha256` is what closes that. It is not only about
+   * `test_id` — it is about the integrity of the basis the whole comparison
+   * is stated against.
+   */
+  run_evidence: {
+    manifest_schema_version: number;
+    test_id: string;
+    /** Byte SHA-256 of manifest.json itself. Nothing in production seals it. */
+    manifest_file_sha256: string;
+    source_sha256: string;
+    audio_sha256: string;
+  };
 
   /** Sealed Results placed in a tool group. Discriminated, like the view. */
   results: ReportResultSource[];
@@ -252,20 +272,35 @@ An id appearing in two containers, or in none, is a malformed `ReportSource`.
 ### Re-render, in order
 
 ```text
-1. read ReportSource
-2. load EXACTLY the ids it names — nothing else, ever
-3. hash each artifact file and compare against artifact_content
-       mismatch -> evidence_changed, and stop treating it as the cited evidence
-       match    -> continue
-4. for a verified Result, hash the actual transcript.txt bytes and compare
-   against the frozen transcript_sha256
-       mismatch -> evidence_changed
-       match    -> continue
-5. only now, re-verify each matching artifact with the CURRENT verifier
-6. re-derive headline selection under the frozen ordering rules
-7. report any change in verification outcome as a verification change,
-   distinct from evidence_changed
+ 1. read ReportSource
+ 2. load EXACTLY the ids it names — nothing else, ever
+
+    --- the Run, before anything derived from it ---
+ 3. hash manifest.json   -> compare with frozen manifest_file_sha256
+ 4. hash source.txt      -> compare with frozen source_sha256
+ 5. hash audio.wav       -> compare with frozen audio_sha256
+        any mismatch -> evidence_changed; the comparison basis moved, so
+                        nothing downstream is reported as still holding
+
+    --- Results and Evaluations ---
+ 6. hash each artifact file -> compare against artifact_content
+        mismatch -> evidence_changed, and stop treating it as cited evidence
+ 7. for a verified Result, hash the actual transcript.txt bytes and compare
+    against the frozen transcript_sha256
+        mismatch -> evidence_changed
+
+    --- only once byte identity holds ---
+ 8. run the CURRENT verifyRunEvidence(), then the current artifact verifiers
+ 9. re-derive headline selection under the frozen ordering rules
+10. report any change in verification outcome as a verification change,
+    distinct from evidence_changed
 ```
+
+Steps 3-5 come first because every Result and Evaluation in the report is a
+statement *about this Run*. If the canonical source or audio moved, a Result's
+metrics are no longer measurements of the thing the report says they measured,
+and re-verifying them would produce numbers that look fine and mean something
+else.
 
 Step 4 exists because the transcript lives in its own file. `result.json` can
 hash identically while `transcript.txt` beside it has changed, and the Result
@@ -283,16 +318,36 @@ current verifier, not of the artifact — five v2 artifacts and five v3 artifact
 changed outcome inside a week with no byte modified — so a re-render reports
 today's outcome rather than repeating a stored one.
 
-### Run evidence beyond source and audio
+### Run evidence identity
 
-`source_sha256` and `audio_sha256` already content-identify the two files a
-report cites from the Run. If a report ever renders a value from `manifest.json`
-or `provider-query.json` that those hashes do not cover — a voice name, a
-sampling setting — that value needs its own frozen content identity, because a
-report citing it would otherwise be unable to tell whether it changed.
+The report **does** read `manifest.json`: `test_id` and
+`manifest_schema_version` come from it, and they appear in the "Always present"
+table above. An earlier draft of this document said otherwise, and that was
+wrong.
 
-This is a rule for when it happens, not a reason to add hashes now. The current
-report content does not read those files beyond `test_id` and the two hashes.
+What production verifies, precisely (`runEvidence.ts:206-215`):
+
+```text
+source.txt          re-hashed and compared against manifest.source.sha256
+audio.wav           re-hashed and compared against manifest.audio.sha256
+provider-query.json re-hashed and compared against manifest.provider_query.sha256
+manifest.json       NOT hashed by anything
+```
+
+So the manifest holds every recorded hash and is itself unsealed. Freezing
+`manifest_file_sha256` in `ReportSource` is what separates *"the same bytes,
+judged by a hardened verifier"* from *"the manifest this report was written
+against is not the manifest on disk"*.
+
+**`provider-query.json`** needs no additional frozen hash today: the report does
+not quote its contents, and the manifest already records its SHA, which the
+manifest hash now covers transitively. That changes the moment a report renders
+a voice name, a TTS setting or anything else read from it — at that point the
+value needs its own frozen content identity, for exactly the reason above. The
+same applies to `segmentation` and `voice`, which `verifyRunEvidence` returns
+but the report does not currently print.
+
+This is a rule for when it happens, not an instruction to add hashes now.
 
 ### Conflict is never resolved by recency
 

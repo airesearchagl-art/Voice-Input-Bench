@@ -176,8 +176,12 @@ What P4-A fixes is what the package freezes:
 - `run_id`, the `result_id`s, and for every evaluator group **every**
   `evaluation_id` considered — not only the one used;
 - which of those was the headline and the `selection_reason`;
-- the evidence hashes relied on (`source_sha256`, `audio_sha256`,
-  `transcript.sha256`, each verified Evaluation's `semantic_sha256`);
+- the Run's evidence identity — `manifest_file_sha256` alongside
+  `source_sha256` and `audio_sha256`, because `verifyRunEvidence` re-hashes
+  source, audio and provider-query *against the SHAs the manifest records* and
+  never hashes the manifest itself (`runEvidence.ts:206-215`), so an edited
+  manifest can move a recorded hash and the file beside it together;
+- `transcript.sha256` and each verified Evaluation's `semantic_sha256`;
 - **the byte SHA-256 of every artifact file read**, including legacy, rejected
   and unattributed ones, so an artifact with no valid seal still has a frozen
   content identity;
