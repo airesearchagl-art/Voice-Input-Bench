@@ -440,3 +440,146 @@ td.coverage.rejected-only {
 .entity-list.warn {
   color: var(--warn);
 }
+
+/* Run Comparison: Results as columns under their tool, evaluators as rows. */
+.cmp .mono {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 11px;
+}
+
+table.cmp-table {
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+table.cmp-table th,
+table.cmp-table td {
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+table.cmp-table thead th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+table.cmp-table tbody th {
+  color: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+td.cmp-cell {
+  min-width: 280px;
+  max-width: 380px;
+}
+
+td.cmp-cell .kv.compact {
+  grid-template-columns: 96px 1fr;
+}
+
+td.cmp-missing {
+  background: var(--panel);
+  color: var(--muted);
+  border-style: dashed;
+}
+
+td.cmp-missing.has-rejected,
+td.cmp-has-rejected {
+  background: var(--warn-bg);
+}
+
+td.cmp-conflict {
+  background: var(--warn-bg);
+}
+
+td.cmp-rejected {
+  background: var(--err-bg);
+}
+
+.cmp-note {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.cmp-note.warn {
+  color: var(--warn);
+}
+
+.cmp-verdict {
+  display: inline-block;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+}
+
+.cmp-verdict.changed {
+  color: var(--err);
+}
+
+.cmp-verdict.review,
+.cmp-verdict.conflict {
+  color: var(--warn);
+}
+
+.cmp-conflict-entry {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+
+.cmp-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  border: 1px solid;
+}
+
+.cmp-badge.rejected {
+  color: var(--err);
+}
+
+.cmp-badge.unverified {
+  color: var(--warn);
+}
+
+.cmp-entry-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.cmp-aux {
+  margin-top: 20px;
+  padding: 12px 14px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
+
+.cmp-aux.legacy {
+  border-color: var(--warn);
+}
+
+.cmp-aux.unattributed {
+  border-color: var(--err);
+}
+
+.cmp-aux h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.cmp-aux h4 {
+  margin: 12px 0 6px;
+  font-size: 12px;
+}
+
+.cmp-aux .transcript-card {
+  margin-top: 10px;
+}
