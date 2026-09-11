@@ -27,6 +27,13 @@ exports and keeps, is deferred to P4-C — that decision needs P4-B to exist fir
 so it can be made against a model in use rather than a sketch. Everything in this
 document holds either way: what P4-A fixes is the *contract*, not the storage.
 
+> **P4-C v1 decision (production, VIB-P4-C-001): operator-exported package.**
+> The app builds the package on request (`GET /api/reports/run/:runId`) and
+> stores nothing: no `data/reports`, no report store, no fifth storage root, no
+> persisted Report entity. The package is the two files the operator saves.
+> App-managed storage, if ever needed, is a separate task with its own Human
+> Gate. See "P4-C v1 production notes" at the end of this document.
+
 ## Content
 
 ### Always present
@@ -141,12 +148,25 @@ interface ReportSource {
   unattributed_results: Array<{
     result_id: string;
     reason_class: 'no-seal' | 'tool-identity-unverified' | 'custom-tool-identity-unavailable';
+    /** Added in P4-C v1, as on every other Result shape. */
+    result_file_sha256: string;
+    /** Added in P4-C v1. Historical context only; never consulted on re-render. */
+    reason_at_report_time: string;
     related_verified_evaluation_ids: string[];
     related_rejected_evaluation_ids: string[];
   }>;
 
   /** Rejected Evaluations naming no Result. */
   unattributed_rejected_evaluation_ids: string[];
+
+  /**
+   * Verified Evaluations naming a Result absent from the Result listing.
+   *
+   * Added in P4-C v1 to match the merged P4-B comparison, which gained
+   * `unattributed_verified_evaluations` after this candidate was written.
+   * Without it the partition below had no place for them.
+   */
+  unattributed_verified_evaluation_ids: string[];
 
   /** Byte identity for every artifact read, of every kind. See below. */
   artifact_content: {
@@ -260,6 +280,8 @@ rejected, Result known      *.unclassified_rejected_evaluation_ids
 rejected, on an unattributed Result
                             unattributed_results[].related_rejected_evaluation_ids
 rejected, no Result         unattributed_rejected_evaluation_ids
+verified, Result absent from the Result listing   (P4-C v1, from P4-B)
+                            unattributed_verified_evaluation_ids
 ```
 
 Every id in any of those sets has an entry in `artifact_content.evaluations`,
@@ -302,18 +324,18 @@ metrics are no longer measurements of the thing the report says they measured,
 and re-verifying them would produce numbers that look fine and mean something
 else.
 
-Step 4 exists because the transcript lives in its own file. `result.json` can
+Step 7 exists because the transcript lives in its own file. `result.json` can
 hash identically while `transcript.txt` beside it has changed, and the Result
 seal covers `transcript.sha256` rather than the transcript bytes
 (`resultSchema.ts:79-82`). Without this step an edited transcript would surface
-at step 5 as "the verifier now rejects this Result", which reads as a tooling
+at step 8 as "the verifier now rejects this Result", which reads as a tooling
 change when the evidence is what moved.
 
 Step 2 is what isolates an old report from new evidence: an Evaluation created
 after the report is in none of the frozen id sets, so it cannot join the
 re-render, cannot enter a container, and cannot become the new newest.
 
-Step 5 is what keeps the report honest. Verification status is a property of the
+Steps 8 and 10 are what keep the report honest. Verification status is a property of the
 current verifier, not of the artifact — five v2 artifacts and five v3 artifacts
 changed outcome inside a week with no byte modified — so a re-render reports
 today's outcome rather than repeating a stored one.
@@ -393,3 +415,95 @@ It does not claim the artifacts will verify forever, and for `semantic-h3-v1` it
 does not claim the model would return the same verdict again — the v4 schema
 itself is explicit that its claim is historical execution evidence plus a
 deterministically verified derivation.
+
+## P4-C v1 production notes
+
+Implemented in `src/reports/` (VIB-P4-C-001). Where this section and the
+candidate text above differ, this section describes production.
+
+### The package
+
+`GET /api/reports/run/:runId` returns one JSON response holding both files:
+
+```text
+report_source_json   <vib-report-<runId>-<first 12 of content_sha256>>.source.json
+markdown             <vib-report-<runId>-<first 12 of content_sha256>>.md
+content_sha256, generated_at, report_source (object), markdown_body
+```
+
+The UI turns that single response into two downloads and never requests the
+second file separately, so both always describe the same evidence. Filenames
+are built from a validated Run id and a hex hash only.
+
+### One generation per package
+
+The builder reads the comparison, hashes every cited file, reads the comparison
+again, and hashes again. If the two readings or the two hash passes differ in
+any way — a byte changed, or an Evaluation appeared — the request fails with
+`REPORT_EVIDENCE_CHANGED_DURING_BUILD` (409) rather than returning a package
+that mixes generations.
+
+### Byte identity
+
+Every `*_sha256` frozen for a file is the SHA-256 of the bytes on disk, never
+of re-serialized JSON: a file whose JSON means the same thing but whose
+whitespace changed is different evidence. The ReportSource holds canonical ids
+only; it stores and accepts no path.
+
+### canonical-json-v1 and content identity
+
+```text
+canonical-json-v1   object keys sorted by UTF-16 code unit (never locale);
+                    arrays in order; JSON string escaping; finite numbers in
+                    ECMAScript shortest round-trip form; no whitespace;
+                    undefined / NaN / Infinity / non-plain objects refused;
+                    hashed as UTF-8
+content_sha256      sha256(canonical-json-v1({ markdown_body, report_source }))
+```
+
+`report.md` is the deterministic body, then a line
+`<!-- vib-report:presentation-footer -->`, then a footer that prints
+`content_sha256` and `generated_at`. `generated_at` is presentation only. The
+full `report.md` bytes change with every render, but the body (UTF-8, LF only,
+exactly one trailing LF) and `content_sha256` do not, for the same
+ReportSource, the same verifier outcome and the same renderer
+(`report-markdown-v1`).
+
+### Re-render outcomes
+
+`POST /api/reports/rerender` takes the exported ReportSource JSON as untrusted
+input. It validates the source strictly (closed vocabulary, unknown fields
+rejected, id and hash formats, ordering, headline rules, exact partition,
+completeness equal to what the structure implies), then follows steps 1–10
+above over exactly the named ids.
+
+```text
+REPORT_SOURCE_INVALID (400)            malformed or self-contradicting source
+REPORT_RUN_BASIS_CHANGED (409)         manifest/source/audio bytes moved; the
+                                       error carries evidence_changed[] (ids and
+                                       hashes, never contents)
+REPORT_RUN_VERIFICATION_CHANGED (409)  the Run's frozen files are byte-identical
+                                       but the current verifier rejects the Run
+200 status 'reproduced'                nothing changed; body and content_sha256
+                                       equal the original package's
+200 status 'changed'                   evidence_changed[]      same id, different/missing bytes
+                                       verification_changed[] same bytes, the current verifier
+                                                              places or selects differently
+                                       not_rechecked[]         bytes held, but the Result they
+                                                              stand on moved
+```
+
+An artifact whose bytes moved is never reported as a verifier change, and one
+standing on moved evidence is not re-checked at all.
+
+### Known limits of v1
+
+- `provider-query.json` is verified by the Run check but not frozen (see "Run
+  evidence identity" above). A change to it alone surfaces as
+  `REPORT_RUN_VERIFICATION_CHANGED`, not as an evidence change.
+- `transcript.txt` is frozen only for Results that verified at report time —
+  the only ones whose transcript the report quotes. For a Result rejected at
+  report time, a later change to its transcript can surface as a verification
+  change.
+- Rejection reasons of Evaluations are not frozen in the ReportSource; they are
+  in the report-time body, which `content_sha256` covers.

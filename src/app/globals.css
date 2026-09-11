@@ -583,3 +583,17 @@ td.cmp-rejected {
 .cmp-aux .transcript-card {
   margin-top: 10px;
 }
+
+/* Report Export: an operator-exported package, not a stored artifact. */
+.cmp-aux.report-export {
+  border-color: var(--accent);
+}
+
+.report-export-result {
+  margin-top: 12px;
+}
+
+.report-export-result a {
+  color: var(--accent);
+  word-break: break-all;
+}

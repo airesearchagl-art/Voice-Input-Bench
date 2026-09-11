@@ -772,28 +772,45 @@ export async function listEvaluationsForRun(
     // Only Evaluations that claim this Run are this listing's business.
     if (!isPlainObject(stored) || stored.run_id !== runId) continue;
 
-    const resultId = typeof stored.result_id === 'string' ? stored.result_id : undefined;
-
-    try {
-      const subject = await resolveEvaluationSubject(
-        { runStore: deps.runStore, resultStore: deps.resultStore },
-        resultId ?? '',
-      );
-      const evaluation = verifyByStoredSchema({ evaluationId, stored, subject });
-      entries.push({
-        status: 'verified',
-        evaluationId,
-        evaluation,
-        referenceText: subject.referenceText,
-        hypothesisText: subject.hypothesisText,
-        normalized: normalizedTextsFor(evaluation, subject),
-      });
-    } catch (caught) {
-      entries.push(rejectionOf(evaluationId, resultId, caught));
-    }
+    entries.push(await verifyEvaluationListEntry(deps, evaluationId, stored));
   }
 
   return entries.sort((a, b) => a.evaluationId.localeCompare(b.evaluationId));
+}
+
+/**
+ * Verify one stored Evaluation, as the listing does.
+ *
+ * The listing's verdict for a single Evaluation, and the only place it is made:
+ * `listEvaluationsForRun` uses it for every Evaluation it finds, and a Report
+ * re-render uses it for exactly the Evaluation ids a ReportSource names, over
+ * the exact bytes it just hashed. Never throws: anything that goes wrong is a
+ * rejected entry. Readback only — no model is contacted here.
+ */
+export async function verifyEvaluationListEntry(
+  deps: Pick<EvaluationDeps, 'runStore' | 'resultStore'>,
+  evaluationId: string,
+  stored: Record<string, unknown>,
+): Promise<EvaluationListEntry> {
+  const resultId = typeof stored.result_id === 'string' ? stored.result_id : undefined;
+
+  try {
+    const subject = await resolveEvaluationSubject(
+      { runStore: deps.runStore, resultStore: deps.resultStore },
+      resultId ?? '',
+    );
+    const evaluation = verifyByStoredSchema({ evaluationId, stored, subject });
+    return {
+      status: 'verified',
+      evaluationId,
+      evaluation,
+      referenceText: subject.referenceText,
+      hypothesisText: subject.hypothesisText,
+      normalized: normalizedTextsFor(evaluation, subject),
+    };
+  } catch (caught) {
+    return rejectionOf(evaluationId, resultId, caught);
+  }
 }
 
 export interface NormalizedTexts {

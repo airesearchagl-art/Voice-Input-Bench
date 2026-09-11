@@ -8,6 +8,7 @@ import { ResultStoreError, type ResultStoreErrorKind } from '@/storage/LocalResu
 import { RunEvidenceError, type RunEvidenceErrorKind } from '@/results/runEvidence';
 import { ToolResolutionError, type ToolResolutionErrorKind } from '@/results/tools';
 import { SaveResultError, type SaveResultErrorKind } from '@/results/saveResult';
+import { ReportError, type EvidenceChange, type ReportErrorKind } from '@/reports/reportErrors';
 import {
   ResultVerificationError,
   type ResultVerificationErrorKind,
@@ -199,14 +200,29 @@ export interface ApiErrorBody {
       | RawCharErrorKind
       | CriticalInfoErrorKind
       | SemanticProviderErrorKind
+      | ReportErrorKind
       | 'BAD_REQUEST'
       | 'UNEXPECTED';
     message: string;
     endpoint?: string;
     httpStatus?: number;
     detail?: string;
+    /** Report re-render only: which cited files are not the bytes the report read. */
+    evidence_changed?: EvidenceChange[];
   };
 }
+
+/**
+ * An unusable ReportSource is the caller's (400/413). Evidence that moved
+ * under a report, or under a build, is a conflict with the state on disk (409).
+ */
+const STATUS_BY_REPORT_KIND: Record<ReportErrorKind, number> = {
+  REPORT_SOURCE_INVALID: 400,
+  REPORT_SOURCE_TOO_LARGE: 413,
+  REPORT_EVIDENCE_CHANGED_DURING_BUILD: 409,
+  REPORT_RUN_BASIS_CHANGED: 409,
+  REPORT_RUN_VERIFICATION_CHANGED: 409,
+};
 
 export function badRequest(message: string): NextResponse<ApiErrorBody> {
   return NextResponse.json({ ok: false, error: { kind: 'BAD_REQUEST', message } } as const, {
@@ -392,6 +408,21 @@ export function toErrorResponse(caught: unknown): NextResponse<ApiErrorBody> {
     return NextResponse.json(
       { ok: false, error: { kind: caught.kind, message: caught.message } } as const,
       { status: STATUS_BY_STORE_KIND[caught.kind] },
+    );
+  }
+
+  if (caught instanceof ReportError) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: {
+          kind: caught.kind,
+          message: caught.message,
+          detail: caught.detail,
+          ...(caught.evidenceChanged ? { evidence_changed: caught.evidenceChanged } : {}),
+        },
+      } as const,
+      { status: STATUS_BY_REPORT_KIND[caught.kind] },
     );
   }
 
