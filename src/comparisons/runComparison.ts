@@ -320,6 +320,12 @@ export interface RunCompleteness {
    */
   state: 'complete' | 'partial';
   sealed_verified_results: number;
+  /**
+   * Every rejected Result whose readback still vouches for its seal
+   * (`integrity_trust === 'sealed'`), wherever it was placed: in a built-in
+   * tool group, or in `unattributed_results` when it is a custom `other` whose
+   * name is not exposed. Where a Result lands does not change what it is.
+   */
   sealed_rejected_results: number;
   legacy_unsealed_results: number;
   unattributed_results: number;
@@ -684,13 +690,24 @@ function evaluatorGroup(
  * v1, v2 and v3 are recomputed from the same Run and Result bytes on readback,
  * so verified entries necessarily agree; the check is there so that a
  * disagreement, if one ever reached this far, could not be hidden by a pick.
+ *
  * v4 is historical model execution evidence: two verified executions can
- * legitimately disagree, and the decision — value and the rule that produced
- * it — is the reading. Latency, raw responses and vote counts are not.
+ * legitimately disagree, and not only in their verdict. Two `review` decisions
+ * by `split-vote-v1` can rest on opposite votes, and publishing either one as
+ * the headline would put one execution's count forward as the reading. So the
+ * key is the decision together with everything reported that bears on it —
+ * the guard, the execution route and the run and vote counts. Model identity
+ * is pinned by readback and is not a measurement; latency and raw responses
+ * are not readings at all.
  */
 function measurementKey(summary: EvaluationSummary): string {
   if (summary.kind === SEMANTIC_H3_ALGORITHM) {
-    return JSON.stringify([summary.decision, summary.decision_by]);
+    return JSON.stringify([
+      summary.decision,
+      summary.decision_by,
+      summary.critical_guard,
+      summary.execution,
+    ]);
   }
   return JSON.stringify(summary);
 }
@@ -817,7 +834,10 @@ function runCompleteness(input: {
   const verified = grouped.filter(
     (result): result is ComparisonVerifiedResult => result.kind === 'verified',
   );
-  const sealedRejected = grouped.length - verified.length;
+  const groupedRejected = grouped.length - verified.length;
+  const sealedRejected =
+    groupedRejected +
+    input.unattributed.filter((result) => result.integrity_trust === 'sealed').length;
   const noVerified = verified.filter(
     (result) => result.completeness.evaluators_present.length === 0,
   ).length;
@@ -825,7 +845,7 @@ function runCompleteness(input: {
   const complete =
     verified.length > 0 &&
     verified.every((result) => result.completeness.state === 'complete') &&
-    sealedRejected === 0 &&
+    groupedRejected === 0 &&
     input.unattributed.length === 0 &&
     input.unattributedRejected.length === 0 &&
     input.unattributedVerified.length === 0;

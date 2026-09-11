@@ -26,6 +26,7 @@ import {
   semanticRunLine,
   semanticVerdictLabel,
 } from './runComparisonCopy';
+import { loadRunComparison, type ComparisonLoadState } from './runComparisonLoad';
 
 /**
  * Run Comparison — one Run's trusted tool evidence, side by side.
@@ -38,27 +39,6 @@ import {
  * Evidence that cannot be placed in a tool column — legacy, unattributed,
  * rejected — is shown below in its own sections rather than left out.
  */
-
-interface ApiErrorShape {
-  kind: string;
-  message: string;
-  detail?: string;
-}
-
-type LoadState =
-  | { status: 'loading' }
-  | { status: 'failed'; error: ApiErrorShape }
-  | { status: 'loaded'; comparison: ComparisonRun };
-
-async function readApiError(response: Response): Promise<ApiErrorShape> {
-  try {
-    const body = (await response.json()) as { error?: ApiErrorShape };
-    if (body.error && typeof body.error.kind === 'string') return body.error;
-  } catch {
-    // Fall through to the generic shape below.
-  }
-  return { kind: 'UNEXPECTED', message: `サーバーが HTTP ${response.status} を返しました。` };
-}
 
 function formatCer(cer: number): string {
   return cer.toFixed(4);
@@ -682,35 +662,16 @@ export default function RunComparison({
   /** Changes whenever the surrounding panel reloads, so the comparison follows it. */
   refreshKey: number;
 }) {
-  const [state, setState] = useState<LoadState>({ status: 'loading' });
+  const [state, setState] = useState<ComparisonLoadState>({ status: 'loading' });
 
   useEffect(() => {
+    // Aborted on every Run change and unmount. An aborted request answers null
+    // however it settles, so it can never write into the Run now selected.
     const controller = new AbortController();
     setState({ status: 'loading' });
-    void (async () => {
-      try {
-        const response = await fetch(`/api/comparisons/run/${encodeURIComponent(runId)}`, {
-          cache: 'no-store',
-          signal: controller.signal,
-        });
-        if (!response.ok) {
-          const error = await readApiError(response);
-          if (!controller.signal.aborted) setState({ status: 'failed', error });
-          return;
-        }
-        const body = (await response.json()) as ComparisonRun;
-        if (!controller.signal.aborted) setState({ status: 'loaded', comparison: body });
-      } catch (caught) {
-        if (caught instanceof DOMException && caught.name === 'AbortError') return;
-        setState({
-          status: 'failed',
-          error: {
-            kind: 'UNEXPECTED',
-            message: caught instanceof Error ? caught.message : String(caught),
-          },
-        });
-      }
-    })();
+    void loadRunComparison(runId, controller.signal).then((next) => {
+      if (next !== null && !controller.signal.aborted) setState(next);
+    });
     return () => controller.abort();
   }, [runId, refreshKey]);
 

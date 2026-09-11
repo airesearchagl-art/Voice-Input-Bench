@@ -509,6 +509,51 @@ describe('buildRunComparison — trusted tool grouping', () => {
     ]);
   });
 
+  it('counts a sealed rejected `other` as sealed rejected, though it sits in unattributed', async () => {
+    await saveSealed(R1, 'other', { customToolName: 'Alpha STT' });
+    await overwriteTranscript(R1);
+
+    const { completeness } = await build();
+
+    expect(completeness.unattributed_results).toBe(1);
+    expect(completeness.sealed_rejected_results).toBe(1);
+    expect(completeness.state).toBe('partial');
+  });
+
+  it('counts sealed rejected Results in a tool group and in unattributed together', async () => {
+    await saveSealed(R1, 'aqua-voice');
+    await saveSealed(R2, 'other', { customToolName: 'Alpha STT' });
+    await saveSealed(R3, 'windows-standard-voice-input');
+    await overwriteTranscript(R1);
+    await overwriteTranscript(R2);
+
+    const { completeness } = await build();
+
+    expect(completeness).toMatchObject({
+      state: 'partial',
+      sealed_verified_results: 1,
+      sealed_rejected_results: 2,
+      unattributed_results: 1,
+    });
+  });
+
+  it('does not count a Result whose seal no longer vouches for it as sealed rejected', async () => {
+    await saveSealed(R1, 'windows-standard-voice-input');
+    await patchResult(R1, (json) => {
+      json.tool = { id: 'aqua-voice', name: BUILT_IN_TOOL_NAMES['aqua-voice'], version: null };
+    });
+    await saveLegacy(R2);
+    await removeTranscript(R2);
+
+    const { completeness } = await build();
+
+    expect(completeness).toMatchObject({
+      sealed_rejected_results: 0,
+      unattributed_results: 1,
+      legacy_unsealed_results: 1,
+    });
+  });
+
   it('sends a Result whose seal broke to unattributed, with the Evaluations naming it', async () => {
     await saveSealed(R1, 'windows-standard-voice-input');
     await evaluate(R1, 'raw-char-v1', E1);
@@ -520,6 +565,7 @@ describe('buildRunComparison — trusted tool grouping', () => {
     const comparison = await build();
 
     expect(comparison.tools).toEqual([]);
+    expect(comparison.completeness.sealed_rejected_results).toBe(0);
     const [unattributed] = comparison.unattributed_results;
     expect(unattributed).toMatchObject({
       result_id: R1,
@@ -798,6 +844,38 @@ describe('buildRunComparison — Semantic', () => {
     expect(semantic.state.conflicting_evidence).toBe(true);
   });
 
+  it('treats two split votes resting on opposite counts as a conflict', async () => {
+    await saveSealed(R1, 'windows-standard-voice-input');
+    await evaluate(R1, 'semantic-h3-v1', E1, fakeRunner([VERDICT_CHANGED, VERDICT_PRESERVED, VERDICT_CHANGED]));
+    await evaluate(R1, 'semantic-h3-v1', E2, fakeRunner([VERDICT_PRESERVED, VERDICT_CHANGED, VERDICT_PRESERVED]));
+
+    const semantic = group(verifiedResult(await build(), R1), 'semantic-h3-v1');
+
+    // Same decision, same rule — and opposite votes behind it.
+    expect(
+      semantic.entries.map((e) => {
+        const summary = e.summary as SemanticSummary;
+        return [
+          summary.decision,
+          summary.decision_by,
+          summary.execution.changed_votes,
+          summary.execution.preserved_votes,
+        ];
+      }),
+    ).toEqual([
+      ['review', 'split-vote-v1', 2, 1],
+      ['review', 'split-vote-v1', 1, 2],
+    ]);
+    expect(semantic.headline).toBeNull();
+    expect(semantic.selection_reason).toBe('conflict-no-headline-v1');
+    expect(semantic.state).toEqual({
+      availability: 'available',
+      verified_count: 2,
+      multiple_candidates: true,
+      conflicting_evidence: true,
+    });
+  });
+
   it('heads agreeing Semantic executions with the newest, flagged as a selection', async () => {
     await saveSealed(R1, 'windows-standard-voice-input');
     await evaluate(R1, 'semantic-h3-v1', E1, fakeRunner([VERDICT_CHANGED, VERDICT_CHANGED, VERDICT_CHANGED]));
@@ -912,7 +990,8 @@ describe('buildRunComparison — reading only, and deterministically', () => {
     expect(comparison.completeness).toEqual({
       state: 'partial',
       sealed_verified_results: 3,
-      sealed_rejected_results: 0,
+      // R3: a sealed rejected `other`, unattributed but still sealed.
+      sealed_rejected_results: 1,
       legacy_unsealed_results: 1,
       unattributed_results: 1,
       unattributed_rejected_evaluations: 1,
