@@ -69,6 +69,30 @@ export interface EvaluationSubjectDeps {
   resultStore: LocalResultStore;
 }
 
+/**
+ * Where a subject's evidence comes from.
+ *
+ * On disk, for creation and for every listing. A Report re-check supplies a
+ * reader over the exact bytes its ReportSource froze instead, so readback there
+ * can never reach a file the report did not pin. The checks made on what is
+ * read are the same either way: they live in `resolveEvaluationSubjectWith`.
+ */
+export interface EvaluationSubjectReader {
+  readResult(resultId: string): Promise<unknown>;
+  readTranscript(resultId: string): Promise<string>;
+  readSource(runId: string): Promise<string>;
+  verifyRun(runId: string): Promise<VerifiedRunEvidence>;
+}
+
+export function diskSubjectReader(deps: EvaluationSubjectDeps): EvaluationSubjectReader {
+  return {
+    readResult: (resultId) => deps.resultStore.readResult(resultId),
+    readTranscript: (resultId) => deps.resultStore.readTranscript(resultId),
+    readSource: (runId) => readFile(deps.runStore.resolveRunFile(runId, SOURCE_FILE), 'utf8'),
+    verifyRun: (runId) => verifyRunEvidence(deps.runStore, runId),
+  };
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -85,8 +109,14 @@ export async function resolveEvaluationSubject(
   deps: EvaluationSubjectDeps,
   resultId: string,
 ): Promise<EvaluationSubject> {
-  const { runStore, resultStore } = deps;
+  return resolveEvaluationSubjectWith(diskSubjectReader(deps), resultId);
+}
 
+/** `resolveEvaluationSubject`, reading through `reader`. Same checks, same order. */
+export async function resolveEvaluationSubjectWith(
+  reader: EvaluationSubjectReader,
+  resultId: string,
+): Promise<EvaluationSubject> {
   if (!isValidResultId(resultId)) {
     throw new EvaluationSubjectError(
       'EVALUATION_RESULT_UNREADABLE',
@@ -96,7 +126,7 @@ export async function resolveEvaluationSubject(
 
   let stored: unknown;
   try {
-    stored = await resultStore.readResult(resultId);
+    stored = await reader.readResult(resultId);
   } catch (cause) {
     throw new EvaluationSubjectError(
       'EVALUATION_RESULT_UNREADABLE',
@@ -115,7 +145,7 @@ export async function resolveEvaluationSubject(
   // The Result names its Run. Verify that Run from disk before believing
   // anything else the Result says about it.
   const runId = stored.run_id;
-  const runEvidence = await verifyRunEvidence(runStore, runId);
+  const runEvidence = await reader.verifyRun(runId);
 
   const { result, integrityTrust } = verifyStoredResultMetadata({
     resultId,
@@ -132,7 +162,7 @@ export async function resolveEvaluationSubject(
     );
   }
 
-  const hypothesisText = await resultStore.readTranscript(resultId);
+  const hypothesisText = await reader.readTranscript(resultId);
   verifyTranscriptAgainstResult({
     resultId,
     result,
@@ -145,7 +175,7 @@ export async function resolveEvaluationSubject(
   // comparison will run over.
   let referenceText: string;
   try {
-    referenceText = await readFile(runStore.resolveRunFile(runId, SOURCE_FILE), 'utf8');
+    referenceText = await reader.readSource(runId);
   } catch (cause) {
     throw new EvaluationSubjectError(
       'EVALUATION_SOURCE_UNREADABLE',

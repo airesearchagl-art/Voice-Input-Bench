@@ -7,7 +7,8 @@ import { canonicalJson, canonicalJsonPretty } from './canonicalJson';
 import { hashCitedArtifacts } from './artifactBytes';
 import { ReportError } from './reportErrors';
 import { assertSourceMatchesComparison, reportSourceOf, type ReportSource } from './reportSource';
-import { composeReportMarkdown, renderReportBody, reportContentSha256 } from './renderReport';
+import { composeReportMarkdown, hasFindings, renderReportBody, reportContentSha256 } from './renderReport';
+import { recheckFrozenSource } from './rerenderReport';
 
 /**
  * The Report package for one Run — built from current evidence, stored nowhere.
@@ -68,26 +69,45 @@ export async function buildReportPackage(
     throw changedDuringBuild('引用する artifact の bytes が build 中に変わりました。');
   }
 
-  return packageOf(second, secondHashes, options);
+  return packageOf(deps, second, secondHashes, options);
 }
 
-function changedDuringBuild(message: string): ReportError {
+function changedDuringBuild(message: string, detail?: string): ReportError {
   return new ReportError('REPORT_EVIDENCE_CHANGED_DURING_BUILD', message, {
-    detail: '古い bytes と新しい bytes を混ぜた package は返しません。再生成してください。',
+    detail: detail ?? '古い bytes と新しい bytes を混ぜた package は返しません。再生成してください。',
   });
 }
 
-function packageOf(
+async function packageOf(
+  deps: RunComparisonDeps,
   reading: RunComparisonReading,
   hashes: Awaited<ReturnType<typeof hashCitedArtifacts>>,
   options: BuildReportOptions,
-): ReportPackage {
+): Promise<ReportPackage> {
   const source = reportSourceOf(reading, hashes);
   // The source is checked against its own contract before it leaves: the same
   // validation an untrusted copy gets on re-render.
   assertSourceMatchesComparison(source, reading.comparison);
 
-  const body = renderReportBody(source, reading.comparison);
+  // Then re-checked exactly as a re-render would check it — over the frozen
+  // bytes only. The body is rendered from that reading, so a later re-render
+  // of unchanged evidence derives the same body by the same path. Anything it
+  // finds means the evidence moved while the package was being made.
+  const check = await recheckFrozenSource(deps, source).catch((caught: unknown) => {
+    if (caught instanceof ReportError && caught.kind !== 'REPORT_SOURCE_INVALID') {
+      throw changedDuringBuild('build 中に Run の evidence が変わりました。', `${caught.kind}: ${caught.message}`);
+    }
+    throw new Error('生成した ReportSource を自身の evidence で再確認できません。', { cause: caught });
+  });
+  if (hasFindings(check.findings)) {
+    const { evidence_changed: e, verification_changed: v, not_rechecked: n } = check.findings;
+    throw changedDuringBuild(
+      '固定した evidence が build 中に変わりました。',
+      `evidence_changed=${e.length} verification_changed=${v.length} not_rechecked=${n.length}`,
+    );
+  }
+
+  const body = renderReportBody(source, check.current);
   const contentSha256 = reportContentSha256(source, body);
   const generatedAt = (options.now ?? (() => new Date()))().toISOString();
 

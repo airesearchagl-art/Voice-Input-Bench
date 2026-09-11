@@ -28,6 +28,7 @@ import {
 } from '@/evaluation/semanticProvider';
 import { SEMANTIC_RUBRIC_V1_SHA256 } from '@/evaluation/semanticPrompt';
 import { assembleRunComparison, type RunComparisonDeps } from '@/comparisons/runComparison';
+import { hashCitedArtifacts } from './artifactBytes';
 import { buildReportPackage, type ReportPackage } from './buildReport';
 import { ReportError } from './reportErrors';
 import {
@@ -320,6 +321,23 @@ function verifiedSource(source: ReportSource, resultId: string): ReportVerifiedR
   return found;
 }
 
+/**
+ * A ReportSource with an unattributed verified Evaluation (H): E1 verified on
+ * R1, frozen from a reading whose Result listing did not contain R1. One
+ * reading cannot produce that — the two listings would have to disagree — so
+ * the reading is assembled by hand, and hashed from the real bytes on disk.
+ */
+async function unattributedVerifiedSource() {
+  await saveSealed(R1, 'windows-standard-voice-input');
+  await evaluate(R1, 'raw-char-v1', E1);
+  const runEvidence = await verifyRunEvidence(runStore, RUN_ID);
+  const evaluations = await listEvaluationsForRun(evaluationDeps(), RUN_ID);
+  const comparison = assembleRunComparison({ runEvidence, results: [], evaluations });
+  const reading = { runEvidence, results: [], evaluations, comparison };
+  const source = reportSourceOf(reading, await hashCitedArtifacts(stores(), comparison));
+  return { source, reading };
+}
+
 function groupOf(source: ReportSource, resultId: string, evaluatorId: EvaluatorId) {
   const found = verifiedSource(source, resultId).evaluation_groups.find((g) => g.evaluator_id === evaluatorId);
   if (!found) throw new Error('no group');
@@ -445,6 +463,23 @@ describe('buildReportPackage — ReportSource v1', () => {
     });
     expect(verifiedSource(second.report_source, R1).transcript_sha256).toBe(sha(await readFile(transcriptFile(R1))));
     expect(second.report_source.artifact_content.results[R6]!.file_sha256).toBe(sha(await readFile(resultFile(R6))));
+    // Every Result's transcript bytes are identified, including a rejected
+    // Result's (a re-check reads them) and an absent one's (recorded as null).
+    expect(second.report_source.artifact_content.results[R3]!.transcript_file_sha256).toBe(
+      sha(await readFile(transcriptFile(R3))),
+    );
+    expect(second.report_source.artifact_content.results[R6]!.transcript_file_sha256).toBeNull();
+    expect(second.report_source.artifact_content.results[R1]!.transcript_file_sha256).toBe(
+      verifiedSource(second.report_source, R1).transcript_sha256,
+    );
+    // Every verified Evaluation names its subject; the rejected ones do not.
+    expect(second.report_source.verified_evaluation_subjects).toEqual({
+      [E1]: { subject_result_id: R1 },
+      [E2]: { subject_result_id: R1 },
+      [E4]: { subject_result_id: R2 },
+      [E7]: { subject_result_id: R7 },
+    });
+    expect(second.report_source.supporting_results).toEqual({});
     // Canonical ids only: no path of any kind is frozen.
     const json = second.report_source_json;
     for (const root of [runsRoot, resultsRoot, evaluationsRoot, tmpdir()]) expect(json).not.toContain(root);
@@ -453,18 +488,8 @@ describe('buildReportPackage — ReportSource v1', () => {
   });
 
   it('keeps a verified Evaluation whose Result is missing from the listing in the unattributed_verified partition', async () => {
-    await saveSealed(R1, 'windows-standard-voice-input');
-    await evaluate(R1, 'raw-char-v1', E1);
-    const runEvidence = await verifyRunEvidence(runStore, RUN_ID);
-    const evaluations = await listEvaluationsForRun(evaluationDeps(), RUN_ID);
-    // The two listings disagreeing is not expected; the partition still has a place for it.
-    const reading = { runEvidence, results: [], evaluations, comparison: assembleRunComparison({ runEvidence, results: [], evaluations }) };
+    const { source, reading } = await unattributedVerifiedSource();
     const bytes = await readFile(evaluationFile(E1));
-    const source = reportSourceOf(reading, {
-      run: { manifest: 'a'.repeat(64), source: 'b'.repeat(64), audio: 'c'.repeat(64) },
-      results: {},
-      evaluations: { [E1]: sha(bytes) },
-    });
 
     expect(source.unattributed_verified_evaluation_ids).toEqual([E1]);
     expect(evaluationPartitionOf(source).get(E1)).toEqual({ container: 'unattributed_verified' });
@@ -472,10 +497,47 @@ describe('buildReportPackage — ReportSource v1', () => {
       file_sha256: sha(bytes),
       semantic_sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
     });
+    // Its subject is frozen as supporting evidence only — not promoted into any
+    // Result container.
+    expect(source.verified_evaluation_subjects).toEqual({ [E1]: { subject_result_id: R1 } });
+    expect(source.supporting_results).toEqual({
+      [R1]: {
+        result_file_sha256: sha(await readFile(resultFile(R1))),
+        transcript_file_sha256: sha(await readFile(transcriptFile(R1))),
+      },
+    });
+    expect(source.artifact_content.results).toEqual({});
+    expect(source.results).toEqual([]);
     expect(validateReportSource(JSON.parse(JSON.stringify(source)))).toEqual(source);
     const body = renderReportBody(source, reading.comparison);
     expect(body).toContain('### Run-level unattributed verified Evaluations');
     expect(body).toContain(E1);
+    expect(body).toContain(`| supporting result | \`${R1}\``);
+  });
+
+  it('refuses to freeze a verified Evaluation on a Result that did not verify: that cannot come from one reading', async () => {
+    await saveSealed(R1, 'aqua-voice');
+    await evaluate(R1, 'raw-char-v1', E1);
+    const runEvidence = await verifyRunEvidence(runStore, RUN_ID);
+    const evaluations = await listEvaluationsForRun(evaluationDeps(), RUN_ID);
+    // A listing that disagrees with the Evaluation's own readback of R1.
+    const results = [
+      {
+        status: 'rejected' as const,
+        resultId: R1,
+        reason: 'RESULT_TRANSCRIPT_HASH_MISMATCH',
+        message: 'listing disagreed',
+        trustedToolId: 'aqua-voice' as const,
+        integrityTrust: 'sealed' as const,
+      },
+    ];
+    const comparison = assembleRunComparison({ runEvidence, results, evaluations });
+    expect(comparison.tools[0]!.results[0]).toMatchObject({ kind: 'rejected', verified_evaluations: [expect.anything()] });
+
+    const hashes = await hashCitedArtifacts(stores(), comparison);
+    expect(() => reportSourceOf({ runEvidence, results, evaluations, comparison }, hashes)).toThrow(
+      expect.objectContaining({ kind: 'REPORT_EVIDENCE_CHANGED_DURING_BUILD' }),
+    );
   });
 
   it('builds a valid, empty package for a Run with no Results', async () => {
@@ -623,6 +685,9 @@ describe('report.md body', () => {
     }
     for (const id of [R1, R2, R3, R4, R5, R6, R7, E1, E2, E3, E4, E5, E6, E7, E9]) expect(body).toContain(id);
     expect(body).toContain('**MISSING**');
+    // Coverage is a coverage reading, not a health verdict.
+    expect(body).toContain('- Verified evaluator coverage: **partial**');
+    expect(body).not.toContain('- State:');
     expect(body).toContain('- Version: `24H2`');
     expect(body).toContain('- Delivery path: `speaker-to-mic`');
     expect(body).not.toMatch(GRADE_WORDS);
@@ -762,6 +827,31 @@ describe('validateReportSource', () => {
         const legacy = s.legacy_results.find((r: LooseJson) => r.kind === 'legacy-unsealed-verified');
         legacy.tool_claim_is_unverified = false;
       }],
+      // RF-1: every verified Evaluation's subject is frozen, exactly once, and nothing else is.
+      ['a verified Evaluation with no subject', (s) => { delete s.verified_evaluation_subjects[E1]; }],
+      ['a subject that is not the Evaluation\'s own Result', (s) => { s.verified_evaluation_subjects[E1].subject_result_id = R7; }],
+      ['a subject on a rejected Evaluation', (s) => { s.verified_evaluation_subjects[E9] = { subject_result_id: R1 }; }],
+      ['a subject with a path', (s) => { s.verified_evaluation_subjects[E1].path = '../../results'; }],
+      ['a subject that is not a Result id', (s) => { s.verified_evaluation_subjects[E1].subject_result_id = 'C:\\data'; }],
+      ['an unused supporting Result', (s) => {
+        s.supporting_results['20260911T019900000Z-0000000a'] = { result_file_sha256: 'a'.repeat(64), transcript_file_sha256: 'b'.repeat(64) };
+      }],
+      ['a supporting Result duplicating a container Result', (s) => {
+        s.supporting_results[R1] = { result_file_sha256: 'a'.repeat(64), transcript_file_sha256: 'b'.repeat(64) };
+      }],
+      ['a transcript hash contradicting the verified Result', (s) => { s.artifact_content.results[R1].transcript_file_sha256 = 'f'.repeat(64); }],
+      ['a Result with no transcript identity', (s) => { delete s.artifact_content.results[R3].transcript_file_sha256; }],
+      ...(['rejected', 'legacy', 'unattributed'] as const).map((where): [string, (s: LooseJson) => void] => [
+        `a verified Evaluation on a ${where} Result (cannot come from one reading)`,
+        (s) => {
+          const id = '20260911T029900000Z-0000000b';
+          s.artifact_content.evaluations[id] = { file_sha256: 'a'.repeat(64), semantic_sha256: 'b'.repeat(64) };
+          s.verified_evaluation_subjects[id] = { subject_result_id: where === 'rejected' ? R3 : where === 'legacy' ? R5 : R4 };
+          if (where === 'rejected') s.results.find((r: LooseJson) => r.result_id === R3).verified_evaluation_ids = [id];
+          if (where === 'legacy') s.legacy_results.find((r: LooseJson) => r.result_id === R5).verified_evaluation_ids = [id];
+          if (where === 'unattributed') s.unattributed_results[0].related_verified_evaluation_ids = [id];
+        },
+      ]),
     ];
     for (const [name, mutate] of cases) {
       const failure = (() => {
@@ -929,7 +1019,7 @@ describe('rerenderReport', () => {
       {
         ...stores(),
         verifiers: {
-          evaluation: async (deps, evaluationId, stored) =>
+          evaluation: async (deps, evaluationId, stored, reader) =>
             evaluationId === E2
               ? {
                   status: 'rejected',
@@ -938,7 +1028,7 @@ describe('rerenderReport', () => {
                   reason: 'EVALUATION_METRICS_MISMATCH',
                   message: 'a hardened verifier now rejects these same bytes',
                 }
-              : verifyEvaluationListEntry(deps, evaluationId, stored),
+              : verifyEvaluationListEntry(deps, evaluationId, stored, reader),
         },
       },
       source,
@@ -1028,5 +1118,175 @@ describe('rerenderReport', () => {
 
     await expect(rerenderReport(stores(), source)).rejects.toMatchObject({ kind: 'REPORT_SOURCE_INVALID' });
     expect(readSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ── RF-1: frozen subject dependencies ───────────────────────────────────────
+
+describe('rerenderReport — every Evaluation re-checks against frozen subject bytes only', () => {
+  it('reproduces an unattributed verified Evaluation from its frozen supporting subject', async () => {
+    const { source } = await unattributedVerifiedSource();
+    const exported = JSON.parse(JSON.stringify(source)) as unknown;
+
+    const first = await rerenderReport(stores(), exported);
+    const second = await rerenderReport(stores(), exported, { now: () => LATER });
+
+    expect(first.status).toBe('reproduced');
+    expect(first.evidence_changed).toEqual([]);
+    expect(first.verification_changed).toEqual([]);
+    expect(first.not_rechecked).toEqual([]);
+    expect(second.content_sha256).toBe(first.content_sha256);
+    expect(first.markdown_body).toContain('### Run-level unattributed verified Evaluations');
+  });
+
+  it('reports a changed supporting result.json as evidence, and does not re-check the Evaluation on it', async () => {
+    const { source } = await unattributedVerifiedSource();
+    const exported = JSON.parse(JSON.stringify(source)) as unknown;
+    const expected = sha(await readFile(resultFile(R1)));
+    await reindent(resultFile(R1));
+
+    const outcome = await rerenderReport(stores(), exported);
+
+    expect(outcome.status).toBe('changed');
+    expect(outcome.evidence_changed).toEqual([
+      {
+        artifact_kind: 'supporting_result',
+        artifact_id: R1,
+        expected_sha256: expected,
+        actual_sha256: sha(await readFile(resultFile(R1))),
+        change: 'modified',
+      },
+    ]);
+    expect(outcome.not_rechecked).toEqual([
+      { artifact_kind: 'evaluation', artifact_id: E1, because: 'subject_result_evidence_changed', subject_result_id: R1 },
+    ]);
+    expect(outcome.verification_changed).toEqual([]);
+  });
+
+  it('reports a changed supporting transcript.txt as evidence, and does not re-check the Evaluation on it', async () => {
+    const { source } = await unattributedVerifiedSource();
+    const exported = JSON.parse(JSON.stringify(source)) as unknown;
+    await writeFile(transcriptFile(R1), '別の transcript');
+
+    const outcome = await rerenderReport(stores(), exported);
+
+    expect(outcome.evidence_changed).toEqual([
+      expect.objectContaining({ artifact_kind: 'supporting_transcript', artifact_id: R1, change: 'modified' }),
+    ]);
+    expect(outcome.not_rechecked.map((n) => n.artifact_id)).toEqual([E1]);
+    expect(outcome.verification_changed).toEqual([]);
+  });
+
+  it('never reads a Result, transcript or Evaluation the ReportSource did not name', async () => {
+    const { source } = await unattributedVerifiedSource();
+    const exported = JSON.parse(JSON.stringify(source)) as unknown;
+    // Later, unrelated evidence — and a newer Evaluation of the same subject.
+    await saveSealed(R2, 'aqua-voice');
+    await evaluate(R2, 'raw-char-v1', E2);
+    await evaluate(R1, 'raw-char-v1', E3);
+    const resultFiles = vi.spyOn(resultStore, 'resolveResultFile');
+    const evaluationFiles = vi.spyOn(evaluationStore, 'resolveEvaluationFile');
+    const storeReads = [
+      vi.spyOn(resultStore, 'readResult'),
+      vi.spyOn(resultStore, 'readTranscript'),
+      vi.spyOn(evaluationStore, 'readEvaluation'),
+    ];
+
+    const outcome = await rerenderReport(stores(), exported);
+
+    expect(outcome.status).toBe('reproduced');
+    expect(new Set(resultFiles.mock.calls.map(([id]) => id))).toEqual(new Set([R1]));
+    expect(new Set(evaluationFiles.mock.calls.map(([id]) => id))).toEqual(new Set([E1]));
+    // Subjects are served from the bytes just matched, never through the stores.
+    for (const read of storeReads) expect(read).not.toHaveBeenCalled();
+    for (const later of [R2, E2, E3]) expect(outcome.markdown_body).not.toContain(later);
+  });
+
+  it('re-checks Evaluations on a rejected Result from that Result\'s frozen transcript, without a store read', async () => {
+    await seedMixedRun();
+    const report = await build();
+    const frozenResults = new Set(Object.keys(report.report_source.artifact_content.results));
+    const resultFiles = vi.spyOn(resultStore, 'resolveResultFile');
+    const readTranscript = vi.spyOn(resultStore, 'readTranscript');
+
+    const outcome = await rerenderReport(stores(), JSON.parse(report.report_source_json));
+
+    expect(outcome.status).toBe('reproduced');
+    expect(outcome.content_sha256).toBe(report.content_sha256);
+    for (const [id] of resultFiles.mock.calls) expect(frozenResults.has(id)).toBe(true);
+    expect(readTranscript).not.toHaveBeenCalled();
+  });
+
+  it('treats a rejected Result\'s changed transcript as evidence, and its Evaluations as not re-checked', async () => {
+    await seedMixedRun();
+    const report = await build();
+    await writeFile(transcriptFile(R3), 'もう一度書き換え');
+
+    const outcome = await rerenderReport(stores(), JSON.parse(report.report_source_json));
+
+    expect(outcome.evidence_changed).toEqual([
+      expect.objectContaining({ artifact_kind: 'transcript', artifact_id: R3, change: 'modified' }),
+    ]);
+    expect(outcome.not_rechecked.map((n) => n.artifact_id)).toEqual([E5]);
+    expect(outcome.verification_changed).toEqual([]);
+  });
+
+  it('treats a transcript that appeared after the report as evidence', async () => {
+    await seedMixedRun();
+    const report = await build();
+    await writeFile(transcriptFile(R6), TRANSCRIPT);
+
+    const outcome = await rerenderReport(stores(), JSON.parse(report.report_source_json));
+
+    expect(outcome.evidence_changed).toEqual([
+      { artifact_kind: 'transcript', artifact_id: R6, expected_sha256: null, actual_sha256: sha(TRANSCRIPT), change: 'appeared' },
+    ]);
+    expect(outcome.verification_changed).toEqual([]);
+  });
+});
+
+// ── RF-2: seal claims bound to the frozen bytes ─────────────────────────────
+
+describe('rerenderReport — seal hashes in the ReportSource must be the seals in its bytes', () => {
+  async function exportedMixed(): Promise<Record<string, unknown>> {
+    await seedMixedRun();
+    return JSON.parse((await build()).report_source_json) as Record<string, unknown>;
+  }
+
+  it('refuses a verified Result whose result_semantic_sha256 is not the seal in its unchanged bytes', async () => {
+    const source = (await exportedMixed()) as unknown as { results: Array<Record<string, unknown>> };
+    const r1 = source.results.find((r) => r.result_id === R1)!;
+    r1.result_semantic_sha256 = 'f'.repeat(64);
+
+    // Syntactically valid: only the bytes can tell.
+    expect(() => validateReportSource(source)).not.toThrow();
+    const failure = await rerenderReport(stores(), source).catch((caught: unknown) => caught);
+    expect(failure).toBeInstanceOf(ReportError);
+    expect((failure as ReportError).kind).toBe('REPORT_SOURCE_INVALID');
+  });
+
+  it('refuses a verified Evaluation whose semantic_sha256 is not the seal in its unchanged bytes', async () => {
+    const source = (await exportedMixed()) as unknown as {
+      artifact_content: { evaluations: Record<string, { semantic_sha256?: string }> };
+    };
+    source.artifact_content.evaluations[E4]!.semantic_sha256 = '0'.repeat(64);
+
+    expect(() => validateReportSource(source)).not.toThrow();
+    await expect(rerenderReport(stores(), source)).rejects.toMatchObject({ kind: 'REPORT_SOURCE_INVALID' });
+  });
+
+  it('checks the seal only once the bytes hold: moved bytes stay an evidence change', async () => {
+    const source = (await exportedMixed()) as unknown as {
+      artifact_content: { evaluations: Record<string, { semantic_sha256?: string }> };
+    };
+    source.artifact_content.evaluations[E1]!.semantic_sha256 = '0'.repeat(64);
+    await reindent(evaluationFile(E1));
+
+    const outcome = await rerenderReport(stores(), source);
+
+    expect(outcome.status).toBe('changed');
+    expect(outcome.evidence_changed).toEqual([
+      expect.objectContaining({ artifact_kind: 'evaluation', artifact_id: E1, change: 'modified' }),
+    ]);
   });
 });

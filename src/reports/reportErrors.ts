@@ -21,13 +21,23 @@ export type ReportErrorKind =
 
 /** One artifact that is not the bytes the report read. Hashes only, never contents. */
 export interface EvidenceChange {
-  artifact_kind: 'manifest' | 'source' | 'audio' | 'result' | 'transcript' | 'evaluation';
+  artifact_kind:
+    | 'manifest'
+    | 'source'
+    | 'audio'
+    | 'result'
+    | 'transcript'
+    | 'evaluation'
+    /** A verified Evaluation's subject, frozen only as supporting evidence. */
+    | 'supporting_result'
+    | 'supporting_transcript';
   /** The Run id for manifest/source/audio; the artifact's own id otherwise. */
   artifact_id: string;
-  expected_sha256: string;
+  /** Null when the report recorded the file as absent. */
+  expected_sha256: string | null;
   /** Null when the file is gone. */
   actual_sha256: string | null;
-  change: 'modified' | 'missing';
+  change: 'modified' | 'missing' | 'appeared';
 }
 
 export class ReportError extends Error {

@@ -17,8 +17,11 @@ import {
   type EvaluationV1,
 } from './evaluationSchema';
 import {
+  diskSubjectReader,
   resolveEvaluationSubject,
+  resolveEvaluationSubjectWith,
   type EvaluationSubject,
+  type EvaluationSubjectReader,
 } from './evaluationSubject';
 import { evaluateRawChar, toCodePoints } from './rawChar';
 import {
@@ -786,19 +789,21 @@ export async function listEvaluationsForRun(
  * re-render uses it for exactly the Evaluation ids a ReportSource names, over
  * the exact bytes it just hashed. Never throws: anything that goes wrong is a
  * rejected entry. Readback only — no model is contacted here.
+ *
+ * `subjectReader` is where the subject Result, its transcript and the Run's
+ * source are read from: disk unless a caller supplies frozen bytes. Every
+ * check made on them is the same.
  */
 export async function verifyEvaluationListEntry(
   deps: Pick<EvaluationDeps, 'runStore' | 'resultStore'>,
   evaluationId: string,
   stored: Record<string, unknown>,
+  subjectReader: EvaluationSubjectReader = diskSubjectReader(deps),
 ): Promise<EvaluationListEntry> {
   const resultId = typeof stored.result_id === 'string' ? stored.result_id : undefined;
 
   try {
-    const subject = await resolveEvaluationSubject(
-      { runStore: deps.runStore, resultStore: deps.resultStore },
-      resultId ?? '',
-    );
+    const subject = await resolveEvaluationSubjectWith(subjectReader, resultId ?? '');
     const evaluation = verifyByStoredSchema({ evaluationId, stored, subject });
     return {
       status: 'verified',

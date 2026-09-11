@@ -88,39 +88,50 @@ export async function hashCitedArtifacts(
     audio: await hashFile(deps.runStore.resolveRunFile(runId, AUDIO_FILE), AUDIO_FILE, runId),
   };
 
-  // A transcript is cited only where the Result verified: that is the only
-  // case in which the report quotes it.
-  const withTranscript = new Set<string>();
+  // Every Result's transcript bytes are identified, present or absent: a
+  // re-check of the Result, or of an Evaluation naming it, reads that file. A
+  // Result that verified quoted its transcript, so for it the file must exist.
+  const quotesTranscript = new Set<string>();
   const resultIds: string[] = [];
   for (const group of comparison.tools) {
     for (const result of group.results) {
       resultIds.push(result.result_id);
-      if (result.kind === 'verified') withTranscript.add(result.result_id);
+      if (result.kind === 'verified') quotesTranscript.add(result.result_id);
     }
   }
   for (const result of comparison.legacy_unsealed_results) {
     resultIds.push(result.result_id);
-    if (result.kind === 'legacy-unsealed-verified') withTranscript.add(result.result_id);
+    if (result.kind === 'legacy-unsealed-verified') quotesTranscript.add(result.result_id);
   }
   for (const result of comparison.unattributed_results) resultIds.push(result.result_id);
 
   const results: CitedArtifactHashes['results'] = {};
   for (const resultId of [...resultIds].sort()) {
+    const transcriptFile = deps.resultStore.resolveResultFile(resultId, TRANSCRIPT_FILE);
     results[resultId] = {
       result_file: await hashFile(
         deps.resultStore.resolveResultFile(resultId, RESULT_FILE),
         RESULT_FILE,
         resultId,
       ),
-      ...(withTranscript.has(resultId)
-        ? {
-            transcript_file: await hashFile(
-              deps.resultStore.resolveResultFile(resultId, TRANSCRIPT_FILE),
-              TRANSCRIPT_FILE,
-              resultId,
-            ),
-          }
-        : {}),
+      transcript_file: quotesTranscript.has(resultId)
+        ? await hashFile(transcriptFile, TRANSCRIPT_FILE, resultId)
+        : sha256OrNull(await readArtifactBytes(transcriptFile)),
+    };
+  }
+
+  // The subject of a verified Evaluation that sits in no container: frozen as
+  // supporting evidence, both files, because its readback reads both.
+  const supporting: CitedArtifactHashes['supporting'] = {};
+  const subjectIds = [...new Set(comparison.unattributed_verified_evaluations.map((e) => e.result_id))];
+  for (const resultId of subjectIds.sort()) {
+    supporting[resultId] = {
+      result_file: await hashFile(deps.resultStore.resolveResultFile(resultId, RESULT_FILE), RESULT_FILE, resultId),
+      transcript_file: await hashFile(
+        deps.resultStore.resolveResultFile(resultId, TRANSCRIPT_FILE),
+        TRANSCRIPT_FILE,
+        resultId,
+      ),
     };
   }
 
@@ -133,5 +144,5 @@ export async function hashCitedArtifacts(
     );
   }
 
-  return { run, results, evaluations };
+  return { run, results, supporting, evaluations };
 }

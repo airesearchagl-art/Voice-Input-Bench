@@ -443,12 +443,84 @@ any way — a byte changed, or an Evaluation appeared — the request fails with
 `REPORT_EVIDENCE_CHANGED_DURING_BUILD` (409) rather than returning a package
 that mixes generations.
 
+The frozen ReportSource is then re-checked exactly as a later re-render would
+check it — over the frozen bytes only — and the body is rendered from that
+reading. Any finding at that point also fails the build. A fresh package and a
+re-render of unchanged evidence therefore derive their body by the same path.
+
 ### Byte identity
 
 Every `*_sha256` frozen for a file is the SHA-256 of the bytes on disk, never
 of re-serialized JSON: a file whose JSON means the same thing but whose
 whitespace changed is different evidence. The ReportSource holds canonical ids
 only; it stores and accepts no path.
+
+For every Result in a container, `artifact_content.results[id]` freezes both
+`result.json` and `transcript.txt` (`transcript_file_sha256`, `null` when the
+transcript was absent). This is a byte identity, not a trust claim: a rejected
+Result's transcript is still never quoted, but a re-check of that Result, or of
+an Evaluation naming it, reads the file, so its bytes are pinned.
+
+### Evaluation subject dependencies (VIB-P4-C-R1)
+
+Readback of an Evaluation reads its subject Result, that Result's transcript
+and the Run's source. A re-render may run the verifier only over bytes the
+ReportSource froze, so every dependency is explicit:
+
+```text
+verified_evaluation_subjects  every verified Evaluation -> { subject_result_id }
+                              - in an evaluator group: that group's Result,
+                                already frozen there (reused, not duplicated)
+                              - unattributed verified (H): a supporting entry
+supporting_results            subject Results in no container:
+                              { result_file_sha256, transcript_file_sha256 }
+                              supporting evidence only — never shown as a
+                              trusted tool, legacy or unattributed Result
+```
+
+The validator requires exactly one subject per verified Evaluation, none for a
+rejected one, and supporting entries that are each used, never duplicate a
+container Result, and carry both hashes.
+
+**A verified Evaluation on a rejected, legacy or unattributed Result (B, C, D)
+cannot come out of one reading.** All four verifiers check the Evaluation's
+`run_id` and `result_id` against its subject. That subject must be a sealed
+Result that verified over the same bytes the Result listing verified, so the
+listing places it in a tool group. The builder refuses such a package, and the
+validator rejects such a source. H is kept, with frozen supporting evidence,
+because P4-B's comparison carries it for a listing that disagrees with a
+readback.
+
+On re-render, Evaluation readback goes through a subject reader over the bytes
+just matched (`resolveEvaluationSubjectWith`). It has the same checks as the
+disk path; only the source of the bytes differs. A Result, transcript or source
+that the ReportSource did not pin is never read. A rejected Evaluation naming
+one gets a boundary reason instead: `EVALUATION_RESULT_UNREADABLE` wrapping
+`REPORT_SUBJECT_NOT_FROZEN`. Because the build's body comes from the same
+reading, this does not stop a report from reproducing. If a subject's bytes
+moved, the Evaluation is `not_rechecked`.
+
+### Seal claims are bound to the bytes (VIB-P4-C-R1)
+
+Once an artifact's file hash has matched, the seal hash the ReportSource claims
+for it must be the seal inside those bytes:
+
+- `result_semantic_sha256` against `result.json`'s `integrity.semantic_sha256`
+- `artifact_content.evaluations[id].semantic_sha256` against
+  `evaluation.json`'s `integrity.semantic_sha256`
+
+A mismatch is `REPORT_SOURCE_INVALID`: the source contradicts its own evidence.
+It is neither `evidence_changed` (the bytes held) nor `verification_changed`
+(no verifier outcome is involved). If the bytes themselves moved, the finding
+stays `evidence_changed` and the seal is not checked.
+
+### Coverage wording
+
+The body prints `Verified evaluator coverage: complete | partial`, not a bare
+"state". It says only whether every verified Result has verified evidence from
+all four evaluators. It is not a health verdict: rejected, unclassified and
+legacy evidence are listed separately. `RunCompleteness` semantics are
+unchanged.
 
 ### canonical-json-v1 and content identity
 
@@ -493,6 +565,11 @@ REPORT_RUN_VERIFICATION_CHANGED (409)  the Run's frozen files are byte-identical
                                                               stand on moved
 ```
 
+`evidence_changed[].artifact_kind` is one of `manifest`, `source`, `audio`,
+`result`, `transcript`, `evaluation`, `supporting_result` or
+`supporting_transcript`. `change` is `modified`, `missing`, or `appeared` (a
+file recorded as absent that now exists).
+
 An artifact whose bytes moved is never reported as a verifier change, and one
 standing on moved evidence is not re-checked at all.
 
@@ -501,9 +578,8 @@ standing on moved evidence is not re-checked at all.
 - `provider-query.json` is verified by the Run check but not frozen (see "Run
   evidence identity" above). A change to it alone surfaces as
   `REPORT_RUN_VERIFICATION_CHANGED`, not as an evidence change.
-- `transcript.txt` is frozen only for Results that verified at report time —
-  the only ones whose transcript the report quotes. For a Result rejected at
-  report time, a later change to its transcript can surface as a verification
-  change.
+- ~~`transcript.txt` is frozen only for Results that verified at report time.~~
+  Closed in VIB-P4-C-R1: every contained Result's transcript bytes are now
+  frozen (present or absent).
 - Rejection reasons of Evaluations are not frozen in the ReportSource; they are
   in the report-time body, which `content_sha256` covers.

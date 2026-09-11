@@ -327,15 +327,7 @@ function fileSha(source: ReportSource, resultId: string): string {
 }
 
 function frozenTranscriptSha(source: ReportSource, resultId: string): string | null {
-  for (const result of source.results) {
-    if (result.result_id === resultId && result.kind === 'verified') return result.transcript_sha256;
-  }
-  for (const result of source.legacy_results) {
-    if (result.result_id === resultId && result.kind === 'legacy-unsealed-verified') {
-      return result.transcript_sha256;
-    }
-  }
-  return null;
+  return source.artifact_content.results[resultId]?.transcript_file_sha256 ?? null;
 }
 
 function trustedResultsSection(source: ReportSource, view: ComparisonRun): string[] {
@@ -522,7 +514,7 @@ function findingsSection(findings: ReportFindings): string[] {
   if (findings.evidence_changed.length === 0) lines.push('None.');
   for (const change of findings.evidence_changed) {
     lines.push(
-      `- ${code(change.artifact_kind)} ${code(change.artifact_id)}: expected ${code(change.expected_sha256)}` +
+      `- ${code(change.artifact_kind)} ${code(change.artifact_id)}: expected ${change.expected_sha256 === null ? 'absent' : code(change.expected_sha256)}` +
         ` · actual ${change.actual_sha256 === null ? 'missing' : code(change.actual_sha256)} — cited evidence として扱いません。`,
     );
   }
@@ -551,23 +543,38 @@ function identitySection(source: ReportSource): string[] {
   for (const result of source.results) {
     if (result.kind === 'verified') seal.set(result.result_id, result.result_semantic_sha256);
   }
+  const transcript = (sha: string | null) => (sha === null ? 'absent' : code(sha));
   const lines = [
     '## Artifact content identity',
     '',
     'Report 生成時に読んだ実ファイル bytes の SHA-256（parse し直した値ではありません）。',
     '',
-    '| kind | id | file SHA-256 | seal semantic SHA-256 |',
-    '|---|---|---|---|',
+    '| kind | id | file SHA-256 | transcript.txt SHA-256 | seal semantic SHA-256 | subject Result |',
+    '|---|---|---|---|---|---|',
   ];
   for (const [resultId, content] of Object.entries(source.artifact_content.results)) {
-    lines.push(`| result | ${code(resultId)} | ${code(content.file_sha256)} | ${seal.has(resultId) ? code(seal.get(resultId)!) : '—'} |`);
-  }
-  for (const [evaluationId, content] of Object.entries(source.artifact_content.evaluations)) {
     lines.push(
-      `| evaluation | ${code(evaluationId)} | ${code(content.file_sha256)} | ${content.semantic_sha256 === undefined ? '—' : code(content.semantic_sha256)} |`,
+      `| result | ${code(resultId)} | ${code(content.file_sha256)} | ${transcript(content.transcript_file_sha256)}` +
+        ` | ${seal.has(resultId) ? code(seal.get(resultId)!) : '—'} | — |`,
     );
   }
-  lines.push('');
+  for (const [resultId, content] of Object.entries(source.supporting_results)) {
+    lines.push(
+      `| supporting result | ${code(resultId)} | ${code(content.result_file_sha256)} | ${code(content.transcript_file_sha256)} | — | — |`,
+    );
+  }
+  for (const [evaluationId, content] of Object.entries(source.artifact_content.evaluations)) {
+    const subject = source.verified_evaluation_subjects[evaluationId]?.subject_result_id;
+    lines.push(
+      `| evaluation | ${code(evaluationId)} | ${code(content.file_sha256)} | — | ${content.semantic_sha256 === undefined ? '—' : code(content.semantic_sha256)}` +
+        ` | ${subject === undefined ? '—' : code(subject)} |`,
+    );
+  }
+  lines.push(
+    '',
+    'supporting result は、verified Evaluation の読み戻しが依拠する Result として bytes だけを固定したものです。tool 比較・legacy・unattributed のいずれとしても扱いません。',
+    '',
+  );
   return lines;
 }
 
@@ -606,7 +613,8 @@ export function renderReportBody(
     '',
     '## Completeness',
     '',
-    `- State: **${completeness.state}**`,
+    `- Verified evaluator coverage: **${completeness.state}**`,
+    '  （verified な Result ごとに 4 evaluator の verified evidence が揃っているかだけを示します。rejected・unclassified・legacy の evidence が無いことは意味しません。それらは下記に別途表示します。）',
     `- Sealed verified Results: ${completeness.sealed_verified_results}`,
     `- Sealed rejected Results: ${completeness.sealed_rejected_results}`,
     `- Legacy unsealed Results: ${completeness.legacy_unsealed_results}`,

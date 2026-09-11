@@ -1,11 +1,16 @@
-import { assembleRunComparison, type RunComparisonDeps } from '@/comparisons/runComparison';
+import {
+  assembleRunComparison,
+  type ComparisonRun,
+  type RunComparisonDeps,
+} from '@/comparisons/runComparison';
 import {
   verifyEvaluationListEntry,
   type EvaluationListEntry,
 } from '@/evaluation/createEvaluation';
+import type { EvaluationSubjectReader } from '@/evaluation/evaluationSubject';
 import { RunEvidenceError, verifyRunEvidence, type VerifiedRunEvidence } from '@/results/runEvidence';
 import { verifyResultListEntry, type ResultListEntry } from '@/results/saveResult';
-import { RESULT_FILE, TRANSCRIPT_FILE } from '@/storage/LocalResultStore';
+import { RESULT_FILE, ResultStoreError, TRANSCRIPT_FILE } from '@/storage/LocalResultStore';
 import { AUDIO_FILE, MANIFEST_FILE, SOURCE_FILE } from '@/storage/LocalRunStore';
 import { canonicalJson } from './canonicalJson';
 import { readArtifactBytes, sha256OrNull } from './artifactBytes';
@@ -13,6 +18,7 @@ import { ReportError, type EvidenceChange } from './reportErrors';
 import {
   NO_HASHES,
   evaluationPartitionOf,
+  isVerifiedPlacement,
   resultPlacementsOf,
   structureOf,
   validateReportSource,
@@ -34,26 +40,31 @@ import {
 /**
  * Re-check an old ReportSource against the evidence and verifier of today.
  *
- * Reads exactly the ids the ReportSource names — never a listing — so an
- * Evaluation created after the report cannot join it, enter a container or
- * become a new headline. The order is fixed (P4-A `report-contract.md`):
+ * Reads exactly the artifacts the ReportSource names — never a listing — and
+ * hands the verifiers only bytes it has just matched against the frozen
+ * hashes. An Evaluation created after the report cannot join it, and no
+ * verifier can read a Result, transcript or source the report did not pin:
+ * Evaluation readback here goes through a subject reader over those frozen
+ * bytes, not through the disk. The order is fixed (P4-A `report-contract.md`):
  *
  *  1. validate the ReportSource (untrusted input; fail closed)
  *  2-5. the Run's manifest.json, source.txt and audio.wav bytes against the
  *       frozen hashes — any difference and the report's basis has moved, so
  *       nothing downstream is presented as still holding
- *  6. each named result.json's bytes
- *  7. each report-time-verified Result's transcript.txt bytes
- *  8. each named evaluation.json's bytes
- *  9. only artifacts whose bytes held go to the current verifiers — the same
- *     per-artifact functions the listings use, over the bytes just hashed
+ *  6. each named result.json's bytes, and every named Result's transcript.txt
+ *     (present or recorded absent); supporting subject Results likewise
+ *  7. each named evaluation.json's bytes
+ *  8. the seal hashes the ReportSource claims, against the bytes that held
+ *  9. only artifacts whose bytes — and whose subject's bytes — held go to the
+ *     current verifiers: the same per-artifact functions the listings use
  * 10. current placement and selection against the frozen ones
  * 11. the body re-rendered from what is true now
  *
- * Two different findings, never merged:
+ * Findings, never merged:
  *
  *   evidence_changed      same id, different (or missing) bytes
  *   verification_changed  same bytes, the current verifier places them differently
+ *   not_rechecked         bytes held, but the Result they depend on did not
  *
  * No model is called. Nothing is written.
  */
@@ -83,29 +94,69 @@ export interface RerenderOutcome {
   generated_at: string;
 }
 
+/** What re-checking a ReportSource found, and the comparison it read. */
+export interface FrozenRecheck {
+  findings: ReportFindings;
+  /** The comparison of exactly the frozen artifacts, as read now. */
+  current: ComparisonRun;
+}
+
+export async function rerenderReport(
+  deps: RerenderDeps,
+  input: unknown,
+  options: { now?: () => Date } = {},
+): Promise<RerenderOutcome> {
+  // 1. Untrusted input. Nothing below runs on a ReportSource that did not parse.
+  const source = validateReportSource(input);
+  const { findings, current } = await recheckFrozenSource(deps, source);
+  const changed = hasFindings(findings);
+
+  // 11. The body, from what is true now.
+  const body = renderReportBody(source, current, changed ? findings : null);
+  const contentSha256 = reportContentSha256(source, body);
+  const generatedAt = (options.now ?? (() => new Date()))().toISOString();
+
+  return {
+    status: changed ? 'changed' : 'reproduced',
+    report_source: source,
+    evidence_changed: findings.evidence_changed,
+    verification_changed: findings.verification_changed,
+    not_rechecked: findings.not_rechecked,
+    markdown: composeReportMarkdown(body, contentSha256, generatedAt),
+    markdown_body: body,
+    content_sha256: contentSha256,
+    generated_at: generatedAt,
+  };
+}
+
+// ── Reading against frozen hashes ───────────────────────────────────────────
+
 interface ReadArtifact {
   bytes: Buffer | null;
-  expected: string;
+  /** Null when the ReportSource recorded the file as absent. */
+  expected: string | null;
   actual: string | null;
 }
 
-async function readAgainst(file: string, expected: string): Promise<ReadArtifact> {
+async function readAgainst(file: string, expected: string | null): Promise<ReadArtifact> {
   const bytes = await readArtifactBytes(file);
   return { bytes, expected, actual: sha256OrNull(bytes) };
 }
+
+const held = (read: ReadArtifact) => read.actual === read.expected;
 
 function changeOf(
   kind: EvidenceChange['artifact_kind'],
   id: string,
   read: ReadArtifact,
 ): EvidenceChange | null {
-  if (read.actual === read.expected) return null;
+  if (held(read)) return null;
   return {
     artifact_kind: kind,
     artifact_id: id,
     expected_sha256: read.expected,
     actual_sha256: read.actual,
-    change: read.actual === null ? 'missing' : 'modified',
+    change: read.actual === null ? 'missing' : read.expected === null ? 'appeared' : 'modified',
   };
 }
 
@@ -121,17 +172,83 @@ function parseObject(bytes: Buffer | null): Record<string, unknown> | null {
   }
 }
 
-function subjectOf(placement: EvaluationPlacement): string | null {
-  return 'result_id' in placement ? placement.result_id : null;
+function sealOf(bytes: Buffer | null): unknown {
+  const parsed = parseObject(bytes);
+  const integrity = parsed?.integrity;
+  return typeof integrity === 'object' && integrity !== null
+    ? (integrity as Record<string, unknown>).semantic_sha256
+    : undefined;
 }
 
-function reportTimeTranscriptIds(source: ReportSource): Set<string> {
-  const ids = new Set<string>();
-  for (const result of source.results) if (result.kind === 'verified') ids.add(result.result_id);
-  for (const result of source.legacy_results) {
-    if (result.kind === 'legacy-unsealed-verified') ids.add(result.result_id);
+interface HeldResult {
+  result: ReadArtifact;
+  transcript: ReadArtifact;
+}
+
+/** A read the frozen evidence cannot answer. Readback reports it; it never reaches the disk. */
+class FrozenEvidenceBoundaryError extends Error {
+  readonly kind = 'REPORT_SUBJECT_NOT_FROZEN';
+  constructor(message: string) {
+    super(message);
+    this.name = 'FrozenEvidenceBoundaryError';
   }
-  return ids;
+}
+
+/**
+ * Evaluation subjects served from frozen bytes only.
+ *
+ * The same answers the disk reader would give for these exact bytes — the
+ * same parse, the same "transcript missing" — and a boundary error for
+ * anything the ReportSource did not pin.
+ */
+function frozenSubjectReader(input: {
+  runId: string;
+  runEvidence: VerifiedRunEvidence;
+  sourceText: string;
+  results: Map<string, HeldResult>;
+}): EvaluationSubjectReader {
+  const pinned = (resultId: string) => {
+    const entry = input.results.get(resultId);
+    if (!entry) {
+      throw new FrozenEvidenceBoundaryError(
+        `Result ${resultId} は ReportSource が固定した evidence にないため読みません。`,
+      );
+    }
+    return entry;
+  };
+  return {
+    async readResult(resultId) {
+      const entry = pinned(resultId);
+      try {
+        return JSON.parse((entry.result.bytes ?? Buffer.alloc(0)).toString('utf8')) as unknown;
+      } catch (cause) {
+        throw new ResultStoreError(
+          'RESULT_UNREADABLE',
+          `Result ${resultId} の result.json が JSON として解釈できません。`,
+          { cause },
+        );
+      }
+    },
+    async readTranscript(resultId) {
+      const entry = pinned(resultId);
+      if (entry.transcript.bytes === null) {
+        throw new ResultStoreError('RESULT_NOT_FOUND', `Result ${resultId} の transcript が見つかりません。`);
+      }
+      return entry.transcript.bytes.toString('utf8');
+    },
+    async readSource(runId) {
+      if (runId !== input.runId) {
+        throw new FrozenEvidenceBoundaryError(`Run ${runId} の source.txt は固定されていないため読みません。`);
+      }
+      return input.sourceText;
+    },
+    async verifyRun(runId) {
+      if (runId !== input.runId) {
+        throw new FrozenEvidenceBoundaryError(`Run ${runId} は ReportSource の Run ではないため読みません。`);
+      }
+      return input.runEvidence;
+    },
+  };
 }
 
 function groupSelectionsOf(structure: PartitionInput): Map<string, GroupSelection> {
@@ -150,14 +267,22 @@ function groupSelectionsOf(structure: PartitionInput): Map<string, GroupSelectio
 }
 
 const same = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
+const byId = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
-export async function rerenderReport(
+function sourceContradiction(message: string, path: string): ReportError {
+  return new ReportError('REPORT_SOURCE_INVALID', message, { detail: `path=${path}` });
+}
+
+/**
+ * Steps 2-10 over an already-validated ReportSource.
+ *
+ * Also what a new package is checked against before it is returned, so a
+ * fresh build and a later re-render derive their body the same way.
+ */
+export async function recheckFrozenSource(
   deps: RerenderDeps,
-  input: unknown,
-  options: { now?: () => Date } = {},
-): Promise<RerenderOutcome> {
-  // 1. Untrusted input. Nothing below runs on a ReportSource that did not parse.
-  const source = validateReportSource(input);
+  source: ReportSource,
+): Promise<FrozenRecheck> {
   const runId = source.run_id;
   const verifyResult = deps.verifiers?.result ?? verifyResultListEntry;
   const verifyEvaluation = deps.verifiers?.evaluation ?? verifyEvaluationListEntry;
@@ -184,35 +309,45 @@ export async function rerenderReport(
     );
   }
 
-  // 6-7. Results, by exactly the ids named.
-  const structure: PartitionInput = source;
-  const placements = resultPlacementsOf(structure);
-  const withTranscript = reportTimeTranscriptIds(source);
+  // 6. Results by exactly the ids named: result.json and transcript.txt both.
   const evidenceChanged: EvidenceChange[] = [];
-  const resultReads = new Map<string, { result: ReadArtifact; transcript: ReadArtifact | null }>();
+  const resultReads = new Map<string, HeldResult>();
   for (const [resultId, content] of Object.entries(source.artifact_content.results)) {
-    const result = await readAgainst(deps.resultStore.resolveResultFile(resultId, RESULT_FILE), content.file_sha256);
-    let transcript: ReadArtifact | null = null;
-    const change = changeOf('result', resultId, result);
-    if (change) evidenceChanged.push(change);
-    if (withTranscript.has(resultId)) {
-      const frozen = transcriptShaOf(source, resultId);
-      transcript = await readAgainst(deps.resultStore.resolveResultFile(resultId, TRANSCRIPT_FILE), frozen);
-      const transcriptChange = changeOf('transcript', resultId, transcript);
-      if (transcriptChange) evidenceChanged.push(transcriptChange);
+    const read: HeldResult = {
+      result: await readAgainst(deps.resultStore.resolveResultFile(resultId, RESULT_FILE), content.file_sha256),
+      transcript: await readAgainst(
+        deps.resultStore.resolveResultFile(resultId, TRANSCRIPT_FILE),
+        content.transcript_file_sha256,
+      ),
+    };
+    for (const change of [changeOf('result', resultId, read.result), changeOf('transcript', resultId, read.transcript)]) {
+      if (change) evidenceChanged.push(change);
     }
-    resultReads.set(resultId, { result, transcript });
+    resultReads.set(resultId, read);
   }
-  const resultHeld = (resultId: string) => {
-    const read = resultReads.get(resultId);
-    return (
-      read !== undefined &&
-      read.result.actual === read.result.expected &&
-      (read.transcript === null || read.transcript.actual === read.transcript.expected)
-    );
-  };
+  // Supporting subjects: frozen only because a verified Evaluation reads them.
+  const supportingReads = new Map<string, HeldResult>();
+  for (const [resultId, content] of Object.entries(source.supporting_results)) {
+    const read: HeldResult = {
+      result: await readAgainst(deps.resultStore.resolveResultFile(resultId, RESULT_FILE), content.result_file_sha256),
+      transcript: await readAgainst(
+        deps.resultStore.resolveResultFile(resultId, TRANSCRIPT_FILE),
+        content.transcript_file_sha256,
+      ),
+    };
+    for (const change of [
+      changeOf('supporting_result', resultId, read.result),
+      changeOf('supporting_transcript', resultId, read.transcript),
+    ]) {
+      if (change) evidenceChanged.push(change);
+    }
+    supportingReads.set(resultId, read);
+  }
+  const bothHeld = (read: HeldResult | undefined) =>
+    read !== undefined && held(read.result) && held(read.transcript);
 
-  // 8. Evaluations, by exactly the ids named.
+  // 7. Evaluations by exactly the ids named.
+  const structure: PartitionInput = source;
   const partition = evaluationPartitionOf(structure);
   const evaluationReads = new Map<string, ReadArtifact>();
   for (const [evaluationId, content] of Object.entries(source.artifact_content.evaluations)) {
@@ -220,6 +355,30 @@ export async function rerenderReport(
     const change = changeOf('evaluation', evaluationId, read);
     if (change) evidenceChanged.push(change);
     evaluationReads.set(evaluationId, read);
+  }
+
+  // 8. The seals the ReportSource claims must be the seals in the bytes that
+  // held. A mismatch is the source contradicting its own evidence — neither
+  // moved evidence nor a verifier change — and nothing is reproduced from it.
+  for (const result of source.results) {
+    if (result.kind !== 'verified') continue;
+    const read = resultReads.get(result.result_id)!;
+    if (held(read.result) && sealOf(read.result.bytes) !== result.result_semantic_sha256) {
+      throw sourceContradiction(
+        `Result ${result.result_id} の result_semantic_sha256 が、固定された result.json の seal と一致しません。`,
+        `$.results[${result.result_id}].result_semantic_sha256`,
+      );
+    }
+  }
+  for (const [evaluationId, content] of Object.entries(source.artifact_content.evaluations)) {
+    if (content.semantic_sha256 === undefined) continue;
+    const read = evaluationReads.get(evaluationId)!;
+    if (held(read) && sealOf(read.bytes) !== content.semantic_sha256) {
+      throw sourceContradiction(
+        `Evaluation ${evaluationId} の semantic_sha256 が、固定された evaluation.json の seal と一致しません。`,
+        `$.artifact_content.evaluations.${evaluationId}.semantic_sha256`,
+      );
+    }
   }
 
   // 9. Only now, the current verifiers — and only over bytes that held.
@@ -240,18 +399,31 @@ export async function rerenderReport(
     runEvidence.testId !== source.run_evidence.test_id ||
     runEvidence.manifestSchemaVersion !== source.run_evidence.manifest_schema_version
   ) {
-    throw new ReportError(
-      'REPORT_SOURCE_INVALID',
+    throw sourceContradiction(
       'ReportSource の run_evidence が、自身が固定した manifest.json の内容と矛盾しています。',
-      { detail: 'path=$.run_evidence' },
+      '$.run_evidence',
     );
   }
 
+  const heldSubjects = new Map<string, HeldResult>();
+  for (const [resultId, read] of [...resultReads, ...supportingReads]) {
+    if (bothHeld(read)) heldSubjects.set(resultId, read);
+  }
+  const reader = frozenSubjectReader({
+    runId,
+    runEvidence,
+    sourceText: basis.source.bytes!.toString('utf8'),
+    results: heldSubjects,
+  });
+
+  const placements = resultPlacementsOf(structure);
   const currentResults: ResultListEntry[] = [];
+  const resultCandidates = new Set<string>();
   for (const resultId of placements.keys()) {
-    if (!resultHeld(resultId)) continue;
-    const read = resultReads.get(resultId)!;
-    const stored = parseObject(read.result.bytes);
+    const read = resultReads.get(resultId);
+    if (!bothHeld(read)) continue;
+    resultCandidates.add(resultId);
+    const stored = parseObject(read!.result.bytes);
     // As the listing does: a file that is not this Run's Result is not placed.
     if (stored === null || stored.run_id !== runId) continue;
     currentResults.push(
@@ -260,25 +432,19 @@ export async function rerenderReport(
         stored,
         runId,
         runEvidence,
-        loadTranscript: async () => {
-          if (read.transcript !== null) return read.transcript.bytes?.toString('utf8') ?? null;
-          // Not cited at report time: a Result that did not verify then had no
-          // transcript the report quoted, so there is no frozen byte identity
-          // for it to be checked against.
-          const bytes = await readArtifactBytes(deps.resultStore.resolveResultFile(resultId, TRANSCRIPT_FILE));
-          return bytes === null ? null : bytes.toString('utf8');
-        },
+        loadTranscript: async () => read!.transcript.bytes?.toString('utf8') ?? null,
       }),
     );
   }
 
   const notRechecked: NotRechecked[] = [];
   const currentEvaluations: EvaluationListEntry[] = [];
+  const evaluationCandidates = new Set<string>();
   for (const [evaluationId, placement] of partition) {
     const read = evaluationReads.get(evaluationId)!;
-    if (read.actual !== read.expected) continue;
-    const subject = subjectOf(placement);
-    if (subject !== null && !resultHeld(subject)) {
+    if (!held(read)) continue;
+    const subject = subjectOf(source, evaluationId, placement);
+    if (subject !== null && !heldSubjects.has(subject)) {
       notRechecked.push({
         artifact_kind: 'evaluation',
         artifact_id: evaluationId,
@@ -287,9 +453,10 @@ export async function rerenderReport(
       });
       continue;
     }
+    evaluationCandidates.add(evaluationId);
     const stored = parseObject(read.bytes);
     if (stored === null || stored.run_id !== runId) continue;
-    currentEvaluations.push(await verifyEvaluation(deps, evaluationId, stored));
+    currentEvaluations.push(await verifyEvaluation(deps, evaluationId, stored, reader));
   }
 
   // 10. What the current reading places where, against what was frozen.
@@ -301,60 +468,36 @@ export async function rerenderReport(
   const verificationChanged = compareStructures({
     frozen: structure,
     current: structureOf(current, NO_HASHES),
-    rechecked: {
-      resultCandidates: new Set([...placements.keys()].filter((id) => resultHeld(id))),
-      evaluationCandidates: new Set(
-        [...partition.keys()].filter((id) => {
-          const read = evaluationReads.get(id)!;
-          const subject = subjectOf(partition.get(id)!);
-          return read.actual === read.expected && (subject === null || resultHeld(subject));
-        }),
-      ),
-    },
+    resultCandidates,
+    evaluationCandidates,
     currentResults,
     currentEvaluations,
   });
 
-  // The verifiers read the subject Result, transcript and source from disk.
-  // Confirm nothing cited moved while they did.
-  await assertStillSame(deps, source, basis, resultReads, evaluationReads);
+  // The Run verifier read the Run's files from disk. Confirm nothing cited
+  // moved while the checks ran.
+  await assertStillSame(deps, source, basis, resultReads, supportingReads, evaluationReads);
 
-  notRechecked.sort((a, b) => (a.artifact_id < b.artifact_id ? -1 : a.artifact_id > b.artifact_id ? 1 : 0));
-  const findings: ReportFindings = {
-    evidence_changed: evidenceChanged,
-    verification_changed: verificationChanged,
-    not_rechecked: notRechecked,
-  };
-  const changed = hasFindings(findings);
-
-  // 11. The body, from what is true now.
-  const body = renderReportBody(source, current, changed ? findings : null);
-  const contentSha256 = reportContentSha256(source, body);
-  const generatedAt = (options.now ?? (() => new Date()))().toISOString();
-
+  notRechecked.sort((a, b) => byId(a.artifact_id, b.artifact_id));
   return {
-    status: changed ? 'changed' : 'reproduced',
-    report_source: source,
-    evidence_changed: evidenceChanged,
-    verification_changed: verificationChanged,
-    not_rechecked: notRechecked,
-    markdown: composeReportMarkdown(body, contentSha256, generatedAt),
-    markdown_body: body,
-    content_sha256: contentSha256,
-    generated_at: generatedAt,
+    findings: {
+      evidence_changed: evidenceChanged,
+      verification_changed: verificationChanged,
+      not_rechecked: notRechecked,
+    },
+    current,
   };
 }
 
-function transcriptShaOf(source: ReportSource, resultId: string): string {
-  for (const result of source.results) {
-    if (result.result_id === resultId && result.kind === 'verified') return result.transcript_sha256;
+/**
+ * The Result whose bytes an Evaluation's readback reads, as the ReportSource
+ * froze it — or null when it names none the report pinned.
+ */
+function subjectOf(source: ReportSource, evaluationId: string, placement: EvaluationPlacement): string | null {
+  if (isVerifiedPlacement(placement)) {
+    return source.verified_evaluation_subjects[evaluationId]?.subject_result_id ?? null;
   }
-  for (const result of source.legacy_results) {
-    if (result.result_id === resultId && result.kind === 'legacy-unsealed-verified') {
-      return result.transcript_sha256;
-    }
-  }
-  throw new Error(`Result ${resultId} は report 時点で transcript を引用していません。`);
+  return 'result_id' in placement ? placement.result_id : null;
 }
 
 /**
@@ -367,10 +510,8 @@ function transcriptShaOf(source: ReportSource, resultId: string): string {
 function compareStructures(input: {
   frozen: PartitionInput;
   current: PartitionInput;
-  rechecked: {
-    resultCandidates: Set<string>;
-    evaluationCandidates: Set<string>;
-  };
+  resultCandidates: Set<string>;
+  evaluationCandidates: Set<string>;
   currentResults: ResultListEntry[];
   currentEvaluations: EvaluationListEntry[];
 }): VerificationChange[] {
@@ -388,7 +529,7 @@ function compareStructures(input: {
   const frozenResults = resultPlacementsOf(input.frozen);
   const currentResults = resultPlacementsOf(input.current);
   const unchangedResults = new Set<string>();
-  for (const resultId of input.rechecked.resultCandidates) {
+  for (const resultId of input.resultCandidates) {
     const before = frozenResults.get(resultId)!;
     const after = currentResults.get(resultId) ?? null;
     if (after !== null && same(before, after)) {
@@ -406,7 +547,7 @@ function compareStructures(input: {
 
   const frozenPartition = evaluationPartitionOf(input.frozen);
   const currentPartition = evaluationPartitionOf(input.current);
-  for (const evaluationId of input.rechecked.evaluationCandidates) {
+  for (const evaluationId of input.evaluationCandidates) {
     const before = frozenPartition.get(evaluationId)!;
     const after = currentPartition.get(evaluationId) ?? null;
     if (after !== null && same(before, after)) continue;
@@ -427,9 +568,7 @@ function compareStructures(input: {
   for (const [key, before] of frozenGroups) {
     const resultId = key.slice(0, key.indexOf('/'));
     if (!unchangedResults.has(resultId)) continue;
-    if (!before.considered_evaluation_ids.every((id) => input.rechecked.evaluationCandidates.has(id))) {
-      continue;
-    }
+    if (!before.considered_evaluation_ids.every((id) => input.evaluationCandidates.has(id))) continue;
     const after = currentGroups.get(key) ?? null;
     if (after !== null && same(before, after)) continue;
     changes.push({ artifact_kind: 'evaluator_group', artifact_id: key, report_time: before, current: after });
@@ -438,9 +577,7 @@ function compareStructures(input: {
   // Results, then Evaluations, then groups; each by artifact id ascending.
   const kindRank = { result: 0, evaluation: 1, evaluator_group: 2 } as const;
   return changes.sort(
-    (a, b) =>
-      kindRank[a.artifact_kind] - kindRank[b.artifact_kind] ||
-      (a.artifact_id < b.artifact_id ? -1 : a.artifact_id > b.artifact_id ? 1 : 0),
+    (a, b) => kindRank[a.artifact_kind] - kindRank[b.artifact_kind] || byId(a.artifact_id, b.artifact_id),
   );
 }
 
@@ -448,7 +585,8 @@ async function assertStillSame(
   deps: RunComparisonDeps,
   source: ReportSource,
   basis: Record<'manifest' | 'source' | 'audio', ReadArtifact>,
-  resultReads: Map<string, { result: ReadArtifact; transcript: ReadArtifact | null }>,
+  resultReads: Map<string, HeldResult>,
+  supportingReads: Map<string, HeldResult>,
   evaluationReads: Map<string, ReadArtifact>,
 ): Promise<void> {
   const again = async (file: string) => sha256OrNull(await readArtifactBytes(file));
@@ -457,14 +595,11 @@ async function assertStillSame(
   if ((await again(deps.runStore.resolveRunFile(runId, MANIFEST_FILE))) !== basis.manifest.actual) moved.push(MANIFEST_FILE);
   if ((await again(deps.runStore.resolveRunFile(runId, SOURCE_FILE))) !== basis.source.actual) moved.push(SOURCE_FILE);
   if ((await again(deps.runStore.resolveRunFile(runId, AUDIO_FILE))) !== basis.audio.actual) moved.push(AUDIO_FILE);
-  for (const [resultId, read] of resultReads) {
+  for (const [resultId, read] of [...resultReads, ...supportingReads]) {
     if ((await again(deps.resultStore.resolveResultFile(resultId, RESULT_FILE))) !== read.result.actual) {
       moved.push(`${resultId}/${RESULT_FILE}`);
     }
-    if (
-      read.transcript !== null &&
-      (await again(deps.resultStore.resolveResultFile(resultId, TRANSCRIPT_FILE))) !== read.transcript.actual
-    ) {
+    if ((await again(deps.resultStore.resolveResultFile(resultId, TRANSCRIPT_FILE))) !== read.transcript.actual) {
       moved.push(`${resultId}/${TRANSCRIPT_FILE}`);
     }
   }

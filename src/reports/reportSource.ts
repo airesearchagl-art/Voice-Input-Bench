@@ -114,8 +114,26 @@ export interface ReportUnattributedResultSource {
 }
 
 export interface ReportArtifactContent {
-  results: Record<string, { file_sha256: string }>;
+  /**
+   * Every Result in a container: result.json's bytes, and transcript.txt's —
+   * for every Result, not only verified ones, because a re-check of that Result
+   * or of an Evaluation naming it reads the transcript. `null` records that the
+   * transcript was absent when the report was taken. A byte identity, not a
+   * trust claim: a rejected Result's transcript is still never quoted.
+   */
+  results: Record<string, { file_sha256: string; transcript_file_sha256: string | null }>;
   evaluations: Record<string, { file_sha256: string; semantic_sha256?: string }>;
+}
+
+/** A verified Evaluation's subject: the one Result its readback reads. */
+export interface ReportEvaluationSubject {
+  subject_result_id: string;
+}
+
+/** A subject Result frozen only because a verified Evaluation depends on it. */
+export interface ReportSupportingResult {
+  result_file_sha256: string;
+  transcript_file_sha256: string;
 }
 
 export interface ReportSource {
@@ -130,6 +148,23 @@ export interface ReportSource {
   unattributed_rejected_evaluation_ids: string[];
   /** Verified Evaluations naming a Result absent from the Result listing (P4-B). */
   unattributed_verified_evaluation_ids: string[];
+  /**
+   * The subject Result of every verified Evaluation, keyed by Evaluation id.
+   *
+   * Readback of a verified Evaluation reads its subject Result and transcript,
+   * so a re-check may only run once those exact bytes are known to hold. For
+   * an Evaluation in an evaluator group the subject is that group's Result,
+   * already frozen there. For an unattributed verified Evaluation it is a
+   * `supporting_results` entry. No other placement of a verified Evaluation
+   * exists: see `validateReportSource`.
+   */
+  verified_evaluation_subjects: Record<string, ReportEvaluationSubject>;
+  /**
+   * Subject Results in no Result container, frozen as supporting evidence
+   * only. They are not trusted tool, legacy or unattributed Results, and the
+   * report does not show them as any of those.
+   */
+  supporting_results: Record<string, ReportSupportingResult>;
   artifact_content: ReportArtifactContent;
   ordering: typeof COMPARISON_ORDERING;
   completeness: RunCompleteness;
@@ -138,7 +173,10 @@ export interface ReportSource {
 /** The actual bytes read for everything a comparison cites. */
 export interface CitedArtifactHashes {
   run: { manifest: string; source: string; audio: string };
-  results: Record<string, { result_file: string; transcript_file?: string }>;
+  /** `transcript_file` is null when the transcript was absent. */
+  results: Record<string, { result_file: string; transcript_file: string | null }>;
+  /** Subjects of verified Evaluations that sit in no Result container. */
+  supporting: Record<string, { result_file: string; transcript_file: string }>;
   evaluations: Record<string, string>;
 }
 
@@ -195,7 +233,7 @@ export function reportSourceOf(
     },
     transcriptFile: (resultId) => {
       const hash = hashes.results[resultId]?.transcript_file;
-      if (hash === undefined) throw missingHash('transcript', resultId);
+      if (hash === undefined || hash === null) throw missingHash('transcript', resultId);
       return hash;
     },
     resultSeal: (resultId) => {
@@ -225,6 +263,48 @@ export function reportSourceOf(
     ...structure.unattributed_results.map((r) => r.result_id),
   ];
 
+  // A verified Evaluation on a Result that did not verify is not a state one
+  // reading can produce: its readback verified that very Result, over the same
+  // bytes. Seeing one means the two listings disagreed — refuse the package
+  // rather than freeze a dependency no re-check could honour.
+  const impossible = [
+    ...structure.results.flatMap((r) => (r.kind === 'rejected' ? r.verified_evaluation_ids : [])),
+    ...structure.legacy_results.flatMap((r) => r.verified_evaluation_ids),
+    ...structure.unattributed_results.flatMap((r) => r.related_verified_evaluation_ids),
+  ];
+  if (impossible.length > 0) {
+    throw new ReportError(
+      'REPORT_EVIDENCE_CHANGED_DURING_BUILD',
+      'verified Evaluation が、検証に通らなかった Result に付いています。読み取りが食い違っています。',
+      { detail: `evaluations=${impossible.join(',')}` },
+    );
+  }
+
+  // Every verified Evaluation's subject, and the supporting evidence for the
+  // ones whose subject sits in no container.
+  const subjects: Array<[string, ReportEvaluationSubject]> = [];
+  for (const group of comparison.tools) {
+    for (const result of group.results) {
+      if (result.kind !== 'verified') continue;
+      for (const evaluatorGroup of result.evaluations) {
+        for (const entry of evaluatorGroup.entries) {
+          subjects.push([entry.evaluation_id, { subject_result_id: result.result_id }]);
+        }
+      }
+    }
+  }
+  const supporting: Array<[string, ReportSupportingResult]> = [];
+  for (const entry of comparison.unattributed_verified_evaluations) {
+    subjects.push([entry.evaluation_id, { subject_result_id: entry.result_id }]);
+    if (supporting.some(([id]) => id === entry.result_id)) continue;
+    const hash = hashes.supporting[entry.result_id];
+    if (hash === undefined) throw missingHash('supporting result', entry.result_id);
+    supporting.push([
+      entry.result_id,
+      { result_file_sha256: hash.result_file, transcript_file_sha256: hash.transcript_file },
+    ]);
+  }
+
   return {
     report_contract_version: REPORT_CONTRACT_VERSION,
     run_id: comparison.run_id,
@@ -236,12 +316,15 @@ export function reportSourceOf(
       audio_sha256: hashes.run.audio,
     },
     ...structure,
+    verified_evaluation_subjects: sortedRecord(subjects),
+    supporting_results: sortedRecord(supporting),
     artifact_content: {
       results: sortedRecord(
-        resultIds.map((id): [string, { file_sha256: string }] => [
-          id,
-          { file_sha256: hashes.results[id]?.result_file ?? '' },
-        ]),
+        resultIds.map((id): [string, ReportArtifactContent['results'][string]] => {
+          const hash = hashes.results[id];
+          if (hash === undefined) throw missingHash('result', id);
+          return [id, { file_sha256: hash.result_file, transcript_file_sha256: hash.transcript_file }];
+        }),
       ),
       evaluations: sortedRecord(evaluationContent),
     },
@@ -962,6 +1045,8 @@ export function validateReportSource(input: unknown): ReportSource {
     'unattributed_results',
     'unattributed_rejected_evaluation_ids',
     'unattributed_verified_evaluation_ids',
+    'verified_evaluation_subjects',
+    'supporting_results',
     'artifact_content',
     'ordering',
     'completeness',
@@ -1019,8 +1104,29 @@ export function validateReportSource(input: unknown): ReportSource {
 
   const contentRoot = expectObject(root.artifact_content, '$.artifact_content', ['results', 'evaluations']);
   const resultContent = expectContentRecord(contentRoot.results, '$.artifact_content.results', (raw, at) => {
-    const record = expectObject(raw, at, ['file_sha256']);
-    return { file_sha256: expectSha(record.file_sha256, `${at}.file_sha256`) };
+    const record = expectObject(raw, at, ['file_sha256', 'transcript_file_sha256']);
+    return {
+      file_sha256: expectSha(record.file_sha256, `${at}.file_sha256`),
+      transcript_file_sha256:
+        record.transcript_file_sha256 === null
+          ? null
+          : expectSha(record.transcript_file_sha256, `${at}.transcript_file_sha256`),
+    };
+  });
+  const subjects = expectContentRecord(
+    root.verified_evaluation_subjects,
+    '$.verified_evaluation_subjects',
+    (raw, at) => {
+      const record = expectObject(raw, at, ['subject_result_id']);
+      return { subject_result_id: expectId(record.subject_result_id, `${at}.subject_result_id`) };
+    },
+  );
+  const supporting = expectContentRecord(root.supporting_results, '$.supporting_results', (raw, at) => {
+    const record = expectObject(raw, at, ['result_file_sha256', 'transcript_file_sha256']);
+    return {
+      result_file_sha256: expectSha(record.result_file_sha256, `${at}.result_file_sha256`),
+      transcript_file_sha256: expectSha(record.transcript_file_sha256, `${at}.transcript_file_sha256`),
+    };
   });
   const evaluationContent = expectContentRecord(
     contentRoot.evaluations,
@@ -1070,6 +1176,16 @@ export function validateReportSource(input: unknown): ReportSource {
         '$.artifact_content.results',
       );
     }
+    // A Result that verified had its transcript quoted: the two hashes are one fact.
+    if (
+      'transcript_sha256' in result &&
+      content.transcript_file_sha256 !== result.transcript_sha256
+    ) {
+      throw invalid(
+        `Result ${result.result_id} の transcript_sha256 が artifact_content と一致しません。`,
+        '$.artifact_content.results',
+      );
+    }
   }
   for (const resultId of Object.keys(resultContent)) {
     if (!resultIds.has(resultId)) {
@@ -1102,6 +1218,70 @@ export function validateReportSource(input: unknown): ReportSource {
   }
   // A headline is one of its own group's candidates; the group rules above
   // already bind it to `considered`, so no id can head a group it is not in.
+
+  // A verified Evaluation on a rejected, legacy or unattributed Result cannot
+  // come out of one reading: its readback verified that Result as sealed, over
+  // the same bytes the listing verified. Such a placement is refused rather
+  // than kept as a dependency no re-check could honour.
+  for (const [evaluationId, placement] of partition) {
+    if (
+      placement.container === 'verified_on_rejected_result' ||
+      placement.container === 'verified_on_legacy_result' ||
+      placement.container === 'verified_on_unattributed_result'
+    ) {
+      throw invalid(
+        `Evaluation ${evaluationId}: verified Evaluation は検証に通らなかった Result には付きません。`,
+        '$',
+      );
+    }
+  }
+
+  // Every verified Evaluation has exactly one frozen subject, and nothing else
+  // does: in its group's Result, or in a supporting entry for an unattributed
+  // one. Supporting entries are exactly the subjects that need them.
+  const usedSupporting = new Set<string>();
+  for (const [evaluationId, placement] of partition) {
+    const subject = subjects[evaluationId];
+    if (!isVerifiedPlacement(placement)) {
+      if (subject) {
+        throw invalid(`rejected Evaluation ${evaluationId} に subject があります。`, '$.verified_evaluation_subjects');
+      }
+      continue;
+    }
+    if (!subject) {
+      throw invalid(`verified Evaluation ${evaluationId} に subject がありません。`, '$.verified_evaluation_subjects');
+    }
+    if (placement.container === 'evaluator_group') {
+      if (subject.subject_result_id !== placement.result_id) {
+        throw invalid(
+          `Evaluation ${evaluationId} の subject が所属する Result と一致しません。`,
+          '$.verified_evaluation_subjects',
+        );
+      }
+      continue;
+    }
+    // unattributed_verified: the subject is in no container, so it must be supporting.
+    if (resultIds.has(subject.subject_result_id) || !supporting[subject.subject_result_id]) {
+      throw invalid(
+        `Evaluation ${evaluationId} の subject ${subject.subject_result_id} が supporting_results にありません。`,
+        '$.verified_evaluation_subjects',
+      );
+    }
+    usedSupporting.add(subject.subject_result_id);
+  }
+  for (const evaluationId of Object.keys(subjects)) {
+    if (!partition.has(evaluationId)) {
+      throw invalid(`subject の Evaluation ${evaluationId} がどの container にもありません。`, '$.verified_evaluation_subjects');
+    }
+  }
+  for (const resultId of Object.keys(supporting)) {
+    if (resultIds.has(resultId)) {
+      throw invalid(`supporting Result ${resultId} は container の Result と重複しています。`, '$.supporting_results');
+    }
+    if (!usedSupporting.has(resultId)) {
+      throw invalid(`supporting Result ${resultId} はどの Evaluation からも参照されていません。`, '$.supporting_results');
+    }
+  }
 
   const completenessRecord = expectObject(root.completeness, '$.completeness', [
     'state',
@@ -1145,6 +1325,8 @@ export function validateReportSource(input: unknown): ReportSource {
     unattributed_results: unattributedResults,
     unattributed_rejected_evaluation_ids: unattributedRejected,
     unattributed_verified_evaluation_ids: unattributedVerified,
+    verified_evaluation_subjects: subjects,
+    supporting_results: supporting,
     artifact_content: { results: resultContent, evaluations: evaluationContent },
     ordering: COMPARISON_ORDERING,
     completeness,
