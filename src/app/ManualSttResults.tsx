@@ -19,6 +19,7 @@ import {
   semanticRouteNote,
   semanticRunSummary,
 } from './semanticDecisionCopy';
+import RunComparison from './RunComparison';
 import {
   applyFailed,
   applyLoaded,
@@ -1207,6 +1208,13 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
               />
             ) : null,
           )}
+        </>
+      )}
+
+      {selectedRun && results.status === 'loaded' && (
+        <>
+          <div style={{ height: 20 }} />
+          <RunComparison runId={selectedRunId} refreshKey={results.requestId} />
         </>
       )}
     </section>
