@@ -12,9 +12,13 @@ Usage, from the repository root:
     # structure only
     python research/p4a-comparison-report/inventory-probe.py
 
-    # including verified/rejected status, using saved API responses
-    #   curl "http://127.0.0.1:3000/api/evaluations?runId=<run>" > r1.json
-    python research/p4a-comparison-report/inventory-probe.py r1.json r2.json
+    # including readback status, using saved API responses
+    #   curl "http://127.0.0.1:3000/api/evaluations?runId=<run>" > e1.json
+    #   curl "http://127.0.0.1:3000/api/results?runId=<run>"     > r1.json
+    python research/p4a-comparison-report/inventory-probe.py e1.json r1.json ...
+
+Each argument may be either response shape; the probe reads whichever of
+`evaluations` / `results` a file contains.
 
 Two rules from comparison-contract.md are enforced here, so the numbers this
 probe reports are numbers the recommended model could actually produce:
@@ -49,21 +53,50 @@ def read_json(path):
     return json.load(io.open(path, encoding='utf-8'))
 
 
+def read_api_bodies(path):
+    """Saved API responses, whether one document or one per line.
+
+    Capturing several Runs with repeated `curl` calls into one file is the
+    obvious way to do it, and produces JSON-lines rather than a single
+    document. Both are accepted so the committed JSON stays reproducible
+    whichever way the responses were captured.
+    """
+    text = io.open(path, encoding='utf-8').read()
+    try:
+        return [json.loads(text)]
+    except json.JSONDecodeError:
+        return [json.loads(line) for line in text.splitlines() if line.strip()]
+
+
 def file_sha256(path):
     """Byte identity of the artifact as stored, independent of any seal."""
     return hashlib.sha256(open(path, 'rb').read()).hexdigest()
 
 
 def load_status(paths):
-    """Map evaluation_id -> (status, reason) from saved API responses."""
-    status = {}
+    """Read saved API responses; return readback status for both artifact kinds.
+
+    Sealed/unsealed and verified/rejected are independent, and each combination
+    exposes a different set of trustworthy fields, so the Result side is
+    recorded as a state rather than a boolean.
+    """
+    evaluation_status = {}
+    result_status = {}
     for path in paths:
-        for entry in read_json(path).get('evaluations', []):
-            status[entry['evaluationId']] = (entry['status'], entry.get('reason'))
-    return status
+      for body in read_api_bodies(path):
+        for entry in body.get('evaluations', []):
+            evaluation_status[entry['evaluationId']] = (entry['status'], entry.get('reason'))
+        for entry in body.get('results', []):
+            result_status[entry['resultId']] = {
+                'status': entry['status'],
+                'integrity_trust': entry.get('integrityTrust'),
+                # Present only when the tool contract survived verification.
+                'trusted_tool_id': entry.get('trustedToolId'),
+            }
+    return evaluation_status, result_status
 
 
-def load_results():
+def load_results(result_status):
     results = {}
     root = os.path.join(DATA, 'results')
     for result_id in sorted(os.listdir(root)):
@@ -72,13 +105,30 @@ def load_results():
             continue
         stored = read_json(path)
         schema = stored.get('schema_version')
+        sealed = schema == SEALED_RESULT_SCHEMA
+        readback = result_status.get(result_id) or {}
+        status = readback.get('status', '(not listed)')
+
+        if status == 'verified':
+            state = 'sealed-verified' if sealed else 'legacy-unsealed-verified'
+        elif status == 'rejected':
+            state = 'sealed-rejected' if sealed else 'legacy-unsealed-rejected'
+        else:
+            state = 'unknown-not-listed'
+
         results[result_id] = {
             'run_id': stored.get('run_id'),
             'schema_version': schema,
-            'sealed': schema == SEALED_RESULT_SCHEMA,
+            'sealed': sealed,
+            'readback_state': state,
             # Named a claim on purpose: for an unsealed Result nothing proves
-            # the tool section was not edited after the fact.
-            'claimed_tool_id': (stored.get('tool') or {}).get('id'),
+            # the tool section was not edited after the fact. Recorded only
+            # where the Result read back at all; a rejected Result's tool
+            # section may be exactly what failed.
+            'claimed_tool_id': (
+                (stored.get('tool') or {}).get('id') if status == 'verified' else None
+            ),
+            'trusted_tool_id': readback.get('trusted_tool_id'),
             'file_sha256': file_sha256(path),
         }
     return results
@@ -108,8 +158,8 @@ def load_evaluations(status):
 
 
 def main():
-    status = load_status(sys.argv[1:])
-    results = load_results()
+    status, result_status = load_status(sys.argv[1:])
+    results = load_results(result_status)
     evaluations = load_evaluations(status)
 
     groups = collections.defaultdict(list)          # verified only
@@ -152,6 +202,7 @@ def main():
         per_result[result_id] = {
             'run_id': meta['run_id'],
             'sealed': meta['sealed'],
+            'readback_state': meta['readback_state'],
             'claimed_tool_id': meta['claimed_tool_id'],
             'tool_claim_is_unverified': not meta['sealed'],
             'evaluators_with_verified_evidence': sorted(
@@ -172,6 +223,8 @@ def main():
             'results': len(results),
             'sealed_results': sum(1 for m in results.values() if m['sealed']),
             'legacy_unsealed_results': sum(1 for m in results.values() if not m['sealed']),
+            'results_by_readback_state': dict(collections.Counter(
+                m['readback_state'] for m in results.values())),
             'evaluations': len(evaluations),
             'evaluations_by_schema': {
                 'v%s' % k: v for k, v in sorted(by_schema.items(), key=lambda kv: str(kv[0]))
@@ -204,6 +257,14 @@ def main():
             ],
             'legacy_unsealed_result_ids': sorted(
                 rid for rid, m in results.items() if not m['sealed']),
+            'result_states_absent_locally': sorted(
+                {'sealed-verified', 'sealed-rejected',
+                 'legacy-unsealed-verified', 'legacy-unsealed-rejected'}
+                - {m['readback_state'] for m in results.values()}),
+            'result_states_note': (
+                'Result states absent from this tree are P4-B fixture '
+                'obligations, not states the contract may omit.'
+            ),
             'semantic_review_present': False,
             'semantic_review_note': (
                 'No semantic-h3-v1 artifact decided review; '

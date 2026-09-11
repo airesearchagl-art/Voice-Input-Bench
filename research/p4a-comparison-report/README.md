@@ -73,6 +73,13 @@ Evaluations sit on the Result. This removes a per-evaluator "attempted and
 failed" signal the earlier draft claimed — it could only produce it by reading
 the `evaluator` field inside an artifact that had just failed verification.
 
+**And a note on states, added in R3.** The same discipline applies to Results.
+Sealed/unsealed and verified/rejected are independent, production produces all
+the combinations it can, and each one exposes a different set of trustworthy
+fields — so `ComparisonResult`, `ComparisonLegacyResult` and their `ReportSource`
+counterparts are discriminated unions rather than one shape with optional
+fields. A field that cannot be trusted is absent from the type, never `null`.
+
 **4. Verification status is a moving target, so it must not be frozen.**
 Five v2 artifacts moved from `UNEXPECTED` to `EVALUATION_MALFORMED` in P3-E-A,
 and five v3 artifacts moved from `EVALUATION_INTEGRITY_MISMATCH` to

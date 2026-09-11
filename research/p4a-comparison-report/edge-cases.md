@@ -84,15 +84,27 @@ zero, not `exact_match: false`, and not a pass.
 
 *Present: 4 Results at `schema_version: 1`, all with zero Evaluations.*
 
-A `ComparisonLegacyResult`, held at Run level in `legacy_unsealed_results[]` and
-**never inside a tool group**: nothing proves its `tool` section was not edited
-after the fact, so its tool fields are named `claimed_*` and carry
-`tool_claim_is_unverified: true`.
+Held at Run level in `legacy_unsealed_results[]` and **never inside a tool
+group**: nothing proves its `tool` section was not edited after the fact.
 
-Ineligibility is structural rather than a flag — it is a different type, not a
-Result with a state on it. Listed, never counted as coverage, never migrated.
-Distinct from `missing`: nothing is expected of it, because strict Evaluation
-requires a sealed Result v2.
+Unsealed is orthogonal to whether the Result read back, and production produces
+both combinations (`comparisonMatrix.ts:177-190`), so there are two types:
+
+```text
+legacy-unsealed-verified   claimed_tool_* + tool_claim_is_unverified: true,
+                           transcript available
+legacy-unsealed-rejected   result_id + reason only; NO tool claim at all,
+                           because the tool section may be what failed and
+                           there is no seal behind it
+```
+
+Ineligibility is structural rather than a flag — a different type, not a Result
+with a state on it. Listed, never counted as coverage, never migrated. Distinct
+from `missing`: nothing is expected of it, because strict Evaluation requires a
+sealed Result v2.
+
+*Measured locally: 4 legacy Results, all verified. The rejected-legacy branch is
+a P4-B fixture obligation.*
 
 ## 8. Rejected Evaluation with an unreadable evaluator record
 
@@ -127,12 +139,16 @@ and never guessed into a Result.
 optional `trustedToolId`.*
 
 A rejected Result is listed under a tool **only** when `integrityTrust ===
-'sealed'` and `trustedToolId` is present — the rule the Session matrix already
-applies (`comparisonMatrix.ts:194-209`), because without a seal `trustedToolId`
-is a shape check rather than trustworthy attribution
+'sealed'` and `trustedToolId` is a built-in id — the rule the Session matrix
+already applies (`comparisonMatrix.ts:194-209`), because without a seal
+`trustedToolId` is a shape check rather than trustworthy attribution
 (`saveResult.ts:185-198`). Otherwise it goes to
-`ComparisonRun.unattributed_results[]` with a `reason_class` of `no-seal` or
-`tool-identity-unverified`.
+`ComparisonRun.unattributed_results[]` with a `reason_class` of `no-seal`,
+`tool-identity-unverified` or `custom-tool-identity-unavailable`.
+
+A rejected `other` always takes the last of those: it exposes an id and no name,
+and for a custom tool the name *is* the identity. The type enforces it —
+`trusted_tool_id` on a tool-grouped rejected Result does not admit `'other'`.
 
 Either way it keeps its rejection reason and has no transcript, and Evaluations
 naming it are still shown: they are evidence about what happened even though the

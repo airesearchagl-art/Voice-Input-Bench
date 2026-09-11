@@ -6,6 +6,10 @@
     "results": 9,
     "sealed_results": 5,
     "legacy_unsealed_results": 4,
+    "results_by_readback_state": {
+      "legacy-unsealed-verified": 4,
+      "sealed-verified": 5
+    },
     "evaluations": 36,
     "evaluations_by_schema": {
       "v1": 11,
@@ -24,6 +28,7 @@
     "20260906T120126054Z-5ff19101": {
       "run_id": "20260906T104832215Z-f5d8794e",
       "sealed": false,
+      "readback_state": "legacy-unsealed-verified",
       "claimed_tool_id": "windows-standard-voice-input",
       "tool_claim_is_unverified": true,
       "evaluators_with_verified_evidence": [],
@@ -32,6 +37,7 @@
     "20260906T120126164Z-a9f3b523": {
       "run_id": "20260906T104832215Z-f5d8794e",
       "sealed": false,
+      "readback_state": "legacy-unsealed-verified",
       "claimed_tool_id": "aqua-voice",
       "tool_claim_is_unverified": true,
       "evaluators_with_verified_evidence": [],
@@ -40,6 +46,7 @@
     "20260906T235952609Z-efc32895": {
       "run_id": "20260906T235924185Z-2d915a76",
       "sealed": false,
+      "readback_state": "legacy-unsealed-verified",
       "claimed_tool_id": "windows-standard-voice-input",
       "tool_claim_is_unverified": true,
       "evaluators_with_verified_evidence": [],
@@ -48,6 +55,7 @@
     "20260907T003444217Z-f35db15e": {
       "run_id": "20260906T235924185Z-2d915a76",
       "sealed": false,
+      "readback_state": "legacy-unsealed-verified",
       "claimed_tool_id": "aqua-voice",
       "tool_claim_is_unverified": true,
       "evaluators_with_verified_evidence": [],
@@ -56,6 +64,7 @@
     "20260907T010102794Z-4e66c178": {
       "run_id": "20260906T104832215Z-f5d8794e",
       "sealed": true,
+      "readback_state": "sealed-verified",
       "claimed_tool_id": "windows-standard-voice-input",
       "tool_claim_is_unverified": false,
       "evaluators_with_verified_evidence": [
@@ -73,6 +82,7 @@
     "20260907T010102809Z-bfe7ffd0": {
       "run_id": "20260906T104832215Z-f5d8794e",
       "sealed": true,
+      "readback_state": "sealed-verified",
       "claimed_tool_id": "aqua-voice",
       "tool_claim_is_unverified": false,
       "evaluators_with_verified_evidence": [
@@ -90,6 +100,7 @@
     "20260907T012143648Z-bf897c7d": {
       "run_id": "20260906T104832215Z-f5d8794e",
       "sealed": true,
+      "readback_state": "sealed-verified",
       "claimed_tool_id": "windows-standard-voice-input",
       "tool_claim_is_unverified": false,
       "evaluators_with_verified_evidence": [],
@@ -100,6 +111,7 @@
     "20260907T100824503Z-7cdff2e8": {
       "run_id": "20260906T235924185Z-2d915a76",
       "sealed": true,
+      "readback_state": "sealed-verified",
       "claimed_tool_id": "windows-standard-voice-input",
       "tool_claim_is_unverified": false,
       "evaluators_with_verified_evidence": [
@@ -116,6 +128,7 @@
     "20260907T100824517Z-1ff85dda": {
       "run_id": "20260906T235924185Z-2d915a76",
       "sealed": true,
+      "readback_state": "sealed-verified",
       "claimed_tool_id": "aqua-voice",
       "tool_claim_is_unverified": false,
       "evaluators_with_verified_evidence": [
@@ -498,6 +511,11 @@
       "20260906T235952609Z-efc32895",
       "20260907T003444217Z-f35db15e"
     ],
+    "result_states_absent_locally": [
+      "legacy-unsealed-rejected",
+      "sealed-rejected"
+    ],
+    "result_states_note": "Result states absent from this tree are P4-B fixture obligations, not states the contract may omit.",
     "semantic_review_present": false,
     "semantic_review_note": "No semantic-h3-v1 artifact decided review; P4-B must cover it with a fixture.",
     "custom_tool_present": false,

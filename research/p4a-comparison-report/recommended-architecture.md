@@ -49,12 +49,17 @@ comparisons is a later question (P4-D) and only if a real need appears.
   tool usually mean repeated capture attempts, and which one is authoritative is
   an operator judgement the system has no basis to make. They are shown as
   siblings.
-- Legacy unsealed v1 Results are a distinct type held at Run level, shown with
-  their tool as an unverified claim, never inside a tool group and never counted
-  as coverage. Four exist today.
+- Legacy unsealed v1 Results are their own types at Run level — **verified** and
+  **rejected** are separate, because production produces both and they are not
+  the same state. Shown with their tool as an unverified claim (and with no tool
+  claim at all when the Result itself did not read back), never inside a tool
+  group, never counted as coverage. Four exist today, all verified.
 - Tool identity is `id` for the two built-ins and `(id, trusted_name)` for
   `other`, so two unrelated custom tools never share a column; `tool.version`
-  stays per Result.
+  stays per verified Result.
+- A tool-grouped **rejected** Result is built-in only, enforced by the type: a
+  rejected `other` has no trusted name, and `other` without a name is not an
+  identity. It goes to `unattributed_results`.
 
 ### Evaluation history policy: keep all, select one, say which
 
@@ -185,6 +190,18 @@ stable id"* from *"a verifier was hardened and now rejects the same bytes"*.
 Those are different findings and an operator acts differently on each; a report
 that reported both as "no longer verifies" would be misleading about which one
 happened.
+
+The transcript gets the same treatment for the same reason. It lives in its own
+file, so `result.json` can hash identically while `transcript.txt` beside it has
+changed — the Result seal covers `transcript.sha256`, not the transcript bytes
+(`resultSchema.ts:79-82`). A re-render hashes the transcript before it verifies
+anything, so an edited transcript is reported as `evidence_changed` rather than
+as a verifier outcome.
+
+`ReportSource` is discriminated the same way the view is, so a field that cannot
+be trusted for a rejected Result is **absent** rather than `null`. Using `null`
+for both "no version was supplied" and "no version can be trusted" would leave a
+reader unable to tell which they are looking at.
 
 Freezing the whole candidate set is what stops an Evaluation created *after* the
 report from joining the set on re-render and changing which entry is newest. An

@@ -111,51 +111,24 @@ interface ReportSource {
   source_sha256: string;
   audio_sha256: string;
 
-  /** Sealed Results placed in a tool group, verified or attributably rejected. */
-  results: Array<{
+  /** Sealed Results placed in a tool group. Discriminated, like the view. */
+  results: ReportResultSource[];
+
+  /** Unsealed Results, both readback outcomes. */
+  legacy_results: ReportLegacyResultSource[];
+
+  /** Rejected Results whose tool identity did not survive. */
+  unattributed_results: Array<{
     result_id: string;
-    tool: ToolIdentity;
-    tool_version: string | null;
-    result_status: 'verified' | 'rejected';
-
-    /** Content identity, independent of any seal. */
-    result_file_sha256: string;
-
-    /** Present only for a verified Result; a rejected one vouches for neither. */
-    result_semantic_sha256?: string;
-    transcript_sha256?: string;
-
-    evaluation_groups: Array<{
-      evaluator_id: EvaluatorId;
-
-      /**
-       * Every verified Evaluation considered for this group at report time,
-       * evaluation_id ascending. Empty means the candidate set was empty —
-       * which is how `missing` stays reconstructable rather than being
-       * indistinguishable from "not mentioned".
-       */
-      considered_evaluation_ids: string[];
-
-      headline_evaluation_id: string | null;
-      selection_reason: SelectionReason | null;
-      conflicting_evaluation_ids?: string[];
-    }>;
-
-    /** Named, not attributed. No evaluator is inferred for these. */
-    unclassified_rejected_evaluation_ids: string[];
+    reason_class: 'no-seal' | 'tool-identity-unverified' | 'custom-tool-identity-unavailable';
+    related_verified_evaluation_ids: string[];
+    related_rejected_evaluation_ids: string[];
   }>;
 
-  legacy_unsealed_result_ids: string[];
-  unattributed_result_ids: string[];
+  /** Rejected Evaluations naming no Result. */
   unattributed_rejected_evaluation_ids: string[];
 
-  /**
-   * Content identity for every artifact this report read, of any kind.
-   *
-   * Byte SHA-256 of the file as stored — `result.json` or `evaluation.json` —
-   * so an artifact with no valid semantic seal still has a frozen identity.
-   * This is the map a re-render compares against before it verifies anything.
-   */
+  /** Byte identity for every artifact read, of every kind. See below. */
   artifact_content: {
     results: Record<string, { file_sha256: string }>;
     evaluations: Record<string, {
@@ -168,40 +141,158 @@ interface ReportSource {
   ordering: OrderingRules;
   completeness: RunCompleteness;
 }
+
+type ReportResultSource =
+  | ReportVerifiedResultSource
+  | ReportRejectedResultSource;
+
+interface ReportVerifiedResultSource {
+  kind: 'verified';
+  result_id: string;
+  tool: ToolIdentity;
+  /** Trusted, and `null` here means the Result genuinely supplied no version. */
+  tool_version: string | null;
+
+  result_file_sha256: string;
+  result_semantic_sha256: string;
+  transcript_sha256: string;
+
+  evaluation_groups: Array<{
+    evaluator_id: EvaluatorId;
+    /**
+     * Every verified Evaluation considered for this group at report time,
+     * evaluation_id ascending. Empty means the candidate set was empty —
+     * which is how `missing` stays reconstructable rather than being
+     * indistinguishable from "not mentioned".
+     */
+    considered_evaluation_ids: string[];
+    headline_evaluation_id: string | null;
+    selection_reason: SelectionReason | null;
+    conflicting_evaluation_ids?: string[];
+  }>;
+
+  unclassified_rejected_evaluation_ids: string[];
+}
+
+/**
+ * Rejected, tool identity survived.
+ *
+ * No `tool_version`, no `capture`, no `transcript_sha256` — not as `null`, but
+ * absent from the type. `null` would mean "this Result supplied no version",
+ * and that is a different statement from "no version can be trusted here".
+ * Built-in ids only, for the reason given in `comparison-contract.md`.
+ */
+interface ReportRejectedResultSource {
+  kind: 'rejected';
+  result_id: string;
+  trusted_tool_id: 'windows-standard-voice-input' | 'aqua-voice';
+  result_file_sha256: string;
+  /** Historical context only; never consulted on re-render. */
+  reason_at_report_time: string;
+
+  verified_evaluation_ids: string[];
+  unclassified_rejected_evaluation_ids: string[];
+}
+
+type ReportLegacyResultSource =
+  | {
+      kind: 'legacy-unsealed-verified';
+      result_id: string;
+      result_file_sha256: string;
+      transcript_sha256: string;
+      claimed_tool_id: SttToolId;
+      tool_claim_is_unverified: true;
+      verified_evaluation_ids: string[];
+      unclassified_rejected_evaluation_ids: string[];
+    }
+  | {
+      kind: 'legacy-unsealed-rejected';
+      result_id: string;
+      result_file_sha256: string;
+      reason_at_report_time: string;
+      verified_evaluation_ids: string[];
+      unclassified_rejected_evaluation_ids: string[];
+    };
 ```
 
-Every id that appears anywhere else in `ReportSource` has an entry in
-`artifact_content`. Legacy, rejected and unattributed artifacts included —
-especially those, since they are the ones with no seal to fall back on.
+### `null` is never made to mean two things
+
+The previous draft had one `results[]` shape with `result_status` and
+`tool_version: string | null` on both branches. That forces `null` to carry two
+incompatible readings — *the Result supplied no version* and *no version can be
+trusted for this Result* — and a reader cannot tell which one they are looking
+at. The union removes the field entirely where it cannot be trusted, so the
+distinction is structural rather than a convention in a comment.
+
+### Every Evaluation is named exactly once
+
+A re-render must be able to reconstruct which container an Evaluation belonged
+to without scanning the artifact tree. So the id sets above partition the
+Evaluations the report saw:
+
+```text
+verified, in a group        results[].evaluation_groups[].considered_evaluation_ids
+verified, on a rejected or legacy Result
+                            *.verified_evaluation_ids
+verified, on an unattributed Result
+                            unattributed_results[].related_verified_evaluation_ids
+rejected, Result known      *.unclassified_rejected_evaluation_ids
+rejected, on an unattributed Result
+                            unattributed_results[].related_rejected_evaluation_ids
+rejected, no Result         unattributed_rejected_evaluation_ids
+```
+
+Every id in any of those sets has an entry in `artifact_content.evaluations`,
+and every `result_id` has one in `artifact_content.results`. Legacy, rejected
+and unattributed artifacts included — especially those, since they are the ones
+with no seal to fall back on.
+
+An id appearing in two containers, or in none, is a malformed `ReportSource`.
 
 ### Re-render, in order
 
 ```text
 1. read ReportSource
 2. load EXACTLY the ids it names — nothing else, ever
-3. hash each file and compare against artifact_content
-       mismatch -> evidence_changed
-                   report it as such and stop treating it as the cited evidence
+3. hash each artifact file and compare against artifact_content
+       mismatch -> evidence_changed, and stop treating it as the cited evidence
        match    -> continue
-4. re-verify each matching artifact with the CURRENT verifier
-5. re-derive headline selection under the frozen ordering rules
-6. report any change in verification outcome as a verification change,
+4. for a verified Result, hash the actual transcript.txt bytes and compare
+   against the frozen transcript_sha256
+       mismatch -> evidence_changed
+       match    -> continue
+5. only now, re-verify each matching artifact with the CURRENT verifier
+6. re-derive headline selection under the frozen ordering rules
+7. report any change in verification outcome as a verification change,
    distinct from evidence_changed
 ```
 
+Step 4 exists because the transcript lives in its own file. `result.json` can
+hash identically while `transcript.txt` beside it has changed, and the Result
+seal covers `transcript.sha256` rather than the transcript bytes
+(`resultSchema.ts:79-82`). Without this step an edited transcript would surface
+at step 5 as "the verifier now rejects this Result", which reads as a tooling
+change when the evidence is what moved.
+
 Step 2 is what isolates an old report from new evidence: an Evaluation created
-after the report is not in `considered_evaluation_ids`, so it cannot join the
-re-render or become the new newest.
+after the report is in none of the frozen id sets, so it cannot join the
+re-render, cannot enter a container, and cannot become the new newest.
 
-Step 3 is the fix this revision adds. Without it, an artifact edited in place
-under a stable id would surface as "the verifier now rejects this", implying a
-tooling change when the real event was that the evidence moved. Those are
-different findings and an operator acts differently on each.
-
-Step 4 is what keeps the report honest. Verification status is a property of the
+Step 5 is what keeps the report honest. Verification status is a property of the
 current verifier, not of the artifact — five v2 artifacts and five v3 artifacts
 changed outcome inside a week with no byte modified — so a re-render reports
 today's outcome rather than repeating a stored one.
+
+### Run evidence beyond source and audio
+
+`source_sha256` and `audio_sha256` already content-identify the two files a
+report cites from the Run. If a report ever renders a value from `manifest.json`
+or `provider-query.json` that those hashes do not cover — a voice name, a
+sampling setting — that value needs its own frozen content identity, because a
+report citing it would otherwise be unable to tell whether it changed.
+
+This is a rule for when it happens, not a reason to add hashes now. The current
+report content does not read those files beyond `test_id` and the two hashes.
 
 ### Conflict is never resolved by recency
 

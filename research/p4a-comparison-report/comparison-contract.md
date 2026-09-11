@@ -191,13 +191,24 @@ interface ComparisonVerifiedResult {
  * Rejected, but its tool identity survived — so it belongs in this column.
  *
  * Exactly the fields `ResultListEntry`'s rejected variant can supply. There is
- * no `captured_at`, no `capture` and no `transcript`, because a Result whose
- * metadata failed verification cannot vouch for any of them.
+ * no `captured_at`, no `capture`, no `tool.version` and no `transcript`,
+ * because a Result whose metadata failed verification cannot vouch for any of
+ * them.
  */
 interface ComparisonRejectedResult {
   kind: 'rejected';
   result_id: string;
-  trusted_tool_id: SttToolId;
+
+  /**
+   * Built-in ids only, enforced by the type.
+   *
+   * A rejected `other` exposes `trustedToolId: 'other'` and no name
+   * (`saveResult.ts:185-198`), and `other` is a bucket whose identity *is* the
+   * name. So there is no such thing as an attributable rejected custom tool
+   * under the current production contract, and the type says so rather than
+   * leaving it to a convention someone can forget.
+   */
+  trusted_tool_id: 'windows-standard-voice-input' | 'aqua-voice';
   integrity_trust: 'sealed';
   reason: string;
   message: string;
@@ -207,27 +218,64 @@ interface ComparisonRejectedResult {
   verified_evaluations: ComparisonEvaluationEntry[];
   unclassified_rejected_evaluations: ComparisonEvaluationEntry[];
 }
+```
+
+### Legacy Results carry a readback outcome too
+
+`integrityTrust: 'legacy-unsealed'` is orthogonal to whether the Result read
+back cleanly, and production already produces both combinations — the Session
+matrix branches on exactly that (`comparisonMatrix.ts:177-190`). A single legacy
+shape would flatten "unsealed and intact" into "unsealed and broken".
+
+```ts
+type ComparisonLegacyResult =
+  | ComparisonVerifiedLegacyResult
+  | ComparisonRejectedLegacyResult;
 
 /**
- * Unsealed. Shown at Run level, never inside a tool group.
+ * Unsealed but intact. Shown at Run level, never inside a tool group.
  *
  * The tool fields are named `claimed_*` on purpose: they are readable, and
  * nothing proves they were not edited after the fact.
  */
-interface ComparisonLegacyResult {
-  kind: 'legacy-unsealed';
+interface ComparisonVerifiedLegacyResult {
+  kind: 'legacy-unsealed-verified';
   result_id: string;
-  claimed_tool_id: SttToolId | null;
-  claimed_tool_name: string | null;
+  claimed_tool_id: SttToolId;
+  claimed_tool_name: string;
   claimed_tool_version: string | null;
-  /** True for every field above. Rendered as an untrusted claim. */
+  /** True for every claimed_* field above. Rendered as an untrusted claim. */
   tool_claim_is_unverified: true;
 
-  transcript?: string;
+  transcript: string;
+  verified_evaluations: ComparisonEvaluationEntry[];
+  unclassified_rejected_evaluations: ComparisonEvaluationEntry[];
+}
+
+/**
+ * Unsealed and did not read back.
+ *
+ * No tool claim at all — not even a `claimed_*` one. The file's own `tool`
+ * section is exactly the kind of thing that may have failed, and it has no seal
+ * behind it, so nothing about it is repeated here. Production makes the same
+ * choice: the Session matrix keeps only `trustedToolId ?? null` for this case.
+ */
+interface ComparisonRejectedLegacyResult {
+  kind: 'legacy-unsealed-rejected';
+  result_id: string;
+  reason: string;
+  message: string;
+  detail?: string;
+
   verified_evaluations: ComparisonEvaluationEntry[];
   unclassified_rejected_evaluations: ComparisonEvaluationEntry[];
 }
 ```
+
+*Measured locally: all 9 Results verify — 4 verified-legacy, 5 verified-sealed,
+and **zero rejected Results of any kind**. Verified-legacy is the only one of the
+four Result states this tree exercises. The other three are P4-B fixture
+obligations, listed in `phase-plan.md`.*
 
 If P4-B wants a rejected Result to carry trustworthy `captured_at` or
 `capture`, that requires **adding explicit trusted metadata to

@@ -110,15 +110,30 @@ partially rejected". Both were produced by grouping failed artifacts on their
 own `evaluator` claim. Under the trust rule neither statement is available, and
 the same evidence is now reported as five Results carrying unusable Evaluations.
 
-## Legacy unsealed Results
+## Result readback states
+
+Sealed/unsealed and verified/rejected are independent, and each combination
+exposes a different set of trustworthy fields. Measured via `GET /api/results`
+for both populated Runs:
 
 ```text
-4 Results at schema_version 1
+sealed-verified              5
+legacy-unsealed-verified     4
+sealed-rejected              0   <- absent
+legacy-unsealed-rejected     0   <- absent
 ```
 
-No `integrity` section at all, so nothing proves the `tool` section was not
-edited after the fact. They carry no Evaluations. They belong at Run level with
-`tool_claim_is_unverified: true`, and never inside a tool group.
+**All 9 Results verify.** There is no rejected Result of any kind in this tree,
+so three of the four Result states the contract has to express — rejected
+sealed, rejected legacy, and a rejected `other` that cannot be attributed — are
+not demonstrated here. They are P4-B fixture obligations, recorded in
+`phase-plan.md`, not states the contract may omit because the local data happens
+to be clean.
+
+The four legacy Results have no `integrity` section at all, so nothing proves
+their `tool` section was not edited after the fact. They carry no Evaluations.
+They belong at Run level with `tool_claim_is_unverified: true`, and never inside
+a tool group.
 
 ## Scenario coverage against the task's required list
 

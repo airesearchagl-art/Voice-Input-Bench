@@ -59,15 +59,27 @@ verified Evaluations, Results carrying unclassified rejected Evaluations,
 missing evaluators, legacy unsealed Results kept out of tool groups, and
 rejected artifacts that carry no trustworthy evaluator.
 
-**Also not exercised by local data:** every Result on disk is a built-in tool,
-so the custom `other` identity rules — two custom tools never sharing a column,
-and a rejected `other` never being guessed into one — need fixtures too.
+**Also not exercised by local data.** All 9 Results verify, and 4 of them are
+legacy-unsealed-verified — which is the *only* one of the four Result states
+this tree contains. These need fixtures:
+
+```text
+verified legacy Result              present (4)
+rejected legacy Result              absent — fixture needed
+rejected built-in attributable      absent — fixture needed
+rejected `other`, not attributable  absent — fixture needed
+```
+
+Every Result on disk is also a built-in tool, so the custom `other` identity
+rules — two custom tools never sharing a column, and a rejected `other` never
+being guessed into one — need fixtures as well.
 
 **Definition of done.** A comparison for either populated Run renders every
 Result and every evaluator group, names every Evaluation id it considered, shows
 the six `multiple_candidates` groups as such, keeps every rejected Evaluation
-visible at Result or Run level without inferring an evaluator for it, and keeps
-legacy unsealed Results out of the tool groups while still showing them.
+visible at Result or Run level without inferring an evaluator for it, keeps
+legacy unsealed Results out of the tool groups while still showing them, and
+names every Evaluation exactly once across all containers.
 
 ## P4-C — Deterministic Report generation
 
@@ -81,8 +93,11 @@ Markdown export over the P4-B model.
 - Deterministic Markdown rendering, four evaluator sections, gaps included.
 - `content_sha256` over the selection plus the rendered body, excluding
   `generated_at`.
-- Re-render: reload the cited ids, re-verify now, state anything that no longer
-  verifies.
+- Byte identity for every artifact read, plus `transcript_sha256` for verified
+  Results, so a re-render can report `evidence_changed` separately from a change
+  in verifier outcome.
+- Re-render: reload exactly the cited ids, compare byte hashes, then re-verify,
+  and state anything that changed under either heading.
 
 **Decide during P4-C, not before:** whether the Report package — `ReportSource`
 JSON plus rendered Markdown — is an app-managed immutable artifact under a fifth
