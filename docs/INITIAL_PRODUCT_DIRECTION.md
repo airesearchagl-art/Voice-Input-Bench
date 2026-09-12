@@ -1,5 +1,11 @@
 # Initial Product Direction
 
+> **Historical document — 初期プロダクト方針の記録。**
+> 現在出荷されているプロダクトは Phase 1 を越えて進んでいる。本文は当時の判断をそのまま
+> 残してあり、現在仕様として読んではいけない。
+> 現在の状態は [`README.md`](../README.md) と
+> [`docs/CURRENT_PRODUCT_STATE.md`](./CURRENT_PRODUCT_STATE.md) を参照。
+
 Voice Input Bench の初期方針を記録する。以降の設計判断はこの文書を出発点とする。
 
 ## Mission
