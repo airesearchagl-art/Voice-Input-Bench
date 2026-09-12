@@ -28,9 +28,45 @@ export interface CaptureProfile {
 
 export type CaptureProfiles = Partial<Record<SttToolId, CaptureProfile>>;
 
+/**
+ * The capture form as it starts, and what a tool with no profile returns to.
+ *
+ * One definition of "pristine", used twice: the component initialises its
+ * fields from it, and switching to a tool that has never been saved resets to
+ * it. Keeping both from the same constant is the point — a form default that
+ * drifted from the reset default would be another way for one tool's metadata
+ * to appear under a different tool's name.
+ */
+export const PRISTINE_CAPTURE: CaptureProfile = {
+  customToolName: '',
+  toolVersion: '',
+  deliveryPath: 'speaker-to-mic',
+};
+
 /** The profile for one tool, or null when that tool has not been saved yet. */
 export function recallCapture(profiles: CaptureProfiles, toolId: SttToolId): CaptureProfile | null {
   return profiles[toolId] ?? null;
+}
+
+/**
+ * What the capture form should show for a tool.
+ *
+ * A tool with a profile restores its own last accepted metadata; a tool
+ * without one gets the pristine form. There is deliberately no third answer.
+ * "Leave whatever the previous tool had" is what let Aqua Voice's version and
+ * delivery path be saved against Windows — metadata that was never true of the
+ * tool the Result names, in an artifact that is write-once and cannot be
+ * corrected, only superseded.
+ *
+ * Answering for every tool, rather than only for the ones with a profile, is
+ * why this is a total function: there is no caller path that can skip the
+ * reset by returning early.
+ */
+export function resolveCaptureForTool(
+  profiles: CaptureProfiles,
+  toolId: SttToolId,
+): CaptureProfile {
+  return recallCapture(profiles, toolId) ?? PRISTINE_CAPTURE;
 }
 
 /** Record what a successful save used. Returns a new map; the old one is untouched. */

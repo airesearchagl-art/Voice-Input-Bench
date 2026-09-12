@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { EvaluatorId } from '@/evaluation/createEvaluation';
 import {
+  isCurrentSelection,
   isEvaluableResult,
   planForResult,
   planForRun,
@@ -11,6 +12,7 @@ import {
   type JobResult,
   type ListedEvaluationLike,
   type ListedResultLike,
+  type SelectionIdentity,
 } from './evaluationQueue';
 
 /**
@@ -292,5 +294,98 @@ describe('what the caller reloads on', () => {
       execute: async (job) => (job.evaluatorId === 'raw-char-v1' ? ok : failure('X_FAILED')),
     });
     expect(someCreated.created).toBe(true);
+  });
+});
+
+/**
+ * A queue belongs to one visit to a Run, not to the Run id.
+ *
+ * Comparing ids alone, an operator who leaves Run A and comes back finds the
+ * old queue current again, and it resumes under a view that cleared its busy
+ * state on the way out. The generation is what makes "I already stopped being
+ * current" permanent.
+ */
+describe('selection generation', () => {
+  const RUN_A = '20260906T104832215Z-f5d8794e';
+  const RUN_B = '20260906T235924185Z-2d915a76';
+  const allFour = () =>
+    planForResult({ resultId: R1, evaluatorOrder: ORDER, verifiedEvaluatorIds: new Set<string>() });
+
+  it('RF-01-A: does not resume after A → B → A while job 1 is in flight', async () => {
+    const attempts: EvaluationJob[] = [];
+    const identity: SelectionIdentity = { runId: RUN_A, generation: 1 };
+    let selection: { runId: string | null; generation: number } = { runId: RUN_A, generation: 1 };
+
+    const outcome = await runEvaluationQueue(allFour(), {
+      isCurrent: () => isCurrentSelection(identity, selection),
+      execute: async (job) => {
+        attempts.push(job);
+        // While job 1 is in flight the operator leaves for Run B and comes
+        // straight back to Run A. Same Run id, different visit.
+        selection = { runId: RUN_B, generation: 2 };
+        selection = { runId: RUN_A, generation: 3 };
+        return ok;
+      },
+    });
+
+    expect(attempts).toEqual([{ resultId: R1, evaluatorId: 'raw-char-v1' }]);
+    expect(outcome.stopped).toBe('stale');
+    // The one already sent stands as its Result's own artifact.
+    expect(outcome.succeeded).toHaveLength(1);
+    expect(outcome.created).toBe(true);
+  });
+
+  it('RF-01-B: still stops on an ordinary A → B switch', async () => {
+    const attempts: EvaluationJob[] = [];
+    const identity: SelectionIdentity = { runId: RUN_A, generation: 1 };
+    let selection: { runId: string | null; generation: number } = { runId: RUN_A, generation: 1 };
+
+    const outcome = await runEvaluationQueue(allFour(), {
+      isCurrent: () => isCurrentSelection(identity, selection),
+      execute: async (job) => {
+        attempts.push(job);
+        selection = { runId: RUN_B, generation: 2 };
+        return ok;
+      },
+    });
+
+    expect(attempts).toHaveLength(1);
+    expect(outcome.stopped).toBe('stale');
+  });
+
+  it('RF-01-C: survives the same-Run reload its own batch triggers', async () => {
+    // Re-selecting the same Run is a reload, not a change, so no new
+    // generation is minted and the draining queue is still current.
+    const attempts: EvaluationJob[] = [];
+    const identity: SelectionIdentity = { runId: RUN_A, generation: 4 };
+    const selection: { runId: string | null; generation: number } = {
+      runId: RUN_A,
+      generation: 4,
+    };
+
+    const outcome = await runEvaluationQueue(allFour(), {
+      isCurrent: () => isCurrentSelection(identity, selection),
+      execute: async (job) => {
+        attempts.push(job);
+        return ok;
+      },
+    });
+
+    expect(attempts).toHaveLength(4);
+    expect(outcome.stopped).toBe('completed');
+  });
+
+  it('RF-01-D: an earlier visit matches neither this visit nor its state', () => {
+    // The queue, reserved set, active job, progress, summary and refresh
+    // guards all ask exactly this question, so one answer settles all of them.
+    const earlier: SelectionIdentity = { runId: RUN_A, generation: 1 };
+    const current: SelectionIdentity = { runId: RUN_A, generation: 3 };
+    const stateOfCurrentVisit = { runId: RUN_A, generation: 3 };
+
+    expect(isCurrentSelection(earlier, stateOfCurrentVisit)).toBe(false);
+    expect(isCurrentSelection(current, stateOfCurrentVisit)).toBe(true);
+    // A different Run, and no selection at all, are not this visit either.
+    expect(isCurrentSelection(current, { runId: RUN_B, generation: 3 })).toBe(false);
+    expect(isCurrentSelection(current, { runId: null, generation: 3 })).toBe(false);
   });
 });

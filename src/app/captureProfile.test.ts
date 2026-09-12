@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { recallCapture, rememberCapture, type CaptureProfiles } from './captureProfile';
+import {
+  PRISTINE_CAPTURE,
+  recallCapture,
+  rememberCapture,
+  resolveCaptureForTool,
+  type CaptureProfile,
+  type CaptureProfiles,
+} from './captureProfile';
 
 /**
  * Per-tool capture metadata, in memory, for this screen only.
@@ -89,5 +96,63 @@ describe('captureProfile', () => {
       'deliveryPath',
       'toolVersion',
     ]);
+  });
+});
+
+/**
+ * What the form shows after a tool switch.
+ *
+ * The rule has two branches and no third: the tool's own profile, or the
+ * pristine form. Leaving the previous tool's values behind is what let Aqua
+ * Voice's version and delivery path be written into a Windows Result.
+ */
+describe('resolveCaptureForTool', () => {
+  const AQUA: CaptureProfile = {
+    customToolName: '',
+    toolVersion: '1.5',
+    deliveryPath: 'virtual-audio',
+  };
+
+  it('RF-02-A: gives a tool with no profile the pristine form, not the last tool used', () => {
+    const profiles = rememberCapture({}, 'aqua-voice', AQUA);
+    const windows = resolveCaptureForTool(profiles, 'windows-standard-voice-input');
+
+    expect(windows).toEqual(PRISTINE_CAPTURE);
+    expect(windows.toolVersion).not.toBe('1.5');
+    expect(windows.deliveryPath).not.toBe('virtual-audio');
+  });
+
+  it('RF-02-B: restores each tool its own profile', () => {
+    let profiles = rememberCapture({}, 'aqua-voice', AQUA);
+    profiles = rememberCapture(profiles, 'windows-standard-voice-input', {
+      customToolName: '',
+      toolVersion: '24H2',
+      deliveryPath: 'speaker-to-mic',
+    });
+
+    // Aqua → Windows → Aqua: each switch answers with that tool's own values.
+    expect(resolveCaptureForTool(profiles, 'aqua-voice')).toEqual(AQUA);
+    expect(resolveCaptureForTool(profiles, 'windows-standard-voice-input').toolVersion).toBe('24H2');
+    expect(resolveCaptureForTool(profiles, 'aqua-voice').toolVersion).toBe('1.5');
+  });
+
+  it('RF-02-C: built-in → other carries no cross-tool metadata', () => {
+    const profiles = rememberCapture({}, 'aqua-voice', AQUA);
+    const other = resolveCaptureForTool(profiles, 'other');
+
+    expect(other).toEqual(PRISTINE_CAPTURE);
+    expect(other.customToolName).toBe('');
+    expect(other.toolVersion).toBe('');
+    expect(other.deliveryPath).toBe('speaker-to-mic');
+  });
+
+  it('RF-02-D: a tool stays pristine until a save of that tool records it', () => {
+    // recallCapture still reports "nothing saved"; resolve just answers with
+    // the pristine form rather than leaving the caller to decide.
+    expect(recallCapture({}, 'aqua-voice')).toBeNull();
+    expect(resolveCaptureForTool({}, 'aqua-voice')).toEqual(PRISTINE_CAPTURE);
+
+    const after: CaptureProfiles = rememberCapture({}, 'aqua-voice', AQUA);
+    expect(resolveCaptureForTool(after, 'aqua-voice')).toEqual(AQUA);
   });
 });

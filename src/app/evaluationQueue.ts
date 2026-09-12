@@ -61,8 +61,41 @@ export interface QueueOutcome {
 export interface QueueDeps {
   /** Sends one job. Never throws: a failure comes back as `ok: false`. */
   execute: (job: EvaluationJob) => Promise<JobResult>;
-  /** Is the Run this queue was started for still the selected one? */
+  /** Is the selection this queue was started for still the one on screen? */
   isCurrent: () => boolean;
+}
+
+/**
+ * Which selection a queue belongs to.
+ *
+ * The Run id alone is not enough. An operator who leaves Run A and comes back
+ * to it — A → B → A — is looking at a new visit, not the one the old queue was
+ * started for. Comparing only ids, that old queue finds its Run selected again
+ * and resumes: the jobs it stopped sending start flowing under a view that has
+ * no idea it is running, because the busy state was cleared on the way out.
+ *
+ * The generation is minted whenever the selected Run actually changes, so a
+ * queue that stopped being current can never become current again. Re-selecting
+ * the same Run — the reload a finished batch triggers — is not a change and
+ * keeps the generation, so a queue still draining survives its own refresh.
+ */
+export interface SelectionIdentity {
+  runId: string;
+  generation: number;
+}
+
+/**
+ * Is `identity` still current?
+ *
+ * Used for both questions the queue has to ask: whether the selection on
+ * screen is still the one a plan was queued for, and whether a piece of queue
+ * state belongs to this plan rather than to a later visit to the same Run.
+ */
+export function isCurrentSelection(
+  identity: SelectionIdentity,
+  current: { runId: string | null; generation: number },
+): boolean {
+  return current.runId === identity.runId && current.generation === identity.generation;
 }
 
 /** The shape this module needs from one listed Evaluation. */

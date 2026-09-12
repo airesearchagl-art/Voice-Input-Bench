@@ -22,6 +22,7 @@ import {
 import RunComparison from './RunComparison';
 import ReportExport from './ReportExport';
 import {
+  isCurrentSelection,
   isEvaluableResult,
   planForResult,
   planForRun,
@@ -32,8 +33,14 @@ import {
   type EvaluationPlan,
   type JobFailure,
   type JobResult,
+  type SelectionIdentity,
 } from './evaluationQueue';
-import { recallCapture, rememberCapture, type CaptureProfiles } from './captureProfile';
+import {
+  PRISTINE_CAPTURE,
+  rememberCapture,
+  resolveCaptureForTool,
+  type CaptureProfiles,
+} from './captureProfile';
 import {
   applyFailed,
   applyLoaded,
@@ -756,12 +763,23 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
   );
   /** Mirrors `results` for the synchronous reads that mint a new generation. */
   const resultsRef = useRef<ResultsState>(results);
+  /**
+   * Which visit to the selected Run this is.
+   *
+   * Bumped only when the selected Run actually changes, and read synchronously
+   * by queue callbacks that outlive the render which created them. A state
+   * value would give each callback the snapshot of its own render — exactly
+   * the stale answer that let a queue resume after A → B → A.
+   */
+  const selectionGenerationRef = useRef(0);
   const inFlight = useRef<AbortController | null>(null);
 
   const [toolId, setToolId] = useState<SttToolId>('windows-standard-voice-input');
-  const [customToolName, setCustomToolName] = useState('');
-  const [toolVersion, setToolVersion] = useState('');
-  const [deliveryPath, setDeliveryPath] = useState<DeliveryPath>('speaker-to-mic');
+  // Initialised from the same constant that a profile-less tool resets to, so
+  // the two cannot drift into showing different "empty" forms.
+  const [customToolName, setCustomToolName] = useState(PRISTINE_CAPTURE.customToolName);
+  const [toolVersion, setToolVersion] = useState(PRISTINE_CAPTURE.toolVersion);
+  const [deliveryPath, setDeliveryPath] = useState<DeliveryPath>(PRISTINE_CAPTURE.deliveryPath);
   const [rawTranscript, setRawTranscript] = useState('');
 
   const [saving, setSaving] = useState(false);
@@ -784,14 +802,17 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
    */
   const [queue, setQueue] = useState<{
     runId: string;
+    /** The visit this queue belongs to; an earlier visit's queue never applies. */
+    generation: number;
     reserved: string[];
     active: EvaluationJob | null;
     total: number;
     done: number;
   } | null>(null);
-  /** What the last finished batch did, kept next to the Run it ran for. */
+  /** What the last finished batch did, kept next to the visit it ran for. */
   const [batchSummary, setBatchSummary] = useState<{
     runId: string;
+    generation: number;
     succeeded: number;
     failed: number;
     skipped: number;
@@ -863,6 +884,11 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
     // cancelled — its writes belong to the Run it started for — but it stops
     // at its next job, because that Run is no longer selected.
     if (previousSelected !== next.selected) {
+      // A different Run: mint a new selection generation. Everything bound to
+      // the old one — queue, summary, refresh — is stale from here, and stays
+      // stale even if this Run is selected again later. An operator who comes
+      // back is on a new visit, not the one those jobs were queued for.
+      selectionGenerationRef.current += 1;
       setEvaluatorOrder(null);
       setBatchSummary(null);
       setQueue(null);
@@ -971,9 +997,22 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
           verifiedEvaluatorIds: verifiedEvaluatorIdsFor(resultId),
         })
       : { jobs: [], skipped: [] };
-  /** Queue and summary are shown only for the Run they belong to. */
-  const queueForRun = queue && queue.runId === selectedRunId ? queue : null;
-  const summaryForRun = batchSummary && batchSummary.runId === selectedRunId ? batchSummary : null;
+  /**
+   * Queue and summary are shown only for the visit they belong to.
+   *
+   * The generation as well as the Run id: a queue or summary left behind by an
+   * earlier visit to this same Run must not reappear as though it were this
+   * one's progress.
+   */
+  const currentGeneration = selectionGenerationRef.current;
+  const queueForRun =
+    queue && queue.runId === selectedRunId && queue.generation === currentGeneration ? queue : null;
+  const summaryForRun =
+    batchSummary &&
+    batchSummary.runId === selectedRunId &&
+    batchSummary.generation === currentGeneration
+      ? batchSummary
+      : null;
 
   const save = useCallback(async () => {
     if (!selectedRun) return;
@@ -1062,9 +1101,23 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
    */
   const enqueuePlan = useCallback(
     (runId: string, plan: EvaluationPlan) => {
+      // Captured once, at the click. Every later question this plan asks — may
+      // I send the next job, is this queue state mine, may I report, may I
+      // reload — is answered against this identity and never re-derived from
+      // whatever happens to be selected at the time.
+      const identity: SelectionIdentity = {
+        runId,
+        generation: selectionGenerationRef.current,
+      };
+      const isCurrent = () =>
+        isCurrentSelection(identity, {
+          runId: resultsRef.current.selected,
+          generation: selectionGenerationRef.current,
+        });
+
       if (plan.jobs.length === 0) {
         setBatchSummary({
-          runId,
+          ...identity,
           succeeded: 0,
           failed: 0,
           skipped: plan.skipped.length,
@@ -1077,25 +1130,27 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
       const reserved = [...new Set(plan.jobs.map((job) => job.resultId))];
       setEvaluationError(null);
       setQueue((current) =>
-        current && current.runId === runId
+        current && isCurrentSelection(identity, current)
           ? {
               ...current,
               reserved: [...new Set([...current.reserved, ...reserved])],
               total: current.total + plan.jobs.length,
             }
-          : { runId, reserved, active: null, total: plan.jobs.length, done: 0 },
+          : { ...identity, reserved, active: null, total: plan.jobs.length, done: 0 },
       );
 
       evaluationChain.current = evaluationChain.current.then(async () => {
         const outcome = await runEvaluationQueue(plan, {
-          isCurrent: () => isStillSelected(resultsRef.current, runId),
+          isCurrent,
           execute: async (job) => {
             setQueue((current) =>
-              current && current.runId === runId ? { ...current, active: job } : current,
+              current && isCurrentSelection(identity, current)
+                ? { ...current, active: job }
+                : current,
             );
             const result = await executeJob(job);
             setQueue((current) =>
-              current && current.runId === runId
+              current && isCurrentSelection(identity, current)
                 ? { ...current, active: null, done: current.done + 1 }
                 : current,
             );
@@ -1104,21 +1159,24 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
         });
 
         setQueue((current) => {
-          if (!current || current.runId !== runId) return current;
+          if (!current || !isCurrentSelection(identity, current)) return current;
           const remaining = current.reserved.filter((id) => !reserved.includes(id));
           return remaining.length === 0 ? null : { ...current, reserved: remaining };
         });
 
         // Anything already written stands as an artifact of its own Result.
-        // What must not happen is reporting it, or reloading, under a Run the
-        // operator has since moved to.
-        if (!isStillSelected(resultsRef.current, runId)) return;
+        // What must not happen is reporting it, or reloading, under a view the
+        // operator has since moved to — including a later visit to this same
+        // Run, whose own queue this batch knows nothing about.
+        if (!isCurrent()) return;
         setBatchSummary({
-          runId,
+          ...identity,
           ...queueCounts(outcome),
           stopped: outcome.stopped,
           failures: outcome.failed,
         });
+        // Re-selecting the same Run is a reload, not a change: the generation
+        // survives it, so a queue still draining stays current across it.
         if (outcome.created) selectRun(runId);
       });
     },
@@ -1142,15 +1200,23 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
     );
   }, []);
 
-  /** Switching tools restores that tool's last accepted capture metadata, if any. */
+  /**
+   * Switching tools shows that tool's own capture metadata — and nothing else.
+   *
+   * A tool with a profile restores it; a tool without one gets the pristine
+   * form. Leaving the previous tool's version and delivery path behind was how
+   * Aqua Voice's `1.5` / `virtual-audio` came to be saved against Windows: the
+   * form looked like it had been filled in for the tool now selected, and the
+   * server has no way to know it was not. The transcript is untouched here —
+   * it is the observation, and it belongs to whatever is in the box.
+   */
   const changeTool = useCallback(
     (next: SttToolId) => {
       setToolId(next);
-      const profile = recallCapture(captureProfiles, next);
-      if (!profile) return;
-      setCustomToolName(profile.customToolName);
-      setToolVersion(profile.toolVersion);
-      setDeliveryPath(profile.deliveryPath);
+      const capture = resolveCaptureForTool(captureProfiles, next);
+      setCustomToolName(capture.customToolName);
+      setToolVersion(capture.toolVersion);
+      setDeliveryPath(capture.deliveryPath);
     },
     [captureProfiles],
   );
