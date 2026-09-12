@@ -393,16 +393,40 @@ export async function buildRunComparison(
   deps: RunComparisonDeps,
   runId: string,
 ): Promise<ComparisonRun> {
-  const runEvidence = await verifyRunEvidence(deps.runStore, runId);
-  const results = await listResultsForRun(deps, runId);
-  const evaluations = await listEvaluationsForRun(deps, runId);
-  return assembleRunComparison({ runEvidence, results, evaluations });
+  return (await readRunComparison(deps, runId)).comparison;
 }
 
 export interface RunComparisonInput {
   runEvidence: VerifiedRunEvidence;
   results: readonly ResultListEntry[];
   evaluations: readonly EvaluationListEntry[];
+}
+
+/** The comparison together with the listings it was assembled from. */
+export interface RunComparisonReading extends RunComparisonInput {
+  comparison: ComparisonRun;
+}
+
+/**
+ * `buildRunComparison`, keeping the listing entries it read.
+ *
+ * A Report needs a little more than the view carries — the seals' own semantic
+ * hashes — and must take it from the same reading, not from a second one that
+ * could describe different evidence.
+ */
+export async function readRunComparison(
+  deps: RunComparisonDeps,
+  runId: string,
+): Promise<RunComparisonReading> {
+  const runEvidence = await verifyRunEvidence(deps.runStore, runId);
+  const results = await listResultsForRun(deps, runId);
+  const evaluations = await listEvaluationsForRun(deps, runId);
+  return {
+    runEvidence,
+    results,
+    evaluations,
+    comparison: assembleRunComparison({ runEvidence, results, evaluations }),
+  };
 }
 
 /**

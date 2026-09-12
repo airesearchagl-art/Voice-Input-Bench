@@ -20,6 +20,7 @@ import {
   semanticRunSummary,
 } from './semanticDecisionCopy';
 import RunComparison from './RunComparison';
+import ReportExport from './ReportExport';
 import {
   applyFailed,
   applyLoaded,
@@ -1215,6 +1216,7 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
         <>
           <div style={{ height: 20 }} />
           <RunComparison runId={selectedRunId} refreshKey={results.requestId} />
+          <ReportExport runId={selectedRunId} />
         </>
       )}
     </section>

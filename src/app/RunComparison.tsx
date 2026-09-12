@@ -642,7 +642,8 @@ function RunHeader({ comparison }: { comparison: ComparisonRun }) {
         <dd>{evidence.generated_at}</dd>
         <dt>Evidence</dt>
         <dd>
-          {completeness.state}・sealed verified {completeness.sealed_verified_results}・sealed
+          verified evaluator coverage: {completeness.state}・sealed verified{' '}
+          {completeness.sealed_verified_results}・sealed
           rejected {completeness.sealed_rejected_results}・legacy{' '}
           {completeness.legacy_unsealed_results}・unattributed Result{' '}
           {completeness.unattributed_results}・unattributed rejected Evaluation{' '}

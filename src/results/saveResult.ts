@@ -11,7 +11,7 @@ import {
   type ResultV2,
   type StoredResult,
 } from './resultSchema';
-import { verifyRunEvidence } from './runEvidence';
+import { verifyRunEvidence, type VerifiedRunEvidence } from './runEvidence';
 import { resolveDeliveryPath, resolveTool } from './tools';
 import { assertRootIsolation } from '@/storage/rootIsolation';
 import {
@@ -240,74 +240,103 @@ export async function listResultsForRun(
     // about another Run is not a failure here, so it is skipped quietly.
     if (!isPlainObject(stored) || stored.run_id !== runId) continue;
 
-    // Step 1 — the Result's own claims. Whose observation is this, and can that
-    // claim be trusted at all?
-    let metadata;
-    try {
-      metadata = verifyStoredResultMetadata({
+    entries.push(
+      await verifyResultListEntry({
         resultId,
         stored,
-        requestedRunId: runId,
+        runId,
         runEvidence,
-      });
-    } catch (caught) {
-      if (caught instanceof ResultVerificationError) {
-        entries.push({
-          status: 'rejected',
-          resultId,
-          reason: caught.kind,
-          message: caught.message,
-          detail: caught.detail,
-          trustedToolId: trustedToolIdOf(stored),
-        });
-        continue;
-      }
-      throw caught;
-    }
-
-    // Step 2 — the transcript itself. Ownership is settled by now, so any
-    // failure below stays attached to the tool that owns it.
-    const { result, integrityTrust } = metadata;
-    const transcript = await resultStore.readTranscript(resultId).catch(() => null);
-    if (transcript === null) {
-      entries.push({
-        status: 'rejected',
-        resultId,
-        reason: 'RESULT_TRANSCRIPT_MISSING',
-        message: 'transcript.txt を読み込めません。',
-        trustedToolId: result.tool.id,
-        integrityTrust,
-      });
-      continue;
-    }
-
-    try {
-      verifyTranscriptAgainstResult({
-        resultId,
-        result,
-        transcript,
-        transcriptBytes: Buffer.byteLength(transcript, 'utf8'),
-      });
-    } catch (caught) {
-      if (caught instanceof ResultVerificationError) {
-        entries.push({
-          status: 'rejected',
-          resultId,
-          reason: caught.kind,
-          message: caught.message,
-          detail: caught.detail,
-          trustedToolId: result.tool.id,
-          integrityTrust,
-        });
-        continue;
-      }
-      throw caught;
-    }
-
-    entries.push({ status: 'verified', resultId, result, transcript, integrityTrust });
+        loadTranscript: () => resultStore.readTranscript(resultId).catch(() => null),
+      }),
+    );
   }
 
   return entries.sort((a, b) => a.resultId.localeCompare(b.resultId));
+}
+
+/**
+ * Verify one stored Result against a fresh reading of the Run it claims.
+ *
+ * The listing's verdict for a single Result, and the only place that verdict is
+ * made: `listResultsForRun` uses it for every Result it finds, and a Report
+ * re-render uses it for exactly the Result ids a ReportSource names, over the
+ * exact bytes it just hashed. Throws only for failures that are not a
+ * verification outcome.
+ *
+ * `loadTranscript` is called only once the metadata has verified, so a missing
+ * transcript is still a failure belonging to a specific tool.
+ */
+export async function verifyResultListEntry(input: {
+  resultId: string;
+  stored: unknown;
+  runId: string;
+  runEvidence: VerifiedRunEvidence;
+  loadTranscript: () => Promise<string | null>;
+}): Promise<ResultListEntry> {
+  const { resultId, stored, runId, runEvidence } = input;
+
+  // Step 1 — the Result's own claims. Whose observation is this, and can that
+  // claim be trusted at all?
+  let metadata;
+  try {
+    metadata = verifyStoredResultMetadata({
+      resultId,
+      stored,
+      requestedRunId: runId,
+      runEvidence,
+    });
+  } catch (caught) {
+    if (caught instanceof ResultVerificationError) {
+      return {
+        status: 'rejected',
+        resultId,
+        reason: caught.kind,
+        message: caught.message,
+        detail: caught.detail,
+        trustedToolId: trustedToolIdOf(stored),
+      };
+    }
+    throw caught;
+  }
+
+  // Step 2 — the transcript itself. Ownership is settled by now, so any
+  // failure below stays attached to the tool that owns it.
+  const { result, integrityTrust } = metadata;
+  const transcript = await input.loadTranscript();
+  if (transcript === null) {
+    return {
+      status: 'rejected',
+      resultId,
+      reason: 'RESULT_TRANSCRIPT_MISSING',
+      message: 'transcript.txt を読み込めません。',
+      trustedToolId: result.tool.id,
+      integrityTrust,
+    };
+  }
+
+  try {
+    verifyTranscriptAgainstResult({
+      resultId,
+      result,
+      transcript,
+      transcriptBytes: Buffer.byteLength(transcript, 'utf8'),
+    });
+  } catch (caught) {
+    if (caught instanceof ResultVerificationError) {
+      return {
+        status: 'rejected',
+        resultId,
+        reason: caught.kind,
+        message: caught.message,
+        detail: caught.detail,
+        trustedToolId: result.tool.id,
+        integrityTrust,
+      };
+    }
+    throw caught;
+  }
+
+  return { status: 'verified', resultId, result, transcript, integrityTrust };
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
