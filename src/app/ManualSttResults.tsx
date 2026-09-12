@@ -22,6 +22,19 @@ import {
 import RunComparison from './RunComparison';
 import ReportExport from './ReportExport';
 import {
+  isEvaluableResult,
+  planForResult,
+  planForRun,
+  queueCounts,
+  runEvaluationQueue,
+  verifiedEvaluatorIdsOf,
+  type EvaluationJob,
+  type EvaluationPlan,
+  type JobFailure,
+  type JobResult,
+} from './evaluationQueue';
+import { recallCapture, rememberCapture, type CaptureProfiles } from './captureProfile';
+import {
   applyFailed,
   applyLoaded,
   idleSelection,
@@ -610,7 +623,10 @@ function EvaluationSections({
   entries,
   busyEvaluator,
   disabled,
+  orderKnown,
+  missingCount,
   error,
+  onRunMissing,
   onCreateRawChar,
   onCreateSurface,
   onCreateCritical,
@@ -620,8 +636,14 @@ function EvaluationSections({
   sealed: boolean;
   entries: EvaluationEntry[];
   busyEvaluator: string | null;
+  /** This Result has jobs queued or running. Other Results stay usable. */
   disabled: boolean;
+  /** The server's evaluator order has arrived, so a plan can be built. */
+  orderKnown: boolean;
+  /** Evaluators with no verified Evaluation for this Result. */
+  missingCount: number;
   error: ApiErrorShape | null;
+  onRunMissing: () => void;
   onCreateRawChar: () => void;
   onCreateSurface: () => void;
   onCreateCritical: () => void;
@@ -648,6 +670,25 @@ function EvaluationSections({
   return (
     <>
       {error && <ErrorBox title={`Evaluation（${resultId}）`} error={error} />}
+
+      <div className="raw-eval">
+        <h4>Missing evaluations</h4>
+        <button
+          type="button"
+          className="secondary"
+          onClick={onRunMissing}
+          disabled={disabled || !orderKnown || missingCount === 0}
+        >
+          {disabled ? '実行中…' : `Run missing evaluations（${missingCount} 件）`}
+        </button>
+        <p className="fixed-note">
+          {!orderKnown
+            ? 'evaluator の順序を取得しています。'
+            : missingCount === 0
+              ? 'verified な Evaluation が 4 evaluator すべてにあります。'
+              : '未取得の evaluator だけを、宣言順に 1 件ずつ実行します。既にある verified は作り直しません。'}
+        </p>
+      </div>
 
       <RawEvaluationSection
         entries={verified.filter(isRawChar)}
@@ -727,16 +768,49 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
   /** Carries the Run it belongs to, so a late failure is never read as another Run's. */
   const [saveError, setSaveError] = useState<{ runId: string; error: ApiErrorShape } | null>(null);
 
-  /** Which Result is being evaluated with which evaluator, if any. */
-  const [evaluating, setEvaluating] = useState<{
-    resultId: string;
-    evaluatorId: EvaluatorId;
-  } | null>(null);
   const [evaluationError, setEvaluationError] = useState<{
     runId: string;
     resultId: string;
     error: ApiErrorShape;
   } | null>(null);
+
+  /**
+   * What the evaluation queue is doing, for the Run on screen.
+   *
+   * `reserved` are the Results with jobs pending or running: their evaluator
+   * buttons are held so the same Result cannot be queued twice, while every
+   * other Result stays usable. `active` is the one job in flight — there is
+   * never more than one, whatever was queued.
+   */
+  const [queue, setQueue] = useState<{
+    runId: string;
+    reserved: string[];
+    active: EvaluationJob | null;
+    total: number;
+    done: number;
+  } | null>(null);
+  /** What the last finished batch did, kept next to the Run it ran for. */
+  const [batchSummary, setBatchSummary] = useState<{
+    runId: string;
+    succeeded: number;
+    failed: number;
+    skipped: number;
+    stopped: 'completed' | 'stale';
+    failures: JobFailure[];
+  } | null>(null);
+  /** Serializes every queued plan: one POST at a time, whatever was clicked. */
+  const evaluationChain = useRef<Promise<void>>(Promise.resolve());
+
+  /**
+   * The evaluator order, as the server declared it for this Run.
+   *
+   * `EVALUATOR_IDS` itself cannot be imported here — its module reaches the
+   * stores, and therefore Node's filesystem — so the order arrives with the
+   * comparison payload rather than being restated in the UI.
+   */
+  const [evaluatorOrder, setEvaluatorOrder] = useState<EvaluatorId[] | null>(null);
+  /** Per-tool capture metadata for this screen only. Never persisted, never a transcript. */
+  const [captureProfiles, setCaptureProfiles] = useState<CaptureProfiles>({});
 
   const loadRuns = useCallback(async () => {
     // Clear first: a failed reload must not leave a stale Run list that the
@@ -776,12 +850,23 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
     const controller = new AbortController();
     inFlight.current = controller;
 
+    const previousSelected = resultsRef.current.selected;
     const next = selectTarget(resultsRef.current, runId === '' ? null : runId);
     resultsRef.current = next;
     setResults(next);
     // The save form and any evaluation failure belong to the Run on screen.
     setSaveError(null);
     setEvaluationError(null);
+    // A different Run: its evaluator order and its batch history are not this
+    // one's. A reload of the same Run keeps both, so a batch summary survives
+    // the reload the batch itself triggers. A queue still draining is not
+    // cancelled — its writes belong to the Run it started for — but it stops
+    // at its next job, because that Run is no longer selected.
+    if (previousSelected !== next.selected) {
+      setEvaluatorOrder(null);
+      setBatchSummary(null);
+      setQueue(null);
+    }
 
     const { requestId, selected } = next;
     if (selected === null) return;
@@ -871,6 +956,25 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
     (toolId !== 'other' || customToolName.trim().length > 0) &&
     !saving;
 
+  /** What the batch controls need, derived from the panel already on screen. */
+  const verifiedEvaluatorIdsFor = (resultId: string) =>
+    verifiedEvaluatorIdsOf(evaluationsByResult.get(resultId) ?? []);
+  const evaluableResults = resultEntries.filter(isEvaluableResult);
+  const runPlan: EvaluationPlan = evaluatorOrder
+    ? planForRun({ results: resultEntries, evaluatorOrder, verifiedEvaluatorIdsFor })
+    : { jobs: [], skipped: [] };
+  const resultPlanFor = (resultId: string): EvaluationPlan =>
+    evaluatorOrder
+      ? planForResult({
+          resultId,
+          evaluatorOrder,
+          verifiedEvaluatorIds: verifiedEvaluatorIdsFor(resultId),
+        })
+      : { jobs: [], skipped: [] };
+  /** Queue and summary are shown only for the Run they belong to. */
+  const queueForRun = queue && queue.runId === selectedRunId ? queue : null;
+  const summaryForRun = batchSummary && batchSummary.runId === selectedRunId ? batchSummary : null;
+
   const save = useCallback(async () => {
     if (!selectedRun) return;
     const runId = selectedRun.runId;
@@ -893,6 +997,11 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
         setSaveError({ runId, error: await readApiError(response) });
         return;
       }
+      // Only metadata the server accepted is remembered, and only in memory
+      // for this screen. The transcript is never part of it.
+      setCaptureProfiles((profiles) =>
+        rememberCapture(profiles, toolId, { customToolName, toolVersion, deliveryPath }),
+      );
       // The Result is written. Everything after this point is about what the
       // operator is looking at now, which may no longer be the Run that was
       // saved — a POST can outlive the selection that started it. Reloading
@@ -919,41 +1028,131 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
    *
    * Only the Result ID and which evaluator to run are sent. Everything the
    * measurement is about is resolved server-side, so nothing this page believes
-   * can influence the numbers.
+   * can influence the numbers. One job is one POST is one immutable Evaluation:
+   * a batch is many of these in a row, never a bulk write.
    */
-  const createEvaluation = useCallback(
-    async (resultId: string, runId: string, evaluatorId: EvaluatorId) => {
-      setEvaluating({ resultId, evaluatorId });
-      setEvaluationError(null);
-      try {
-        const response = await fetch('/api/evaluations', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ resultId, evaluatorId }),
-        });
-        if (!response.ok) {
-          setEvaluationError({ runId, resultId, error: await readApiError(response) });
-          return;
-        }
-        // Same guard as saving: the POST can outlive the selection that started
-        // it, and reloading this Run now would replace whatever Run the
-        // operator has moved to.
-        if (!isStillSelected(resultsRef.current, runId)) return;
-        selectRun(runId);
-      } catch (caught) {
-        setEvaluationError({
+  const executeJob = useCallback(async (job: EvaluationJob): Promise<JobResult> => {
+    try {
+      const response = await fetch('/api/evaluations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resultId: job.resultId, evaluatorId: job.evaluatorId }),
+      });
+      if (!response.ok) return { ok: false, error: await readApiError(response) };
+      return { ok: true };
+    } catch (caught) {
+      return {
+        ok: false,
+        error: {
+          kind: 'UNEXPECTED',
+          message: caught instanceof Error ? caught.message : String(caught),
+        },
+      };
+    }
+  }, []);
+
+  /**
+   * Queue one plan for the Run on screen.
+   *
+   * Plans are chained rather than run side by side: queueing a second Result
+   * while the first is still going appends to the same single-file queue, so
+   * two semantic evaluations never contend for the local runtime. The reload
+   * happens once, when the plan settles, instead of once per Evaluation — and
+   * only if this Run is still the one on screen.
+   */
+  const enqueuePlan = useCallback(
+    (runId: string, plan: EvaluationPlan) => {
+      if (plan.jobs.length === 0) {
+        setBatchSummary({
           runId,
-          resultId,
-          error: {
-            kind: 'UNEXPECTED',
-            message: caught instanceof Error ? caught.message : String(caught),
+          succeeded: 0,
+          failed: 0,
+          skipped: plan.skipped.length,
+          stopped: 'completed',
+          failures: [],
+        });
+        return;
+      }
+
+      const reserved = [...new Set(plan.jobs.map((job) => job.resultId))];
+      setEvaluationError(null);
+      setQueue((current) =>
+        current && current.runId === runId
+          ? {
+              ...current,
+              reserved: [...new Set([...current.reserved, ...reserved])],
+              total: current.total + plan.jobs.length,
+            }
+          : { runId, reserved, active: null, total: plan.jobs.length, done: 0 },
+      );
+
+      evaluationChain.current = evaluationChain.current.then(async () => {
+        const outcome = await runEvaluationQueue(plan, {
+          isCurrent: () => isStillSelected(resultsRef.current, runId),
+          execute: async (job) => {
+            setQueue((current) =>
+              current && current.runId === runId ? { ...current, active: job } : current,
+            );
+            const result = await executeJob(job);
+            setQueue((current) =>
+              current && current.runId === runId
+                ? { ...current, active: null, done: current.done + 1 }
+                : current,
+            );
+            return result;
           },
         });
-      } finally {
-        setEvaluating(null);
-      }
+
+        setQueue((current) => {
+          if (!current || current.runId !== runId) return current;
+          const remaining = current.reserved.filter((id) => !reserved.includes(id));
+          return remaining.length === 0 ? null : { ...current, reserved: remaining };
+        });
+
+        // Anything already written stands as an artifact of its own Result.
+        // What must not happen is reporting it, or reloading, under a Run the
+        // operator has since moved to.
+        if (!isStillSelected(resultsRef.current, runId)) return;
+        setBatchSummary({
+          runId,
+          ...queueCounts(outcome),
+          stopped: outcome.stopped,
+          failures: outcome.failed,
+        });
+        if (outcome.created) selectRun(runId);
+      });
     },
-    [selectRun],
+    [executeJob, selectRun],
+  );
+
+  /** One evaluator, on demand: the same queue with a plan of one job. */
+  const runSingle = useCallback(
+    (resultId: string, runId: string, evaluatorId: EvaluatorId) => {
+      enqueuePlan(runId, { jobs: [{ resultId, evaluatorId }], skipped: [] });
+    },
+    [enqueuePlan],
+  );
+
+  /** The order the server declared for this Run; kept only while it is current. */
+  const handleEvaluatorOrder = useCallback((evaluatorIds: EvaluatorId[]) => {
+    setEvaluatorOrder((current) =>
+      current && current.length === evaluatorIds.length && current.every((id, index) => id === evaluatorIds[index])
+        ? current
+        : evaluatorIds,
+    );
+  }, []);
+
+  /** Switching tools restores that tool's last accepted capture metadata, if any. */
+  const changeTool = useCallback(
+    (next: SttToolId) => {
+      setToolId(next);
+      const profile = recallCapture(captureProfiles, next);
+      if (!profile) return;
+      setCustomToolName(profile.customToolName);
+      setToolVersion(profile.toolVersion);
+      setDeliveryPath(profile.deliveryPath);
+    },
+    [captureProfiles],
   );
 
   return (
@@ -1019,7 +1218,7 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
             <select
               id="toolId"
               value={toolId}
-              onChange={(event) => setToolId(event.target.value as SttToolId)}
+              onChange={(event) => changeTool(event.target.value as SttToolId)}
             >
               {STT_TOOL_IDS.map((id) => (
                 <option key={id} value={id}>
@@ -1120,6 +1319,64 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
         <p className="fixed-note">この Run にはまだ Result がありません。</p>
       )}
 
+      {results.status === 'loaded' && evaluableResults.length > 0 && (
+        <div className="raw-eval">
+          <h4>Missing evaluations（Run 全体）</h4>
+          <button
+            type="button"
+            onClick={() => enqueuePlan(selectedRunId, runPlan)}
+            disabled={queueForRun !== null || !evaluatorOrder || runPlan.jobs.length === 0}
+          >
+            {queueForRun ? '実行中…' : `Run all missing evaluations（${runPlan.jobs.length} 件）`}
+          </button>
+          <p className="fixed-note">
+            {!evaluatorOrder
+              ? 'evaluator の順序を Run Comparison から取得しています。'
+              : runPlan.jobs.length === 0
+                ? 'この Run の sealed Result には未取得の evaluator がありません。'
+                : 'sealed な Result のみを対象に、Result 順・evaluator 宣言順で 1 件ずつ実行します。並列実行はしません。'}
+          </p>
+
+          {queueForRun && (
+            <p className="fixed-note">
+              {queueForRun.done} / {queueForRun.total} 実行済み
+              {queueForRun.active
+                ? `・実行中: ${queueForRun.active.evaluatorId}（${queueForRun.active.resultId}）`
+                : ''}
+            </p>
+          )}
+
+          {summaryForRun && (
+            <div className="raw-eval-card">
+              <dl className="kv compact">
+                <dt>Succeeded</dt>
+                <dd>{summaryForRun.succeeded}</dd>
+                <dt>Failed</dt>
+                <dd>{summaryForRun.failed}</dd>
+                <dt>Skipped</dt>
+                <dd>{summaryForRun.skipped}</dd>
+              </dl>
+              {summaryForRun.stopped === 'stale' && (
+                <p className="fixed-note">
+                  Run が切り替わったため、残りの job は送信していません。送信済みの Evaluation は
+                  元の Result の artifact として残ります。
+                </p>
+              )}
+              {summaryForRun.failures.map((failure) => (
+                <ErrorBox
+                  key={`${failure.resultId}/${failure.evaluatorId}`}
+                  title={`${failure.evaluatorId}（${failure.resultId}）`}
+                  error={{ kind: failure.kind, message: failure.message }}
+                />
+              ))}
+              {summaryForRun.failed > 0 && (
+                <p className="fixed-note">失敗した評価は自動では再実行しません。</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {resultEntries.length > 0 && (
         <div className="transcripts">
           {resultEntries.map((entry) =>
@@ -1156,29 +1413,30 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
                   sealed={entry.integrityTrust === 'sealed'}
                   entries={evaluationsByResult.get(entry.resultId) ?? []}
                   busyEvaluator={
-                    evaluating?.resultId === entry.resultId ? evaluating.evaluatorId : null
+                    queueForRun?.active?.resultId === entry.resultId
+                      ? queueForRun.active.evaluatorId
+                      : null
                   }
-                  disabled={evaluating !== null}
+                  disabled={queueForRun?.reserved.includes(entry.resultId) ?? false}
+                  orderKnown={evaluatorOrder !== null}
+                  missingCount={resultPlanFor(entry.resultId).jobs.length}
                   error={
                     evaluationError && evaluationError.resultId === entry.resultId
                       ? evaluationError.error
                       : null
                   }
+                  onRunMissing={() => enqueuePlan(selectedRunId, resultPlanFor(entry.resultId))}
                   onCreateRawChar={() =>
-                    void createEvaluation(entry.resultId, selectedRunId, 'raw-char-v1')
+                    runSingle(entry.resultId, selectedRunId, 'raw-char-v1')
                   }
                   onCreateSurface={() =>
-                    void createEvaluation(
-                      entry.resultId,
-                      selectedRunId,
-                      'surface-normalized-char-v1',
-                    )
+                    runSingle(entry.resultId, selectedRunId, 'surface-normalized-char-v1')
                   }
                   onCreateCritical={() =>
-                    void createEvaluation(entry.resultId, selectedRunId, 'critical-info-v1')
+                    runSingle(entry.resultId, selectedRunId, 'critical-info-v1')
                   }
                   onCreateSemantic={() =>
-                    void createEvaluation(entry.resultId, selectedRunId, 'semantic-h3-v1')
+                    runSingle(entry.resultId, selectedRunId, 'semantic-h3-v1')
                   }
                 />
               </article>
@@ -1215,7 +1473,11 @@ export default function ManualSttResults({ latestRunId }: { latestRunId: string 
       {selectedRun && results.status === 'loaded' && (
         <>
           <div style={{ height: 20 }} />
-          <RunComparison runId={selectedRunId} refreshKey={results.requestId} />
+          <RunComparison
+            runId={selectedRunId}
+            refreshKey={results.requestId}
+            onEvaluatorOrder={handleEvaluatorOrder}
+          />
           <ReportExport runId={selectedRunId} />
         </>
       )}

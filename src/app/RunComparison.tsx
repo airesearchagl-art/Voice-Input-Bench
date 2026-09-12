@@ -658,10 +658,22 @@ function RunHeader({ comparison }: { comparison: ComparisonRun }) {
 export default function RunComparison({
   runId,
   refreshKey,
+  onEvaluatorOrder,
 }: {
   runId: string;
   /** Changes whenever the surrounding panel reloads, so the comparison follows it. */
   refreshKey: number;
+  /**
+   * The evaluator order the server declared for this Run, once it is known.
+   *
+   * `evaluator_ids` is `EVALUATOR_IDS` as the server sends it. Handing it up
+   * lets the page order work by that one declaration instead of restating it:
+   * the constant itself cannot be imported here, because its module reaches
+   * the stores and therefore Node's filesystem.
+   *
+   * Must be stable across renders (the parent memoizes it).
+   */
+  onEvaluatorOrder?: (evaluatorIds: EvaluatorId[]) => void;
 }) {
   const [state, setState] = useState<ComparisonLoadState>({ status: 'loading' });
 
@@ -675,6 +687,13 @@ export default function RunComparison({
     });
     return () => controller.abort();
   }, [runId, refreshKey]);
+
+  // Report the order only for the Run on screen, so a late answer for the
+  // previous Run cannot set the order the page is about to act on.
+  useEffect(() => {
+    if (state.status !== 'loaded' || state.comparison.run_id !== runId) return;
+    onEvaluatorOrder?.(state.comparison.evaluator_ids);
+  }, [state, runId, onEvaluatorOrder]);
 
   return (
     <div className="cmp">
