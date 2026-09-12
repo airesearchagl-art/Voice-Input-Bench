@@ -1,5 +1,15 @@
 # P3-D-A — Semantic Evaluation Architecture Spike (Final)
 
+> **Current status note (added later).** This is the record of the P3-D-A spike as it
+> stood when the spike ended. The statements below describe *that moment*: at the time,
+> no evaluator and no schema v4 existed. **Production has since moved on** — the
+> `semantic-h3-v1` evaluator and its schema v4 are implemented and shipped, and the
+> decisions recorded here are what they were built from. Read this directory as a
+> decision and evidence record, not as the current specification. Current state:
+> [`README.md`](../../README.md) and
+> [`docs/CURRENT_PRODUCT_STATE.md`](../../docs/CURRENT_PRODUCT_STATE.md); production
+> code is the final authority.
+
 **Research only.** Nothing in this directory is production code. No evaluator was
 added to `src/evaluation/`, no schema v4 was implemented, no existing artifact
 under `data/` was read or written, and no cloud service was contacted.
