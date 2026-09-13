@@ -12,6 +12,12 @@ export type ReportErrorKind =
   | 'REPORT_SOURCE_INVALID'
   /** The re-render request body is larger than any ReportSource needs to be. */
   | 'REPORT_SOURCE_TOO_LARGE'
+  /**
+   * A cited artifact's frozen bytes held, but the artifact records a different
+   * Run than the ReportSource names. That is a substitution, not evidence that
+   * moved and not a verifier that changed its mind, so no document is returned.
+   */
+  | 'REPORT_SOURCE_RUN_MISMATCH'
   /** A cited artifact changed while the package was being built. Nothing mixed is returned. */
   | 'REPORT_EVIDENCE_CHANGED_DURING_BUILD'
   /** manifest.json, source.txt or audio.wav is not the file the report was written against. */

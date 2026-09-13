@@ -54,11 +54,13 @@ import {
  *  6. each named result.json's bytes, and every named Result's transcript.txt
  *     (present or recorded absent); supporting subject Results likewise
  *  7. each named evaluation.json's bytes
- *  8. the seal hashes the ReportSource claims, against the bytes that held
- *  9. only artifacts whose bytes — and whose subject's bytes — held go to the
+ *  8. every artifact whose bytes held records this Run — one belonging to
+ *     another Run is a substitution, and is refused rather than described
+ *  9. the seal hashes the ReportSource claims, against the bytes that held
+ * 10. only artifacts whose bytes — and whose subject's bytes — held go to the
  *     current verifiers: the same per-artifact functions the listings use
- * 10. current placement and selection against the frozen ones
- * 11. the body re-rendered from what is true now
+ * 11. current placement and selection against the frozen ones
+ * 12. the body re-rendered from what is true now
  *
  * Findings, never merged:
  *
@@ -111,7 +113,7 @@ export async function rerenderReport(
   const { findings, current } = await recheckFrozenSource(deps, source);
   const changed = hasFindings(findings);
 
-  // 11. The body, from what is true now.
+  // 12. The body, from what is true now.
   const body = renderReportBody(source, current, changed ? findings : null);
   const contentSha256 = reportContentSha256(source, body);
   const generatedAt = (options.now ?? (() => new Date()))().toISOString();
@@ -274,7 +276,61 @@ function sourceContradiction(message: string, path: string): ReportError {
 }
 
 /**
- * Steps 2-10 over an already-validated ReportSource.
+ * Every artifact a ReportSource freezes must belong to the Run it names.
+ *
+ * A Result or Evaluation stored under another Run is not this Run's evidence
+ * changing — it was never this Run's evidence. Left to the placement filters
+ * further down it would be dropped from the current reading and reported as
+ * `verification_changed` with `current: null`, which tells the operator that
+ * their Run's artifact stopped verifying when the truth is that the document
+ * combines two Runs. The substitution is refused, and nothing is rendered.
+ *
+ * Asked only where the frozen hash held. Bytes that are missing or modified
+ * are an evidence change and keep that classification; bytes that do not parse,
+ * or that record no `run_id` at all, are left to the existing readback — this
+ * asks one question only, and never relabels another answer.
+ */
+function assertRunBinding(input: {
+  runId: string;
+  results: ReadonlyMap<string, HeldResult>;
+  supporting: ReadonlyMap<string, HeldResult>;
+  evaluations: ReadonlyMap<string, ReadArtifact>;
+}): void {
+  const foreignRunId = (bytes: Buffer | null): string | null => {
+    const storedRunId = parseObject(bytes)?.run_id;
+    return typeof storedRunId === 'string' && storedRunId !== input.runId ? storedRunId : null;
+  };
+  const refuse = (kind: string, id: string, storedRunId: string): never => {
+    throw new ReportError(
+      'REPORT_SOURCE_RUN_MISMATCH',
+      `ReportSource は Run ${input.runId} の evidence として ${id} を固定していますが、この artifact は別の Run のものです。`,
+      {
+        detail:
+          `artifact_kind=${kind} artifact_id=${id} ` +
+          `source_run_id=${input.runId} stored_run_id=${storedRunId}`,
+      },
+    );
+  };
+
+  for (const [kind, reads] of [
+    ['result', input.results],
+    ['supporting_result', input.supporting],
+  ] as const) {
+    for (const [resultId, read] of reads) {
+      if (!held(read.result)) continue;
+      const foreign = foreignRunId(read.result.bytes);
+      if (foreign !== null) refuse(kind, resultId, foreign);
+    }
+  }
+  for (const [evaluationId, read] of input.evaluations) {
+    if (!held(read)) continue;
+    const foreign = foreignRunId(read.bytes);
+    if (foreign !== null) refuse('evaluation', evaluationId, foreign);
+  }
+}
+
+/**
+ * Steps 2-11 over an already-validated ReportSource.
  *
  * Also what a new package is checked against before it is returned, so a
  * fresh build and a later re-render derive their body the same way.
@@ -357,7 +413,17 @@ export async function recheckFrozenSource(
     evaluationReads.set(evaluationId, read);
   }
 
-  // 8. The seals the ReportSource claims must be the seals in the bytes that
+  // 8. Every artifact whose bytes held must be this Run's. Refused here, before
+  // anything foreign can be described as evidence that moved or as a verifier
+  // that changed its mind.
+  assertRunBinding({
+    runId,
+    results: resultReads,
+    supporting: supportingReads,
+    evaluations: evaluationReads,
+  });
+
+  // 9. The seals the ReportSource claims must be the seals in the bytes that
   // held. A mismatch is the source contradicting its own evidence — neither
   // moved evidence nor a verifier change — and nothing is reproduced from it.
   for (const result of source.results) {
@@ -381,7 +447,7 @@ export async function recheckFrozenSource(
     }
   }
 
-  // 9. Only now, the current verifiers — and only over bytes that held.
+  // 10. Only now, the current verifiers — and only over bytes that held.
   let runEvidence: VerifiedRunEvidence;
   try {
     runEvidence = await verifyRunEvidence(deps.runStore, runId);
@@ -459,7 +525,7 @@ export async function recheckFrozenSource(
     currentEvaluations.push(await verifyEvaluation(deps, evaluationId, stored, reader));
   }
 
-  // 10. What the current reading places where, against what was frozen.
+  // 11. What the current reading places where, against what was frozen.
   const current = assembleRunComparison({
     runEvidence,
     results: currentResults,
