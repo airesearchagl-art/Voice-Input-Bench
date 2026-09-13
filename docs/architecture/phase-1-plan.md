@@ -1,5 +1,12 @@
 # Phase 1 Plan
 
+> **Historical document — Phase 1 当時の設計計画。**
+> 本文は Phase 1 の plan として有効なまま残してある。**現在のプロダクト全体仕様ではない。**
+> ここに書かれた「Phase 1 対象外」（CER / Semantic evaluation / Markdown Report 等）は
+> Phase 1 時点の境界であり、その後の Phase 3〜5 で実装済みのものを含む。
+> 現在の状態は [`README.md`](../../README.md) と
+> [`docs/CURRENT_PRODUCT_STATE.md`](../CURRENT_PRODUCT_STATE.md) を参照。
+
 Phase 1 の設計方針・境界・分割を定義する。
 
 ```text

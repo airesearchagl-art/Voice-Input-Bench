@@ -1,5 +1,15 @@
 # P4-A — Comparison / Report Architecture Spike
 
+> **Current status note (added later).** Historical P4-A architecture spike.
+> **P4-B (Run Comparison) and P4-C (Deterministic Report) are now shipped; P4-D
+> (cross-Run aggregation) remains deferred.** Instructions in this document that were
+> gates at the time — including "It does not build it" and "STOP before P4-B" — were
+> the boundaries of *this spike* and are not current gates. The contracts here remain
+> the decision record the shipped implementation was built from; where they differ from
+> the code, **production code is the final authority**. Current state:
+> [`README.md`](../../README.md) and
+> [`docs/CURRENT_PRODUCT_STATE.md`](../../docs/CURRENT_PRODUCT_STATE.md).
+
 Research only. Nothing in this directory is imported by `src/`, and this spike
 changes no production file and no stored artifact.
 
