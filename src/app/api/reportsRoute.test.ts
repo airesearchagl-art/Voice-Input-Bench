@@ -238,4 +238,64 @@ describe('POST /api/reports/rerender', () => {
     expect(response.status).toBe(413);
     expect(((await response.json()) as { error: { kind: string } }).error.kind).toBe('REPORT_SOURCE_TOO_LARGE');
   });
+
+  it('answers a ReportSource that freezes another Run’s Result with 400, and no document', async () => {
+    await seed();
+    // A second Run with its own real Result, and therefore its own real hashes.
+    const OTHER_RUN_ID = '20260911T050000000Z-dddddddd';
+    const OTHER_RESULT_ID = '20260911T050100000Z-eeeeeeee';
+    await new LocalRunStore(runsRoot).saveRun(OTHER_RUN_ID, {
+      sourceText: SOURCE_TEXT,
+      audio: AUDIO,
+      providerQueryJson: PROVIDER_QUERY,
+      manifestJson: Buffer.from(`${JSON.stringify(manifest(OTHER_RUN_ID), null, 2)}\n`, 'utf8'),
+    });
+    await saveManualSttResult(
+      { runId: OTHER_RUN_ID, toolId: 'aqua-voice', deliveryPath: 'speaker-to-mic', rawTranscript: TRANSCRIPT },
+      {
+        runStore: new LocalRunStore(runsRoot),
+        resultStore: new LocalResultStore(resultsRoot),
+        now: () => NOW,
+        resultId: OTHER_RESULT_ID,
+      },
+    );
+
+    const { json } = await exportedSourceJson();
+    const source = JSON.parse(json) as Record<string, unknown>;
+    const otherResultFile = path.join(resultsRoot, OTHER_RESULT_ID, 'result.json');
+    const otherTranscriptFile = path.join(resultsRoot, OTHER_RESULT_ID, 'transcript.txt');
+    const stored = JSON.parse(await readFile(otherResultFile, 'utf8')) as {
+      integrity: { semantic_sha256: string };
+    };
+    const results = source.results as Array<Record<string, unknown>>;
+    results[0] = {
+      ...results[0],
+      result_id: OTHER_RESULT_ID,
+      result_file_sha256: sha(await readFile(otherResultFile)),
+      result_semantic_sha256: stored.integrity.semantic_sha256,
+      transcript_sha256: sha(await readFile(otherTranscriptFile)),
+    };
+    const content = (source.artifact_content as Record<string, unknown>).results as Record<string, unknown>;
+    delete content[RESULT_ID];
+    content[OTHER_RESULT_ID] = {
+      file_sha256: sha(await readFile(otherResultFile)),
+      transcript_file_sha256: sha(await readFile(otherTranscriptFile)),
+    };
+    // The Evaluation frozen on that Result has to follow it, or the document is
+    // structurally invalid and is refused before the Run binding is ever asked.
+    const subjects = source.verified_evaluation_subjects as Record<string, { subject_result_id: string }>;
+    for (const subject of Object.values(subjects)) {
+      if (subject.subject_result_id === RESULT_ID) subject.subject_result_id = OTHER_RESULT_ID;
+    }
+
+    const response = await rerenderRequest(JSON.stringify(source));
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as Record<string, unknown> & { error: { kind: string } };
+    expect(body.error.kind).toBe('REPORT_SOURCE_RUN_MISMATCH');
+    // An error carries no document: nothing renderable, nothing identifying.
+    for (const key of ['markdown', 'markdown_body', 'content_sha256', 'generated_at', 'report_source']) {
+      expect(body).not.toHaveProperty(key);
+    }
+  });
 });

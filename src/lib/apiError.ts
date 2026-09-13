@@ -219,6 +219,9 @@ export interface ApiErrorBody {
 const STATUS_BY_REPORT_KIND: Record<ReportErrorKind, number> = {
   REPORT_SOURCE_INVALID: 400,
   REPORT_SOURCE_TOO_LARGE: 413,
+  // The disk did not move: the submitted document combines artifact identities
+  // from more than one Run. That is the caller's, not a conflict with state.
+  REPORT_SOURCE_RUN_MISMATCH: 400,
   REPORT_EVIDENCE_CHANGED_DURING_BUILD: 409,
   REPORT_RUN_BASIS_CHANGED: 409,
   REPORT_RUN_VERIFICATION_CHANGED: 409,

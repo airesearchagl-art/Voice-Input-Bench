@@ -1245,6 +1245,214 @@ describe('rerenderReport — every Evaluation re-checks against frozen subject b
   });
 });
 
+// ── P5-C: every frozen artifact belongs to the Run the source names ─────────
+
+/**
+ * A ReportSource is untrusted input, and its artifact ids are not scoped by the
+ * Run it names — the stores are flat. So a document can be assembled that says
+ * Run A while freezing Run B's artifacts, with every hash honest: the bytes are
+ * real, they just belong to somewhere else.
+ *
+ * Left to the placement filters that is not caught. The foreign artifact is
+ * skipped by the verifiers, vanishes from the current reading, and comes back
+ * as `verification_changed` with `current: null` — which reads as "your Run's
+ * artifact stopped verifying". It is a substitution, and it is refused.
+ */
+describe('rerenderReport — a ReportSource may not combine two Runs', () => {
+  type Json = Record<string, unknown>;
+
+  const RUN_B = '20260911T030000000Z-bbbbbbbb';
+  const RB1 = '20260911T030100000Z-b0000001';
+  const EB1 = '20260911T030200000Z-eb000001';
+
+  /** A second Run with its own sealed Result and Evaluation. Real bytes, real hashes. */
+  async function seedRunB(): Promise<void> {
+    await runStore.saveRun(RUN_B, {
+      sourceText: SOURCE_TEXT,
+      audio: AUDIO,
+      providerQueryJson: PROVIDER_QUERY,
+      manifestJson: Buffer.from(`${JSON.stringify(manifest(RUN_B), null, 2)}\n`, 'utf8'),
+    });
+    await saveManualSttResult(
+      {
+        runId: RUN_B,
+        toolId: 'windows-standard-voice-input',
+        customToolName: null,
+        toolVersion: null,
+        deliveryPath: 'speaker-to-mic',
+        rawTranscript: TRANSCRIPT,
+      },
+      { runStore, resultStore, now: () => NOW, resultId: RB1 },
+    );
+    await createEvaluation(
+      { resultId: RB1, evaluatorId: 'raw-char-v1' },
+      evaluationDeps({ evaluationId: EB1 }),
+    );
+  }
+
+  const buildFor = (runId: string) => buildReportPackage(stores(), runId, { now: () => NOW });
+
+  /** Run A's own export, with its single Result's identity replaced by Run B's. */
+  async function foreignResultSource(): Promise<Json> {
+    const source = JSON.parse((await build()).report_source_json) as Json;
+    const runB = (await buildFor(RUN_B)).report_source;
+    const foreign = verifiedSource(runB, RB1);
+    const results = source.results as Json[];
+    const index = results.findIndex((entry) => entry.result_id === R1);
+    results[index] = {
+      ...results[index],
+      result_id: RB1,
+      result_file_sha256: foreign.result_file_sha256,
+      result_semantic_sha256: foreign.result_semantic_sha256,
+      transcript_sha256: foreign.transcript_sha256,
+    };
+    const content = (source.artifact_content as Json).results as Json;
+    delete content[R1];
+    content[RB1] = { ...runB.artifact_content.results[RB1] };
+    (source.artifact_content as Json).results = Object.fromEntries(
+      Object.entries(content).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+    );
+    return source;
+  }
+
+  async function refusal(source: unknown): Promise<ReportError> {
+    const caught = (await rerenderReport(stores(), source).catch((error: unknown) => error)) as ReportError;
+    expect(caught).toBeInstanceOf(ReportError);
+    return caught;
+  }
+
+  it('T1 control: the untouched export of a single Run still reproduces', async () => {
+    await saveSealed(R1, 'windows-standard-voice-input');
+    await seedRunB();
+    const report = await build();
+
+    const outcome = await rerenderReport(stores(), JSON.parse(report.report_source_json), {
+      now: () => LATER,
+    });
+
+    expect(outcome.status).toBe('reproduced');
+    expect(outcome.content_sha256).toBe(report.content_sha256);
+    expect(outcome.evidence_changed).toEqual([]);
+    expect(outcome.verification_changed).toEqual([]);
+  });
+
+  it('T2 refuses a Result belonging to another Run, and renders nothing', async () => {
+    await saveSealed(R1, 'windows-standard-voice-input');
+    await seedRunB();
+
+    const failure = await refusal(await foreignResultSource());
+
+    expect(failure.kind).toBe('REPORT_SOURCE_RUN_MISMATCH');
+    expect(failure.detail).toContain(`artifact_kind=result`);
+    expect(failure.detail).toContain(`artifact_id=${RB1}`);
+    expect(failure.detail).toContain(`source_run_id=${RUN_ID}`);
+    expect(failure.detail).toContain(`stored_run_id=${RUN_B}`);
+    // Nothing about the substituted artifact is reported as a finding.
+    expect(failure.evidenceChanged).toBeUndefined();
+  });
+
+  it('T3 refuses an Evaluation belonging to another Run', async () => {
+    await saveSealed(R1, 'windows-standard-voice-input');
+    await evaluate(R1, 'raw-char-v1', E1);
+    await seedRunB();
+    const source = JSON.parse((await build()).report_source_json) as Json;
+    const runB = (await buildFor(RUN_B)).report_source;
+    for (const result of source.results as Json[]) {
+      for (const group of (result.evaluation_groups ?? []) as Json[]) {
+        group.considered_evaluation_ids = (group.considered_evaluation_ids as string[]).map((id) =>
+          id === E1 ? EB1 : id,
+        );
+        if (group.headline_evaluation_id === E1) group.headline_evaluation_id = EB1;
+      }
+    }
+    const subjects = source.verified_evaluation_subjects as Json;
+    subjects[EB1] = subjects[E1]!;
+    delete subjects[E1];
+    const evaluations = (source.artifact_content as Json).evaluations as Json;
+    delete evaluations[E1];
+    evaluations[EB1] = { ...runB.artifact_content.evaluations[EB1] };
+
+    const failure = await refusal(source);
+
+    expect(failure.kind).toBe('REPORT_SOURCE_RUN_MISMATCH');
+    expect(failure.detail).toContain('artifact_kind=evaluation');
+    expect(failure.detail).toContain(`artifact_id=${EB1}`);
+  });
+
+  it('T4 refuses a supporting subject Result belonging to another Run', async () => {
+    const { source } = await unattributedVerifiedSource();
+    await seedRunB();
+    const json = JSON.parse(JSON.stringify(source)) as Json;
+    const runB = (await buildFor(RUN_B)).report_source;
+    const supporting = json.supporting_results as Json;
+    delete supporting[R1];
+    supporting[RB1] = {
+      result_file_sha256: runB.artifact_content.results[RB1]!.file_sha256,
+      transcript_file_sha256: runB.artifact_content.results[RB1]!.transcript_file_sha256,
+    };
+    (json.verified_evaluation_subjects as Json)[E1] = { subject_result_id: RB1 };
+
+    const failure = await refusal(json);
+
+    expect(failure.kind).toBe('REPORT_SOURCE_RUN_MISMATCH');
+    expect(failure.detail).toContain('artifact_kind=supporting_result');
+    expect(failure.detail).toContain(`artifact_id=${RB1}`);
+  });
+
+  it('T5 a cited file that is gone stays missing evidence, and is not relabelled', async () => {
+    await saveSealed(R1, 'windows-standard-voice-input');
+    await seedRunB();
+    const source = await foreignResultSource();
+    // The foreign artifact's bytes no longer exist, so the question never arises.
+    await rm(resultFile(RB1));
+
+    const outcome = await rerenderReport(stores(), source);
+
+    expect(outcome.status).toBe('changed');
+    expect(outcome.evidence_changed).toEqual([
+      expect.objectContaining({ artifact_kind: 'result', artifact_id: RB1, change: 'missing' }),
+    ]);
+  });
+
+  it('T6 a cited file whose bytes moved stays an evidence change, and is not relabelled', async () => {
+    await saveSealed(R1, 'windows-standard-voice-input');
+    await seedRunB();
+    const source = await foreignResultSource();
+    await reindent(resultFile(RB1));
+
+    const outcome = await rerenderReport(stores(), source);
+
+    expect(outcome.status).toBe('changed');
+    expect(outcome.evidence_changed).toEqual([
+      expect.objectContaining({ artifact_kind: 'result', artifact_id: RB1, change: 'modified' }),
+    ]);
+  });
+
+  it('T8 never reports a foreign artifact as a verification change with no current placement', async () => {
+    await saveSealed(R1, 'windows-standard-voice-input');
+    await seedRunB();
+
+    const failure = await refusal(await foreignResultSource());
+
+    // The shape this replaces: `current: null` said the operator's own Result
+    // had stopped verifying. There is no outcome to carry it now.
+    expect(failure.kind).toBe('REPORT_SOURCE_RUN_MISMATCH');
+    expect(failure).not.toHaveProperty('verification_changed');
+  });
+
+  it('writes nothing while refusing', async () => {
+    await saveSealed(R1, 'windows-standard-voice-input');
+    await seedRunB();
+    const source = await foreignResultSource();
+    const roots = [runsRoot, resultsRoot, sessionsRoot, evaluationsRoot];
+    const before = await Promise.all(roots.map(snapshot));
+
+    await refusal(source);
+
+    expect(await Promise.all(roots.map(snapshot))).toEqual(before);
+  });
+});
+
 // ── RF-2: seal claims bound to the frozen bytes ─────────────────────────────
 
 describe('rerenderReport — seal hashes in the ReportSource must be the seals in its bytes', () => {
